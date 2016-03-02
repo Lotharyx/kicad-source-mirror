@@ -1,0 +1,2 @@
+/usr/bin/ar cr libmysql_odbc_plugin.a  CMakeFiles/mysql_odbc_plugin.dir/mysql_odbc_plugin.o CMakeFiles/mysql_odbc_plugin.dir/mysql_adapter.o
+/usr/bin/ranlib libmysql_odbc_plugin.a

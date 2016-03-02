@@ -155,6 +155,10 @@ endif()
 # Must follow github_plugin
 target_link_libraries( cvpcb_kiface ${Boost_LIBRARIES} )
 
+if( BUILD_MYODBC_PLUGIN )
+    target_link_libraries( cvpcb_kiface myodbc_plugin odbc odbcinst )
+endif()
+
 if( UNIX AND NOT APPLE )
     # -lrt must follow Boost
     target_link_libraries( cvpcb_kiface rt )

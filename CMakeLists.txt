@@ -67,7 +67,7 @@ if ( KICAD_SCRIPTING_MODULES AND NOT KICAD_SCRIPTING )
 endif()
 
 option( BUILD_GITHUB_PLUGIN "Build the GITHUB_PLUGIN for pcbnew." ON )
-
+option( BUILD_MYODBC_PLUGIN "Build the MYODBC_PLUGIN for pcbnew." ON )
 
 # This can be set to a custom name to brag about a particular branch in the "About" dialog:
 set( KICAD_REPO_NAME "product" CACHE STRING "Name of the tree from which this build came." )

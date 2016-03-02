@@ -616,6 +616,13 @@ void EDA_BASE_FRAME::CopyVersionInfoToClipboard( wxCommandEvent&  event )
     msg_version << wxT( "OFF\n" );
 #endif
 
+    msg_version << wxT( "         BUILD_MYODBC_PLUGIN=" );
+#ifdef BUILD_MYODBC_PLUGIN
+    msg_version << wxT( "ON\n" );
+#else
+    msg_version << wxT( "OFF\n" );
+#endif
+    
     wxTheClipboard->SetData( new wxTextDataObject( msg_version ) );
     wxTheClipboard->Close();
 

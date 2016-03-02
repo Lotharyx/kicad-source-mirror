@@ -78,7 +78,7 @@ public:
         PCAD,
         GEDA_PCB,       ///< Geda PCB file formats.
         GITHUB,         ///< Read only http://github.com repo holding pretty footprints
-
+        MYODBC,
         // add your type here.
 
         // ALTIUM,

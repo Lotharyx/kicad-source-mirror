@@ -1,0 +1,1 @@
+/home/brian/kicad_sources/kicad.bzr/pcbnew/mysql_odbc/CMakeFiles/mysql_odbc_plugin.dir

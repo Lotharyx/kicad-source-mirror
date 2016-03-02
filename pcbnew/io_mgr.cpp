@@ -36,6 +36,9 @@
 #if defined(BUILD_GITHUB_PLUGIN)
  #include <github/github_plugin.h>
 #endif
+#if defined(BUILD_MYODBC_PLUGIN)
+ #include <myodbc/myodbc_plugin.h>
+#endif
 
 #include <wildcards_and_files_ext.h>
 
@@ -98,6 +101,14 @@ PLUGIN* IO_MGR::PluginFind( PCB_FILE_T aFileType )
 #else
         THROW_IO_ERROR( "BUILD_GITHUB_PLUGIN not enabled in cmake build environment" );
 #endif
+        
+    case MYODBC:
+#if defined(BUILD_MYODBC_PLUGIN)
+        return new MYODBC_PLUGIN();
+#else
+        THROW_IO_ERROR( "BUILD_MYODBC_PLUGIN not enabled in cmake build environment" );
+#endif
+                
     }
 
     return NULL;
@@ -142,6 +153,9 @@ const wxString IO_MGR::ShowType( PCB_FILE_T aType )
 
     case GITHUB:
         return wxString( wxT( "Github" ) );
+
+    case MYODBC:
+        return wxString( wxT( "MyODBC" ) );
     }
 }
 
@@ -170,6 +184,8 @@ IO_MGR::PCB_FILE_T IO_MGR::EnumFromStr( const wxString& aType )
     if( aType == wxT( "Github" ) )
         return GITHUB;
 
+    if( aType == wxT( "MyODBC" ) )
+        return MYODBC;
     // wxASSERT( blow up here )
 
     return PCB_FILE_T( -1 );

@@ -69,6 +69,9 @@
 /// When defined, build the GITHUB_PLUGIN for pcbnew.
 #cmakedefine BUILD_GITHUB_PLUGIN
 
+/// When defined, build the MYODBC_PLUGIN for pcbnew.
+#cmakedefine BUILD_MYODBC_PLUGIN
+
 /// When defined, use KIWAY and KIFACE DSOs
 #cmakedefine USE_KIWAY_DLLS
 

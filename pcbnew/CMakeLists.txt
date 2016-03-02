@@ -397,6 +397,11 @@ if( UNIX AND NOT APPLE )
     list( APPEND PCBNEW_EXTRA_LIBS rt )
 endif()
 
+if( BUILD_MYODBC_PLUGIN )
+    set( MYODBC_PLUGIN_LIBRARIES myodbc_plugin )
+    list( APPEND PCBNEW_EXTRA_LIBS odbc odbcinst )
+endif()
+
 
 if( KICAD_SCRIPTING_MODULES )
 
@@ -427,6 +432,7 @@ if( KICAD_SCRIPTING_MODULES )
         gal
         ${wxWidgets_LIBRARIES}
         ${GITHUB_PLUGIN_LIBRARIES}
+        ${MYODBC_PLUGIN_LIBRARIES}
         ${GDI_PLUS_LIBRARIES}
         ${PYTHON_LIBRARIES}
         ${PCBNEW_EXTRA_LIBS}
@@ -535,6 +541,10 @@ if( BUILD_GITHUB_PLUGIN )
     add_dependencies( github_plugin lib-dependencies )
 endif()
 
+if( BUILD_MYODBC_PLUGIN )
+    add_subdirectory( myodbc )
+    add_dependencies( myodbc_plugin lib-dependencies )
+endif()
 
 # a very small program launcher for pcbnew_kiface
 add_executable( pcbnew WIN32 MACOSX_BUNDLE
@@ -591,6 +601,7 @@ target_link_libraries( pcbnew_kiface
     idf3
     ${wxWidgets_LIBRARIES}
     ${GITHUB_PLUGIN_LIBRARIES}
+    ${MYODBC_PLUGIN_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
     ${PYTHON_LIBRARIES}
     ${Boost_LIBRARIES}      # must follow GITHUB

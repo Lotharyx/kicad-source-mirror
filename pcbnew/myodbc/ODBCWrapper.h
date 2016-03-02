@@ -1,0 +1,77 @@
+#ifndef ODBCWrapper_H
+#define ODBCWrapper_H
+
+#define ODBCW_VERBOSE
+
+#include <string>
+#include <sqlext.h>
+#include <stdio.h>
+
+#ifndef FALSE
+#define FALSE 0
+#endif
+
+#define _sqlTXT(x) (SQLCHAR*) x, (SQLSMALLINT) strlen(x)
+
+class ODBCWrapper {
+	private:
+		HENV             _currHenv;
+		HDBC             _currHdbc;
+		HSTMT            _currHstmt;
+		SQLHANDLE      	 _currHdesc;
+		BOOL			 _suppressWarnings;
+    
+
+	public:
+        ODBCWrapper();  // Constructor
+        ~ODBCWrapper(); // Destroyer of souls and/or the ODBCWrapper class
+
+        // ODBC wrappers
+		SQLRETURN AllocHandle(SQLSMALLINT, SQLHANDLE, SQLHANDLE *);
+		SQLRETURN BindCol(SQLHANDLE, SQLUSMALLINT, SQLSMALLINT, SQLPOINTER, SQLINTEGER, SQLLEN *);
+		SQLRETURN BindParameter(SQLHANDLE, SQLUSMALLINT, SQLSMALLINT, SQLSMALLINT, SQLSMALLINT, SQLUINTEGER, SQLSMALLINT, SQLPOINTER, SQLINTEGER, SQLINTEGER *);
+		SQLRETURN Connect(SQLHANDLE, SQLCHAR*, SQLSMALLINT, SQLCHAR*, SQLSMALLINT, SQLCHAR*, SQLSMALLINT);
+		SQLRETURN DescribeCol(SQLHANDLE, SQLSMALLINT, SQLCHAR *, SQLSMALLINT, SQLSMALLINT *, SQLSMALLINT *, SQLUINTEGER *, SQLSMALLINT *, SQLSMALLINT *);
+		SQLRETURN DescribeParam(SQLHANDLE, SQLUSMALLINT, SQLSMALLINT *, SQLUINTEGER *, SQLSMALLINT *, SQLSMALLINT *);
+		SQLRETURN Disconnect(SQLHANDLE);
+		SQLRETURN ExecDirect(SQLHANDLE, SQLCHAR *, SQLSMALLINT);
+		SQLRETURN Execute(SQLHANDLE);
+		SQLRETURN ExtendedFetch(SQLHANDLE, SQLUSMALLINT, SQLINTEGER, SQLUINTEGER *, SQLUSMALLINT *);
+		SQLRETURN Fetch(SQLHANDLE);
+		SQLRETURN FreeHandle(SQLSMALLINT, SQLHANDLE);
+		SQLRETURN FreeStmt(SQLHANDLE, SQLUSMALLINT); 
+		SQLRETURN GetConnectAttr(SQLHANDLE, SQLINTEGER, SQLPOINTER, SQLINTEGER, SQLINTEGER *);
+		SQLRETURN GetData(SQLHANDLE, SQLUSMALLINT, SQLSMALLINT, SQLPOINTER, SQLINTEGER, SQLINTEGER *);
+		SQLRETURN GetInfo(SQLHANDLE, SQLUSMALLINT, SQLPOINTER, SQLSMALLINT, SQLSMALLINT *);
+		SQLRETURN MoreResults(SQLHANDLE);
+		SQLRETURN NumParams(SQLHANDLE, SQLSMALLINT *);
+		SQLRETURN NumResultCols(SQLHANDLE, SQLSMALLINT *);
+		SQLRETURN ParamData(SQLHANDLE, SQLPOINTER *);
+		SQLRETURN Prepare(SQLHANDLE, SQLCHAR*, SQLSMALLINT);
+		SQLRETURN Procedures(SQLHANDLE, SQLCHAR*, SQLSMALLINT, SQLCHAR*, SQLSMALLINT, SQLCHAR*, SQLSMALLINT);
+		SQLRETURN ProcedureColumns(SQLHANDLE, SQLCHAR*, SQLSMALLINT, SQLCHAR*, SQLSMALLINT, SQLCHAR*, SQLSMALLINT, SQLCHAR*, SQLSMALLINT);
+		SQLRETURN PutData(SQLHANDLE, SQLPOINTER, SQLINTEGER);
+		SQLRETURN SetEnvAttr(SQLHANDLE, SQLINTEGER, SQLPOINTER, SQLINTEGER);
+		SQLRETURN SetConnectAttr(SQLHANDLE, SQLINTEGER, SQLPOINTER, SQLINTEGER);
+		SQLRETURN SetStmtAttr(SQLHANDLE, SQLINTEGER, SQLPOINTER, SQLINTEGER);
+
+        // "Current handle" methods
+		SQLHANDLE getCurrHenv() { return _currHenv; }
+		SQLHANDLE getCurrHdbc() { return _currHdbc; }
+		SQLHANDLE getCurrHstmt() { return _currHstmt; }
+        SQLHANDLE getCurrHdesc() { return _currHdesc; }
+
+        // Error-message-related functions
+        void SetSuppressWarnings(BOOL suppress) { _suppressWarnings = suppress; }
+        void process_error(SQLRETURN, SQLSMALLINT, SQLHANDLE);
+
+        // Convenient information-gathering routines.
+		void PrintDBCInfo();
+
+        // Unicode-related stuff
+        void HexPrint(SQLSMALLINT grouping, void * ptr, SQLINTEGER len);
+
+
+};
+
+#endif

@@ -315,6 +315,7 @@ public:
 
         choices.Add( IO_MGR::ShowType( IO_MGR::KICAD ) );
         choices.Add( IO_MGR::ShowType( IO_MGR::GITHUB ) );
+        choices.Add( IO_MGR::ShowType( IO_MGR::MYODBC ) );
         choices.Add( IO_MGR::ShowType( IO_MGR::LEGACY ) );
         choices.Add( IO_MGR::ShowType( IO_MGR::EAGLE ) );
         choices.Add( IO_MGR::ShowType( IO_MGR::GEDA_PCB ) );

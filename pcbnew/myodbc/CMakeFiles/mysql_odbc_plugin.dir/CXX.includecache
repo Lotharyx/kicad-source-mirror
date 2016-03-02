@@ -1,0 +1,36 @@
+#IncludeRegexLine: ^[ 	]*#[ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/brian/kicad_sources/kicad.bzr/pcbnew/mysql_odbc/mysql_adapter.cpp
+
+/home/brian/kicad_sources/kicad.bzr/pcbnew/mysql_odbc/mysql_odbc_plugin.cpp
+sstream
+-
+boost/ptr_container/ptr_map.hpp
+-
+set
+-
+fctsys.h
+-
+io_mgr.h
+-
+richio.h
+-
+pcb_parser.h
+-
+class_board.h
+-
+mysql_odbc_plugin.h
+-
+class_module.h
+-
+macros.h
+-
+fp_lib_table.h
+-
+
