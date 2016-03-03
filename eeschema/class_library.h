@@ -344,6 +344,7 @@ public:
  */
 class PART_LIB
 {
+protected:
     int             type;           ///< Library type indicator.
     wxFileName      fileName;       ///< Library file name.
     wxDateTime      timeStamp;      ///< Library save time and date.
@@ -361,7 +362,7 @@ class PART_LIB
 
 public:
     PART_LIB( int aType, const wxString& aFileName );
-    ~PART_LIB();
+    virtual ~PART_LIB();
 
     /**
      * Function Save
@@ -370,7 +371,7 @@ public:
      * @param aFormatter An #OUTPUTFORMATTER object to write the library to.
      * @return True if success writing to \a aFormatter.
      */
-    bool Save( OUTPUTFORMATTER& aFormatter );
+    virtual bool Save( OUTPUTFORMATTER& aFormatter );
 
     /**
      * Function SaveDocs
@@ -379,7 +380,7 @@ public:
      * @param aFormatter An #OUTPUTFORMATTER object to write the library documentation to.
      * @return True if success writing to \a aFormatter.
      */
-    bool SaveDocs( OUTPUTFORMATTER& aFormatter );
+    virtual bool SaveDocs( OUTPUTFORMATTER& aFormatter );
 
     /**
      * Load library from file.
@@ -387,14 +388,15 @@ public:
      * @param aErrorMsg - Error message if load fails.
      * @return True if load was successful otherwise false.
      */
-    bool Load( wxString& aErrorMsg );
+    virtual bool Load( wxString& aErrorMsg );
 
-    bool LoadDocs( wxString& aErrorMsg );
+    virtual bool LoadDocs( wxString& aErrorMsg );
 
 private:
     bool SaveHeader( OUTPUTFORMATTER& aFormatter );
 
     bool LoadHeader( LINE_READER& aLineReader );
+protected:
     void LoadAliases( LIB_PART* aPart );
 
 public:

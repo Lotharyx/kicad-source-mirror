@@ -42,6 +42,7 @@
 
 #include <general.h>
 #include <class_library.h>
+#include <class_odbc_library.h>
 
 #include <boost/foreach.hpp>
 
@@ -800,8 +801,21 @@ bool PART_LIB::SaveHeader( OUTPUTFORMATTER& aFormatter )
 
 PART_LIB* PART_LIB::LoadLibrary( const wxString& aFileName ) throw( IO_ERROR, boost::bad_pointer )
 {
-    std::auto_ptr<PART_LIB> lib( new PART_LIB( LIBRARY_TYPE_EESCHEMA, aFileName ) );
-
+    std::auto_ptr<PART_LIB> lib( 0 );
+    { // Scope for the FILE_LINE_READER about to be used
+        // Read the first line of the file to see what kind of library it is
+        // because the library manager doesn't remember the extensions (so we can't
+        // key off that; it will always look for xxxx.lib)
+        wxFileName filename( aFileName );
+        filename.SetExt( SchematicLibraryFileExtension );
+        FILE * file = wxFopen( filename.GetFullPath(), wxT( "rt" ) );
+        FILE_LINE_READER reader( file, filename.GetFullPath() );
+        wxString line( reader.ReadLine() );
+        if(line.StartsWith( "ODBC" ) )
+            lib.reset( new ODBC_LIB( LIBRARY_TYPE_EESCHEMA, aFileName ) );
+        else
+            lib.reset( new PART_LIB( LIBRARY_TYPE_EESCHEMA, aFileName ) );
+    }
     wxBusyCursor ShowWait;
 
     wxString errorMsg;

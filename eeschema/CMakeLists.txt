@@ -80,6 +80,7 @@ set( EESCHEMA_SRCS
     class_drc_erc_item.cpp
     class_libentry.cpp
     class_library.cpp
+    class_odbc_library.cpp
     class_netlist_object.cpp
     cmp_library_keywords.cpp
     cmp_library_lexer.cpp
@@ -243,6 +244,8 @@ target_link_libraries( eeschema
     common
     bitmaps
     ${wxWidgets_LIBRARIES}
+    odbc
+    odbcinst
     )
 
 # the DSO (KIFACE) housing the main eeschema code:
@@ -256,6 +259,8 @@ target_link_libraries( eeschema_kiface
     polygon
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
+    odbc
+    odbcinst
     )
 set_target_properties( eeschema_kiface PROPERTIES
     # Decorate OUTPUT_NAME with PREFIX and SUFFIX, creating something like

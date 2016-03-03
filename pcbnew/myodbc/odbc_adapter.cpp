@@ -9,6 +9,7 @@
 #include "odbc_adapter.h"
 #include <sqlext.h>
 #include <memory>
+#include <sstream>
 
 #define SQL_OK(x) ((x) == SQL_SUCCESS || (x) == SQL_SUCCESS_WITH_INFO || (x) == SQL_NO_DATA_FOUND)
 
@@ -188,39 +189,42 @@ bool ODBC_ADAPTER::SqlOK(SQLRETURN r, SQLSMALLINT handle_type, SQLHANDLE handle)
 }
 
 void ODBC_ADAPTER::AppendErrorMessages(SQLSMALLINT handle_type, SQLHANDLE handle) {
-    SQLCHAR sqlstate[6] = {0,0,0,0,0,0};
-    SQLINTEGER native_error = 0;
-    std::auto_ptr<SQLCHAR> message;
-    SQLSMALLINT message_length = 0;
-    SQLRETURN r = SQL_SUCCESS;
-    for(int rec = 1; r == SQL_SUCCESS; ++rec) {
-        r = SQLGetDiagRec(
-            handle_type,
-            handle,
-            rec,
-            sqlstate,
-            &native_error,
-            NULL,
-            0, 
-            &message_length);
-        if(r == SQL_SUCCESS || r == SQL_SUCCESS_WITH_INFO) {
-            message.reset(new SQLCHAR[message_length + 1]);
-            r = SQLGetDiagRec(
-                handle_type,
-                handle,
-                rec,
-                sqlstate,
-                &native_error,
-                message.get(),
-                message_length + 1, 
-                &message_length);
-            if(SQL_OK(r)) {
-                m_last_errstr += (const char *)message.get();
-                m_last_errstr += "\n";
-            }
-        }
-            
-    }
+    std::stringstream out; 
+    DumpAllErrors(out);
+    m_last_errstr += out.str();
+    //     SQLCHAR sqlstate[6] = {0,0,0,0,0,0};
+    //     SQLINTEGER native_error = 0;
+    //     std::auto_ptr<SQLCHAR> message;
+    //     SQLSMALLINT message_length = 0;
+    //     SQLRETURN r = SQL_SUCCESS;
+    //     for(int rec = 1; r == SQL_SUCCESS; ++rec) {
+    //         r = SQLGetDiagRec(
+    //             handle_type,
+    //             handle,
+    //             rec,
+    //             sqlstate,
+    //             &native_error,
+    //             NULL,
+    //             0, 
+    //             &message_length);
+    //         if(r == SQL_SUCCESS || r == SQL_SUCCESS_WITH_INFO) {
+    //             message.reset(new SQLCHAR[message_length + 1]);
+    //             r = SQLGetDiagRec(
+    //                 handle_type,
+    //                 handle,
+    //                 rec,
+    //                 sqlstate,
+    //                 &native_error,
+    //                 message.get(),
+    //                 message_length + 1, 
+    //                 &message_length);
+    //             if(SQL_OK(r)) {
+    //                 m_last_errstr += (const char *)message.get();
+    //                 m_last_errstr += "\n";
+    //             }
+    //         }
+    //             
+    //     }
 }
 
 void ODBC_ADAPTER::DumpErrors(SQLSMALLINT handle_type, SQLHANDLE handle, std::ostream & target) {
