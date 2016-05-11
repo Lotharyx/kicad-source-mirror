@@ -1,8 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 CERN
+ * Copyright (C) 2013-2016 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+ * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -34,9 +35,9 @@
 #include <gal/graphics_abstraction_layer.h>
 #include <painter.h>
 
-#ifdef PROFILE
+#ifdef __WXDEBUG__
 #include <profile.h>
-#endif /* PROFILE  */
+#endif /* __WXDEBUG__  */
 
 using namespace KIGFX;
 
@@ -422,9 +423,11 @@ void VIEW::UpdateLayerColor( int aLayer )
 
     r.SetMaximum();
 
+    m_gal->BeginUpdate();
     updateItemsColor visitor( aLayer, m_painter, m_gal );
     m_layers[aLayer].items->Query( r, visitor );
     MarkTargetDirty( m_layers[aLayer].target );
+    m_gal->EndUpdate();
 }
 
 
@@ -433,6 +436,7 @@ void VIEW::UpdateAllLayersColor()
     BOX2I r;
 
     r.SetMaximum();
+    m_gal->BeginUpdate();
 
     for( LAYER_MAP_ITER i = m_layers.begin(); i != m_layers.end(); ++i )
     {
@@ -446,6 +450,7 @@ void VIEW::UpdateAllLayersColor()
         l->items->Query( r, visitor );
     }
 
+    m_gal->EndUpdate();
     MarkDirty();
 }
 
@@ -482,8 +487,11 @@ void VIEW::ChangeLayerDepth( int aLayer, int aDepth )
 
     r.SetMaximum();
 
+    m_gal->BeginUpdate();
     changeItemsDepth visitor( aLayer, aDepth, m_gal );
     m_layers[aLayer].items->Query( r, visitor );
+    m_gal->EndUpdate();
+
     MarkTargetDirty( m_layers[aLayer].target );
 }
 
@@ -688,8 +696,8 @@ struct VIEW::unlinkItem
 
 struct VIEW::recacheItem
 {
-    recacheItem( VIEW* aView, GAL* aGal, int aLayer, bool aImmediately ) :
-        view( aView ), gal( aGal ), layer( aLayer ), immediately( aImmediately )
+    recacheItem( VIEW* aView, GAL* aGal, int aLayer ) :
+        view( aView ), gal( aGal ), layer( aLayer )
     {
     }
 
@@ -701,21 +709,8 @@ struct VIEW::recacheItem
         if( group >= 0 )
             gal->DeleteGroup( group );
 
-        if( immediately )
-        {
-            group = gal->BeginGroup();
-            aItem->setGroup( layer, group );
-
-            if( !view->m_painter->Draw( aItem, layer ) )
-                aItem->ViewDraw( layer, gal ); // Alternative drawing method
-
-            gal->EndGroup();
-        }
-        else
-        {
-            aItem->ViewUpdate( VIEW_ITEM::ALL );
-            aItem->setGroup( layer, -1 );
-        }
+        aItem->setGroup( layer, -1 );
+        aItem->ViewUpdate( VIEW_ITEM::ALL );
 
         return true;
     }
@@ -723,7 +718,6 @@ struct VIEW::recacheItem
     VIEW* view;
     GAL* gal;
     int layer;
-    bool immediately;
 };
 
 
@@ -774,10 +768,10 @@ void VIEW::ClearTargets()
 
 void VIEW::Redraw()
 {
-#ifdef PROFILE
+#ifdef __WXDEBUG__
     prof_counter totalRealTime;
     prof_start( &totalRealTime );
-#endif /* PROFILE */
+#endif /* __WXDEBUG__ */
 
     VECTOR2D screenSize = m_gal->GetScreenPixelSize();
     BOX2I    rect( ToWorld( VECTOR2D( 0, 0 ) ),
@@ -791,11 +785,10 @@ void VIEW::Redraw()
     markTargetClean( TARGET_NONCACHED );
     markTargetClean( TARGET_OVERLAY );
 
-#ifdef PROFILE
+#ifdef __WXDEBUG__
     prof_end( &totalRealTime );
-
-    wxLogDebug( wxT( "Redraw: %.1f ms" ), totalRealTime.msecs() );
-#endif /* PROFILE */
+    wxLogTrace( "GAL_PROFILE", wxT( "VIEW::Redraw(): %.1f ms" ), totalRealTime.msecs() );
+#endif /* __WXDEBUG__ */
 }
 
 
@@ -999,16 +992,11 @@ bool VIEW::areRequiredLayersEnabled( int aLayerId ) const
 }
 
 
-void VIEW::RecacheAllItems( bool aImmediately )
+void VIEW::RecacheAllItems()
 {
     BOX2I r;
 
     r.SetMaximum();
-
-#ifdef PROFILE
-    prof_counter totalRealTime;
-    prof_start( &totalRealTime );
-#endif /* PROFILE */
 
     for( LAYER_MAP_ITER i = m_layers.begin(); i != m_layers.end(); ++i )
     {
@@ -1016,26 +1004,17 @@ void VIEW::RecacheAllItems( bool aImmediately )
 
         if( IsCached( l->id ) )
         {
-            m_gal->SetTarget( l->target );
-            m_gal->SetLayerDepth( l->renderingOrder );
-            recacheItem visitor( this, m_gal, l->id, aImmediately );
+            recacheItem visitor( this, m_gal, l->id );
             l->items->Query( r, visitor );
-            MarkTargetDirty( l->target );
         }
     }
-
-#ifdef PROFILE
-    prof_end( &totalRealTime );
-
-    wxLogDebug( wxT( "RecacheAllItems::immediately: %u %.1f ms" ),
-                aImmediately, totalRealTime.msecs() );
-#endif /* PROFILE */
 }
 
 
 void VIEW::UpdateItems()
 {
-    // Update items that need this
+    m_gal->BeginUpdate();
+
     BOOST_FOREACH( VIEW_ITEM* item, m_needsUpdate )
     {
         assert( item->viewRequiredUpdate() != VIEW_ITEM::NONE );
@@ -1043,6 +1022,7 @@ void VIEW::UpdateItems()
         invalidateItem( item, item->viewRequiredUpdate() );
     }
 
+    m_gal->EndUpdate();
     m_needsUpdate.clear();
 }
 

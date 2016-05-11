@@ -44,6 +44,9 @@
 #define BUTT_SIZE_Y             18
 #define BUTT_VOID               4
 
+// See selcolor.cpp:
+extern EDA_COLOR_T DisplayColorFrame( wxWindow* aParent, EDA_COLOR_T aOldColor );
+
 const wxEventType LAYER_WIDGET::EVT_LAYER_COLOR_CHANGE = wxNewEventType();
 
 /* XPM
@@ -271,9 +274,9 @@ void LAYER_WIDGET::OnLeftDownLayers( wxMouseEvent& event )
 }
 
 
-void LAYER_WIDGET::OnMiddleDownLayerColor( wxMouseEvent& event )
+void LAYER_WIDGET::OnMiddleDownLayerColor( wxMouseEvent& aEvent )
 {
-    wxBitmapButton* eventSource = (wxBitmapButton*) event.GetEventObject();
+    wxBitmapButton* eventSource = (wxBitmapButton*) aEvent.GetEventObject();
 
     wxString colorTxt = eventSource->GetName();
 

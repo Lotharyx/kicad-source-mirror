@@ -3,8 +3,8 @@
  *
  * Copyright (C) 2012 Jean-Pierre Charras, jean-pierre.charras@ujf-grenoble.fr
  * Copyright (C) 2012 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2012-2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2015 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2012-2016 Wayne Stambaugh <stambaughw@verizon.net>
+ * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,22 +28,23 @@
  * @file menubar_pcbframe.cpp
  * Pcbnew editor menu bar
  */
-#include <fctsys.h>
-#include <pgm_base.h>
-#include <kiface_i.h>
-#include <pcbnew.h>
-#include <wxPcbStruct.h>
-#include <hotkeys.h>
-#include <pcbnew_id.h>
 
-#include <help_common_strings.h>
+
 #include <menus_helpers.h>
+#include <kiface_i.h>
+#include <pgm_base.h>
+#include <wxPcbStruct.h>
+
+#include "help_common_strings.h"
+#include "hotkeys.h"
+#include "pcbnew.h"
+#include "pcbnew_id.h"
+
 
 void PCB_EDIT_FRAME::ReCreateMenuBar()
 {
     wxString    text;
     wxMenuBar*  menuBar = GetMenuBar();
-    wxMenuItem * menutitem;
 
     wxFileHistory&  fhist = Kiface().GetFileHistory();
 
@@ -65,11 +66,11 @@ void PCB_EDIT_FRAME::ReCreateMenuBar()
     if( Kiface().IsSingle() )   // not when under a project mgr
     {
         AddMenuItem( filesMenu, ID_NEW_BOARD,
-                _( "&New" ),
+                _( "&New Board" ),
                 _( "Clear current board and initialize a new one" ),
                 KiBitmap( new_pcb_xpm ) );
 
-        text = AddHotkeyName( _( "&Open" ), m_hotkeysDescrList, HK_LOAD_BOARD );
+        text = AddHotkeyName( _( "&Open Board" ), m_hotkeysDescrList, HK_LOAD_BOARD );
         AddMenuItem( filesMenu, ID_LOAD_FILE, text,
                 _( "Delete current board and load new board" ),
                 KiBitmap( open_brd_file_xpm ) );
@@ -94,15 +95,18 @@ void PCB_EDIT_FRAME::ReCreateMenuBar()
                      -1, _( "Open &Recent" ),
                      _( "Open a recent opened board" ),
                      KiBitmap( open_project_xpm ) );
+        AddMenuItem( filesMenu, ID_APPEND_FILE,
+                     _( "&Append Board" ),
+                     _( "Append another Pcbnew board to the current loaded board. Available only when Pcbnew runs in stand alone mode" ),
+                     KiBitmap( import_xpm ) );
+
+        filesMenu->AppendSeparator();
+
+        AddMenuItem( filesMenu, ID_IMPORT_NON_KICAD_BOARD,
+                _( "Import Non Kicad Board File" ),
+                _( "Load a non KiCad board file and convert it to a .kicad_pcb file" ),
+                KiBitmap( import_brd_file_xpm ) );
     }
-
-    menutitem = AddMenuItem( filesMenu, ID_APPEND_FILE,
-                 _( "&Append Board" ),
-                 _( "Append another Pcbnew board to the current loaded board. Available only when Pcbnew runs in stand alone mode" ),
-                 KiBitmap( import_xpm ) );
-    if( ! Kiface().IsSingle() )      // disable when under a project mgr
-        menutitem->Enable( false );
-
 
     filesMenu->AppendSeparator();
 
@@ -572,24 +576,6 @@ void PCB_EDIT_FRAME::ReCreateMenuBar()
     // Hotkey submenu
     AddHotkeyConfigMenu( configmenu );
 
-    //--- Macros submenu --------------------------------------------------------
-    wxMenu* macrosMenu = new wxMenu;
-
-    AddMenuItem( macrosMenu, ID_PREFRENCES_MACROS_SAVE,
-                 _( "&Save macros" ),
-                 _( "Save macros to file" ),
-                 KiBitmap( save_setup_xpm ) );
-
-    AddMenuItem( macrosMenu, ID_PREFRENCES_MACROS_READ,
-                 _( "&Read macros" ),
-                 _( "Read macros from file" ),
-                 KiBitmap( read_setup_xpm ) );
-
-    AddMenuItem( configmenu, macrosMenu,
-                 -1, _( "Ma&cros" ),
-                 _( "Macros save/read operations" ),
-                 KiBitmap( macros_record_xpm ) );
-
     configmenu->AppendSeparator();
 
     AddMenuItem( configmenu, ID_CONFIG_SAVE,
@@ -649,8 +635,6 @@ void PCB_EDIT_FRAME::ReCreateMenuBar()
                  KiBitmap( copper_layers_setup_xpm ) );
 
     wxMenu* helpMenu = new wxMenu;
-
-    AddHelpVersionInfoMenuEntry( helpMenu );
 
     AddMenuItem( helpMenu, wxID_HELP,
                  _( "Pcbnew &Manual" ),

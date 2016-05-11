@@ -1,10 +1,10 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2015 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
  * Copyright (C) 2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2015 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -576,7 +576,9 @@ void MODULE::GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList )
     // display schematic path
     aList.push_back( MSG_PANEL_ITEM( _( "Netlist Path" ), m_Path, BROWN ) );
 
-    aList.push_back( MSG_PANEL_ITEM( _( "Layer" ), GetLayerName(), RED ) );
+    // display the board side placement
+    aList.push_back( MSG_PANEL_ITEM( _( "Board Side" ),
+                     IsFlipped()? _( "Back (Flipped)" ) : _( "Front" ), RED ) );
 
     EDA_ITEM* PtStruct = m_Pads;
     nbpad = 0;
@@ -600,8 +602,8 @@ void MODULE::GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList )
 
     aList.push_back( MSG_PANEL_ITEM( _( "Status" ), msg, MAGENTA ) );
 
-    msg.Printf( wxT( "%.1f" ), m_Orient / 10.0 );
-    aList.push_back( MSG_PANEL_ITEM( _( "Angle" ), msg, BROWN ) );
+    msg.Printf( wxT( "%.1f" ), GetOrientationDegrees() );
+    aList.push_back( MSG_PANEL_ITEM( _( "Rotation" ), msg, BROWN ) );
 
     // Controls on right side of the dialog
     switch( m_Attributs & 255 )
@@ -900,16 +902,16 @@ void MODULE::ViewGetLayers( int aLayers[], int& aCount ) const
 
     switch( m_Layer )
     {
+
+    default:
+        wxASSERT_MSG( false, "Illegal layer" );    // do you really have modules placed on other layers?
+        // pass through
     case F_Cu:
         aLayers[1] = ITEM_GAL_LAYER( MOD_FR_VISIBLE );
         break;
 
     case B_Cu:
         aLayers[1] = ITEM_GAL_LAYER( MOD_BK_VISIBLE );
-        break;
-
-    default:
-        assert( false );    // do you really have modules placed on inner layers?
         break;
     }
 }
@@ -1176,6 +1178,7 @@ BOARD_ITEM* MODULE::DuplicateAndAddItem( const BOARD_ITEM* aItem,
         new_item = new_pad;
         break;
     }
+
     case PCB_MODULE_TEXT_T:
     {
         const TEXTE_MODULE* old_text = static_cast<const TEXTE_MODULE*>( aItem );
@@ -1191,6 +1194,7 @@ BOARD_ITEM* MODULE::DuplicateAndAddItem( const BOARD_ITEM* aItem,
         }
         break;
     }
+
     case PCB_MODULE_EDGE_T:
     {
         EDGE_MODULE* new_edge = new EDGE_MODULE(
@@ -1200,6 +1204,7 @@ BOARD_ITEM* MODULE::DuplicateAndAddItem( const BOARD_ITEM* aItem,
         new_item = new_edge;
         break;
     }
+
     case PCB_MODULE_T:
         // Ignore the module itself
         break;

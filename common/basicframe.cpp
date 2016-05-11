@@ -28,26 +28,17 @@
  * @brief EDA_BASE_FRAME class implementation.
  */
 
-#include <wx/aboutdlg.h>
-#include <wx/fontdlg.h>
-#include <wx/clipbrd.h>
-#include <wx/statline.h>
-#include <wx/platinfo.h>
+
 #include <wx/stdpaths.h>
+#include <wx/string.h>
 
-#include <build_version.h>
-#include <fctsys.h>
-#include <pgm_base.h>
-#include <kiface_i.h>
-#include <id.h>
-#include <eda_doc.h>
-#include <wxstruct.h>
-#include <macros.h>
-#include <menus_helpers.h>
 #include <dialog_shim.h>
+#include <eda_doc.h>
+#include <id.h>
+#include <kiface_i.h>
+#include <pgm_base.h>
+#include <wxstruct.h>
 
-#include <boost/version.hpp>
-#include <typeinfo>
 
 /// The default auto save interval is 10 minutes.
 #define DEFAULT_AUTO_SAVE_INTERVAL 600
@@ -93,10 +84,6 @@ EDA_BASE_FRAME::EDA_BASE_FRAME( wxWindow* aParent, FRAME_T aFrameType,
     GetClientSize( &m_FrameSize.x, &m_FrameSize.y );
 
     m_FramePos.x = m_FramePos.y = 0;
-
-    Connect( ID_HELP_COPY_VERSION_STRING,
-             wxEVT_COMMAND_MENU_SELECTED,
-             wxCommandEventHandler( EDA_BASE_FRAME::CopyVersionInfoToClipboard ) );
 
     Connect( ID_AUTO_SAVE_TIMER, wxEVT_TIMER,
              wxTimerEventHandler( EDA_BASE_FRAME::onAutoSaveTimer ) );
@@ -454,26 +441,18 @@ void EDA_BASE_FRAME::GetKicadHelp( wxCommandEvent& event )
 
 void EDA_BASE_FRAME::OnSelectPreferredEditor( wxCommandEvent& event )
 {
-    wxFileName  fn = Pgm().GetEditorName();
-    wxString    wildcard( wxT( "*" ) );
+    // Ask for the current editor and instruct GetEditorName() to not show 
+    // unless we pass false as argument.
+    wxString editorname = Pgm().GetEditorName( false );
 
-#ifdef __WINDOWS__
-    wildcard += wxT( ".exe" );
-#endif
+    // Ask the user to select a new editor, but suggest the current one as the default.
+    editorname = Pgm().AskUserForPreferredEditor( editorname );
 
-    wildcard.Printf( _( "Executable file (%s)|%s" ),
-                     GetChars( wildcard ), GetChars( wildcard ) );
-
-    wxFileDialog dlg( this, _( "Select Preferred Editor" ), fn.GetPath(),
-                      fn.GetFullName(), wildcard,
-                      wxFD_OPEN | wxFD_FILE_MUST_EXIST );
-
-    if( dlg.ShowModal() == wxID_CANCEL )
-        return;
-
-    wxString editor = dlg.GetPath();
-
-    Pgm().SetEditorName( editor );
+    // If we have a new editor name request it to be copied to m_editor_name and saved
+    // to the preferences file. If the user cancelled the dialog then the previous
+    // value will be retained.
+    if( !editorname.IsEmpty() )
+        Pgm().SetEditorName( editorname );
 }
 
 
@@ -483,6 +462,9 @@ void EDA_BASE_FRAME::GetKicadAbout( wxCommandEvent& event )
     ShowAboutDialog( this );
 }
 
+#if 0
+// The following block was removed in KiCAD-origin;
+// keeping here until I find the replacement
 
 void EDA_BASE_FRAME::AddHelpVersionInfoMenuEntry( wxMenu* aMenu )
 {
@@ -628,7 +610,7 @@ void EDA_BASE_FRAME::CopyVersionInfoToClipboard( wxCommandEvent&  event )
 
     wxMessageBox( msg_version, _( "Version Information (copied to the clipboard)" ) );
 }
-
+#endif // section removed in KiCAD-origin
 
 bool EDA_BASE_FRAME::IsWritable( const wxFileName& aFileName )
 {
@@ -741,4 +723,3 @@ void EDA_BASE_FRAME::CheckForAutoSaveFile( const wxFileName& aFileName,
         wxRemoveFile( autoSaveFileName.GetFullPath() );
     }
 }
-

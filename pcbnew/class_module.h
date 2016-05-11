@@ -161,7 +161,10 @@ public:
     const wxPoint& GetPosition() const          { return m_Pos; }   // was overload
 
     void SetOrientation( double newangle );
+    void SetOrientationDegrees( double aOrientation ) { SetOrientation( aOrientation*10.0 ); }
     double GetOrientation() const { return m_Orient; }
+    double GetOrientationDegrees() const   { return m_Orient/10.0; }
+    double GetOrientationRadians() const   { return m_Orient*M_PI/1800; }
 
     const FPID& GetFPID() const { return m_fpid; }
     void SetFPID( const FPID& aFPID ) { m_fpid = aFPID; }
@@ -235,9 +238,9 @@ public:
 #define MODULE_PADS_LOCKED  0x08        ///< In autoplace: module waiting for autoplace
 
 
-    bool IsLocked() const
+    bool IsLocked() const // override
     {
-        return (m_ModuleStatus & MODULE_is_LOCKED) != 0;
+        return ( m_ModuleStatus & MODULE_is_LOCKED ) != 0;
     }
 
     /**
@@ -245,7 +248,7 @@ public:
      * sets the MODULE_is_LOCKED bit in the m_ModuleStatus
      * @param isLocked When true means turn on locked status, else unlock
      */
-    void SetLocked( bool isLocked )
+    void SetLocked( bool isLocked ) // override
     {
         if( isLocked )
             m_ModuleStatus |= MODULE_is_LOCKED;

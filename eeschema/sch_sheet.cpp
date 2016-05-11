@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 1992-2016 Kicad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
@@ -142,7 +142,7 @@ bool SCH_SHEET::Save( FILE* aFile ) const
         return false;
 
     //save the unique timestamp, like other schematic parts.
-    if( fprintf( aFile, "U %8.8lX\n", m_TimeStamp ) == EOF )
+    if( fprintf( aFile, "U %8.8lX\n", (unsigned long) m_TimeStamp ) == EOF )
         return false;
 
     /* Save schematic sheetname and filename. */
@@ -180,6 +180,7 @@ bool SCH_SHEET::Load( LINE_READER& aLine, wxString& aErrorMsg )
     int              fieldNdx, size;
     SCH_SHEET_PIN*   sheetPin;
     char*            ptcar;
+    unsigned long    timeStamp = 0UL;
 
     SetTimeStamp( GetNewTimeStamp() );
 
@@ -219,9 +220,13 @@ bool SCH_SHEET::Load( LINE_READER& aLine, wxString& aErrorMsg )
 
         if( ((char*)aLine)[0] == 'U' )
         {
-            sscanf( ((char*)aLine) + 1, "%lX", &m_TimeStamp );
+            sscanf( ((char*)aLine) + 1, "%lX", &timeStamp );
+
+            m_TimeStamp = (time_t) timeStamp;
+
             if( m_TimeStamp == 0 )  // zero is not unique!
                 SetTimeStamp( GetNewTimeStamp() );
+
             continue;
         }
 
@@ -637,9 +642,12 @@ const EDA_RECT SCH_SHEET::GetBoundingBox() const
 
     // Determine length of texts
     wxString text    = wxT( "Sheet: " ) + m_name;
-    int      textlen  = GraphicTextWidth( text, m_sheetNameSize, false, lineWidth );
+    int      textlen  = GraphicTextWidth( text, wxSize( m_sheetNameSize, m_sheetNameSize ),
+                                          false, false );
+
     text = wxT( "File: " ) + m_fileName;
-    int      textlen2 = GraphicTextWidth( text, m_fileNameSize, false, lineWidth );
+    int      textlen2 = GraphicTextWidth( text, wxSize( m_fileNameSize, m_fileNameSize ),
+                                          false, false );
 
     // Calculate bounding box X size:
     textlen = std::max( textlen, textlen2 );

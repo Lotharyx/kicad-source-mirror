@@ -41,7 +41,6 @@
 void DIALOG_PLOT_SCHEMATIC::createPDFFile( bool aPlotAll, bool aPlotFrameRef )
 {
     SCH_SCREEN*     screen = m_parent->GetScreen();
-    SCH_SHEET_PATH* sheetpath;
     SCH_SHEET_PATH  oldsheetpath = m_parent->GetCurrentSheet();     // sheetpath is saved here
 
     /* When printing all pages, the printed page is not the current page.  In
@@ -51,9 +50,12 @@ void DIALOG_PLOT_SCHEMATIC::createPDFFile( bool aPlotAll, bool aPlotFrameRef )
      * between many sheets and component references depend on the actual sheet
      * path used
      */
-    SCH_SHEET_LIST SheetList( NULL );
+    SCH_SHEET_LIST sheetList;
 
-    sheetpath = SheetList.GetFirst();
+    if( aPlotAll )
+        sheetList.BuildSheetList( g_RootSheet );
+    else
+        sheetList.push_back( m_parent->GetCurrentSheet() );
 
     // Allocate the plotter and set the job level parameter
     PDF_PLOTTER* plotter = new PDF_PLOTTER();
@@ -64,27 +66,16 @@ void DIALOG_PLOT_SCHEMATIC::createPDFFile( bool aPlotAll, bool aPlotFrameRef )
     wxString msg;
     wxFileName plotFileName;
     REPORTER& reporter = m_MessagesBox->Reporter();
+    LOCALE_IO toggle;       // Switch the locale to standard C
 
-    // First page handling is different
-    bool first_page = true;
-
-    do
+    for( unsigned i = 0; i < sheetList.size(); i++ )
     {
-        // Step over the schematic hierarchy
-        if( aPlotAll )
-        {
-            wxCHECK_RET( sheetpath != NULL, wxT( "Attempt to plot undefined sheet path." ) );
+        m_parent->SetCurrentSheet( sheetList[i] );
+        m_parent->GetCurrentSheet().UpdateAllScreenReferences();
+        m_parent->SetSheetNumberAndCount();
+        screen = m_parent->GetCurrentSheet().LastScreen();
 
-            SCH_SHEET_PATH list = *sheetpath;
-
-            m_parent->SetCurrentSheet( list );
-            m_parent->GetCurrentSheet().UpdateAllScreenReferences();
-            m_parent->SetSheetNumberAndCount();
-            screen = m_parent->GetCurrentSheet().LastScreen();
-            sheetpath = SheetList.GetNext();
-        }
-
-        if( first_page )
+        if( i == 0 )
         {
 
             try
@@ -104,11 +95,8 @@ void DIALOG_PLOT_SCHEMATIC::createPDFFile( bool aPlotAll, bool aPlotFrameRef )
                 }
 
                 // Open the plotter and do the first page
-                SetLocaleTo_C_standard();
                 setupPlotPagePDF( plotter, screen );
                 plotter->StartPlot();
-                first_page = false;
-
             }
             catch( const IO_ERROR& e )
             {
@@ -131,7 +119,7 @@ void DIALOG_PLOT_SCHEMATIC::createPDFFile( bool aPlotAll, bool aPlotFrameRef )
         }
 
         plotOneSheetPDF( plotter, screen, aPlotFrameRef );
-    } while( aPlotAll && sheetpath );
+    }
 
     // Everything done, close the plot and restore the environment
     msg.Printf( _( "Plot: '%s' OK.\n" ), GetChars( plotFileName.GetFullPath() ) );
@@ -146,7 +134,6 @@ void DIALOG_PLOT_SCHEMATIC::restoreEnvironment( PDF_PLOTTER* aPlotter,
 {
     aPlotter->EndPlot();
     delete aPlotter;
-    SetLocaleTo_Default();
 
     // Restore the previous sheet
     m_parent->SetCurrentSheet( aOldsheetpath );

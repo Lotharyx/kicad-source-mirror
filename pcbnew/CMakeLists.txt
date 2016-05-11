@@ -123,13 +123,13 @@ set( PCBNEW_DIALOGS
     dialogs/dialog_print_for_modedit_base.cpp
     dialogs/dialog_print_using_printer.cpp
     dialogs/dialog_print_using_printer_base.cpp
-    dialogs/dialog_orient_footprints.cpp
-    dialogs/dialog_orient_footprints_base.cpp
     dialogs/dialog_mask_clearance.cpp
     dialogs/dialog_mask_clearance_base.cpp
     dialogs/dialog_SVG_print.cpp
     dialogs/dialog_SVG_print_base.cpp
     dialogs/dialog_select_pretty_lib.cpp
+    dialogs/dialog_select_net_from_list_base.cpp
+    dialogs/dialog_select_net_from_list.cpp
     dialogs/dialog_select_pretty_lib_base.cpp
     dialogs/dialog_set_grid.cpp
     dialogs/dialog_set_grid_base.cpp
@@ -185,6 +185,7 @@ set( PCBNEW_CLASS_SRCS
     pcbframe.cpp
     pcb_base_edit_frame.cpp
     append_board_to_current.cpp
+    array_creator.cpp
     attribut.cpp
     board_items_to_polygon_shape_transform.cpp
     board_undo_redo.cpp

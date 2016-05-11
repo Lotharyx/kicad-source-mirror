@@ -56,9 +56,6 @@ class LIB_EDIT_FRAME : public SCH_BASE_FRAME
     wxComboBox*     m_partSelectBox;        ///< a Box to select a part to edit (if any)
     wxComboBox*     m_aliasSelectBox;       ///< a box to select the alias to edit (if any)
 
-    wxString m_lastLibImportPath;
-    wxString m_lastLibExportPath;
-
     /** Convert of the item currently being drawn. */
     bool m_drawSpecificConvert;
 
@@ -508,6 +505,12 @@ private:
      * rotates the current item.
      */
     void OnRotateItem( wxCommandEvent& aEvent );
+
+    /**
+     * Function OnOrient
+     * Handles the ID_LIBEDIT_MIRROR_X and ID_LIBEDIT_MIRROR_Y events.
+     */
+    void OnOrient( wxCommandEvent& aEvent );
 
     /**
      * Function deleteItem

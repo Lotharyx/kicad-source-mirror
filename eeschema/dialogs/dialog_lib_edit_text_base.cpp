@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version Mar 28 2015)
+// C++ code generated with wxFormBuilder (version May  6 2016)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO "NOT" EDIT THIS FILE!
@@ -33,13 +33,12 @@ DIALOG_LIB_EDIT_TEXT_BASE::DIALOG_LIB_EDIT_TEXT_BASE( wxWindow* parent, wxWindow
 	bTextValueOptsSizer = new wxBoxSizer( wxHORIZONTAL );
 	
 	m_TextValue = new wxTextCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
-	m_TextValue->SetMaxLength( 0 ); 
 	m_TextValue->SetMinSize( wxSize( 200,-1 ) );
 	
-	bTextValueOptsSizer->Add( m_TextValue, 1, wxBOTTOM|wxEXPAND|wxLEFT|wxRIGHT, 5 );
+	bTextValueOptsSizer->Add( m_TextValue, 1, wxALIGN_CENTER_HORIZONTAL|wxALL|wxEXPAND, 5 );
 	
 	m_TextValueSelectButton = new wxButton( this, wxID_ANY, _("Select"), wxDefaultPosition, wxDefaultSize, 0 );
-	bTextValueOptsSizer->Add( m_TextValueSelectButton, 0, wxALIGN_CENTER_VERTICAL|wxBOTTOM, 5 );
+	bTextValueOptsSizer->Add( m_TextValueSelectButton, 0, wxALIGN_CENTER_VERTICAL, 5 );
 	
 	
 	bTextValueBoxSizer->Add( bTextValueOptsSizer, 1, wxEXPAND, 5 );
@@ -55,18 +54,17 @@ DIALOG_LIB_EDIT_TEXT_BASE::DIALOG_LIB_EDIT_TEXT_BASE( wxWindow* parent, wxWindow
 	bTextSizeSizer->Add( m_TextSizeText, 0, wxTOP|wxRIGHT|wxLEFT, 5 );
 	
 	m_TextSize = new wxTextCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
-	m_TextSize->SetMaxLength( 0 ); 
-	bTextSizeSizer->Add( m_TextSize, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
+	bTextSizeSizer->Add( m_TextSize, 0, wxALIGN_CENTER_VERTICAL|wxBOTTOM|wxLEFT|wxRIGHT|wxTOP, 5 );
 	
 	
-	bUpperBoxSizer->Add( bTextSizeSizer, 0, 0, 5 );
+	bUpperBoxSizer->Add( bTextSizeSizer, 0, wxEXPAND, 5 );
 	
 	
 	bPropertiesSizer->Add( bUpperBoxSizer, 0, wxEXPAND, 5 );
 	
 	m_PowerComponentValues = new wxStaticText( this, wxID_ANY, _("Power component value text cannot be modified!"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_PowerComponentValues->Wrap( -1 );
-	m_PowerComponentValues->SetFont( wxFont( wxNORMAL_FONT->GetPointSize(), 70, 90, 92, false, wxEmptyString ) );
+	m_PowerComponentValues->SetFont( wxFont( wxNORMAL_FONT->GetPointSize(), wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD, false, wxEmptyString ) );
 	
 	bPropertiesSizer->Add( m_PowerComponentValues, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
 	
@@ -115,14 +113,8 @@ DIALOG_LIB_EDIT_TEXT_BASE::DIALOG_LIB_EDIT_TEXT_BASE( wxWindow* parent, wxWindow
 	
 	bPropertiesSizer->Add( bBottomtBoxSizer, 1, wxEXPAND, 5 );
 	
-	wxBoxSizer* bRightSizer;
-	bRightSizer = new wxBoxSizer( wxVERTICAL );
 	
-	
-	bPropertiesSizer->Add( bRightSizer, 0, wxEXPAND, 5 );
-	
-	
-	bMainSizer->Add( bPropertiesSizer, 1, wxEXPAND|wxLEFT|wxRIGHT|wxTOP, 6 );
+	bMainSizer->Add( bPropertiesSizer, 1, wxEXPAND, 6 );
 	
 	m_sdbSizerButtons = new wxStdDialogButtonSizer();
 	m_sdbSizerButtonsOK = new wxButton( this, wxID_OK );
@@ -131,11 +123,12 @@ DIALOG_LIB_EDIT_TEXT_BASE::DIALOG_LIB_EDIT_TEXT_BASE( wxWindow* parent, wxWindow
 	m_sdbSizerButtons->AddButton( m_sdbSizerButtonsCancel );
 	m_sdbSizerButtons->Realize();
 	
-	bMainSizer->Add( m_sdbSizerButtons, 0, wxALL|wxEXPAND, 12 );
+	bMainSizer->Add( m_sdbSizerButtons, 0, wxBOTTOM|wxEXPAND|wxTOP, 5 );
 	
 	
 	this->SetSizer( bMainSizer );
 	this->Layout();
+	bMainSizer->Fit( this );
 	
 	// Connect Events
 	this->Connect( wxEVT_CLOSE_WINDOW, wxCloseEventHandler( DIALOG_LIB_EDIT_TEXT_BASE::OnCloseDialog ) );

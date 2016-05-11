@@ -342,9 +342,12 @@ void PCB_EDIT_FRAME::ReCreateOptToolbar()
     m_optionsToolBar->AddTool( ID_TB_OPTIONS_SELECT_UNIT_MM, wxEmptyString,
                                KiBitmap( unit_mm_xpm ),
                                _( "Units in millimeters" ), wxITEM_CHECK );
+
+#ifndef __APPLE__
     m_optionsToolBar->AddTool( ID_TB_OPTIONS_SELECT_CURSOR, wxEmptyString,
                                KiBitmap( cursor_shape_xpm ),
                                _( "Change cursor shape" ), wxITEM_CHECK );
+#endif // !__APPLE__
 
     m_optionsToolBar->AddSeparator();
     m_optionsToolBar->AddTool( ID_TB_OPTIONS_SHOW_RATSNEST, wxEmptyString,
@@ -670,8 +673,8 @@ void PCB_EDIT_FRAME::updateViaSizeSelectBox()
         {
             msg  << wxT("/ ");
             wxString hole_str;
-            double valueMils = To_User_Unit( INCHES, hole ) * 1000;
-            double value_mm = To_User_Unit( MILLIMETRES, hole );
+            valueMils = To_User_Unit( INCHES, hole ) * 1000;
+            value_mm = To_User_Unit( MILLIMETRES, hole );
 
             if( mmFirst )
                 hole_str.Printf( _( "%.2f mm (%.1f mils)" ),

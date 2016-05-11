@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version Jun  5 2014)
+// C++ code generated with wxFormBuilder (version Mar 28 2016)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO "NOT" EDIT THIS FILE!
@@ -25,6 +25,7 @@ class PCB_LAYER_BOX_SELECTOR;
 #include <wx/bmpcbox.h>
 #include <wx/choice.h>
 #include <wx/sizer.h>
+#include <wx/statline.h>
 #include <wx/button.h>
 #include <wx/dialog.h>
 
@@ -60,20 +61,15 @@ class DIALOG_PCB_TEXT_PROPERTIES_BASE : public DIALOG_SHIM
 		wxStaticText* m_ThicknessLabel;
 		wxStaticText* m_orientationLabel;
 		wxTextCtrl* m_ThicknessCtrl;
-		wxTextCtrl* m_OrientationCtrl;
+		wxTextCtrl* m_OrientCtrl;
+		wxStaticLine* m_staticline1;
 		wxStdDialogButtonSizer* m_StandardSizer;
 		wxButton* m_StandardSizerOK;
 		wxButton* m_StandardSizerCancel;
-		
-		// Virtual event handlers, overide them in your derived class
-		virtual void OnClose( wxCloseEvent& event ) { event.Skip(); }
-		virtual void OnCancelClick( wxCommandEvent& event ) { event.Skip(); }
-		virtual void OnOkClick( wxCommandEvent& event ) { event.Skip(); }
-		
 	
 	public:
 		
-		DIALOG_PCB_TEXT_PROPERTIES_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Text Properties"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( -1,-1 ), long style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER|wxSYSTEM_MENU ); 
+		DIALOG_PCB_TEXT_PROPERTIES_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Text Properties"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( 510,405 ), long style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER|wxSYSTEM_MENU ); 
 		~DIALOG_PCB_TEXT_PROPERTIES_BASE();
 	
 };

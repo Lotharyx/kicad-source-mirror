@@ -4,7 +4,7 @@ of KiCad which can be found at the [download][] page on the [KiCad website][].  
 from source is not for the faint of heart and is not recommended unless you have reasonable
 software development experience.  This document contains the instructions on how to build KiCad
 from source on the supported platforms.  It is not intended as a guide for installing or building
-[library dependencies](#library_dependencies).  Please consult you platforms documentation for
+[library dependencies](#library_dependencies).  Please consult your platforms documentation for
 installing packages or the source code when building the library dependencies.  Currently the
 supported platforms are Windows Versions 7-10, just about any version of Linux, and OSX
 10.7-10.10.  You may be able to build KiCad on other platforms but it is not supported.  On
@@ -95,7 +95,7 @@ abstraction library [GAL] and is always required to build KiCad.
 
 ## Cairo 2D Graphics Library ## {#cairo}
 
-The [Cairo][] 2D graphics library is used as a fallback rendering canvas when OpenGL is no
+The [Cairo][] 2D graphics library is used as a fallback rendering canvas when OpenGL is not
 available and is always required to build KiCad.
 
 ## Python Programming Language ## {#python}
@@ -180,7 +180,7 @@ GitHub using the following command:
 
 Here is a list of source links:
 
-Stable release archive: https://launchpad.net/kicad/4.0/4.0.1/+download/kicad-4.0.1.tar.xz
+Stable release archive: https://launchpad.net/kicad/4.0/4.0.2/+download/kicad-4.0.2.tar.xz
 
 Development branch: https://code.launchpad.net/~kicad-product-committers/kicad/product
 
@@ -256,7 +256,9 @@ the following commands:
               mingw-w64-x86_64-glew \
               mingw-w64-x86_64-curl \
               mingw-w64-x86_64-wxPython \
-              mingw-w64-x86_64-wxWidgets
+              mingw-w64-x86_64-wxWidgets \
+              mingw-w64-x86_64-toolchain \
+              mingw-w64-x86_64-glm
     cd kicad-source
     mkdir -p build/release
     mkdir build/debug               # Optional for debug build.
@@ -365,10 +367,9 @@ currently known issues when building KiCad on any platform.
 As of version 5 of [GNU GCC][], using the default configuration of downloading, patching, and
 building of Boost 1.54 will cause the KiCad build to fail.  Therefore a newer version of Boost
 must be used to build KiCad.  If your system has Boost 1.56 or greater installed, you job is
-straight forward.  Configure your KiCad build using `-DKICAD_SKIP_BOOST=ON`.  If your system
-does not have Boost 1.56 or greater installed, you will have to download and [build Boost][]
-from source.  If you are building Boost on windows using [MinGW][] you will have to apply the
-Boost patches in the KiCad source [patches folder][].
+straight forward.  If your system does not have Boost 1.56 or greater installed, you will have
+to download and [build Boost][] from source.  If you are building Boost on windows using [MinGW][]
+you will have to apply the Boost patches in the KiCad source [patches folder][].
 
 
 [download]: http://kicad-pcb.org/download/

@@ -40,7 +40,7 @@ bool ODBC_LIB::Save( OUTPUTFORMATTER& aFormatter ) {
         isModified = false;
     }
     
-        bool had_errors = false;
+    bool had_errors = false;
     wxString error_message;
     
     // When eeschema symbol editor calls Save, it has already opened and 
@@ -130,8 +130,91 @@ bool ODBC_LIB::Save( OUTPUTFORMATTER& aFormatter ) {
 }
 
 bool ODBC_LIB::SaveDocs( OUTPUTFORMATTER& aFormatter ) { 
-    /// \todo Extend database schema to include dcm info
+    bool had_errors = false;
+    wxString error_message;
+    
+    // There is no actual docs file (well, one is created, but it remains empty)
+    // therefore we do not write to the formatter we're given.
+    
+    // Now do the RDBMS work.
+    // The DB has a stored procedure which will only create a new revision of the symbol if the data has changed.
+    // What we do is loop through ALL our symbols, serialize them, and hand them over to the stored procedure one
+    // by one.
+    ConnectAndGetStatementHandle();
+    std::string query = "CALL update_symbol_docs(?, ?)";
+    SQLRETURN rc = SQLPrepareA(m_hstmt, (SQLCHAR *)query.c_str(), query.length());
+    if(rc == SQL_SUCCESS) {
+        SQLLEN name_indptr;
+        rc = SQLBindParameter(m_hstmt, 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 255, 0, (SQLPOINTER)98, 0, &name_indptr); // The 98 is an application-defined value which will be returned by SQLParamData
+        if(rc == SQL_SUCCESS) {
+            SQLLEN data_indptr;
+            rc = SQLBindParameter(m_hstmt, 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_LONGVARCHAR, 0, 0, (SQLPOINTER)99, 0, &data_indptr); // The 99 is an application-defined value which will be returned by SQLParamData
+            if(rc == SQL_SUCCESS) {
+                for( LIB_ALIAS_MAP::iterator it=m_amap.begin();  it!=m_amap.end();  it++ )
+                {
+                    if( !it->second->IsRoot() )
+                        continue;
+                    
+                    STRING_FORMATTER formatter;
+                    it->second->SaveDoc( formatter );
+                    std::string part_name(it->second->GetPart()->GetName());
+                    std::string db_name = part_name;
+                    if(m_symbol_db_names.find(part_name) == m_symbol_db_names.end()) {
+                        m_symbol_db_names[part_name] = db_name;
+                    } else {
+                        db_name = m_symbol_db_names[part_name];
+                    }
+                                        name_indptr = SQL_DATA_AT_EXEC;
+                                        data_indptr = SQL_DATA_AT_EXEC;
+                                        rc = SQLExecute(m_hstmt);
+                                        if(rc == SQL_NEED_DATA) {
+                                            SQLPOINTER param_id;
+                                            while((rc = SQLParamData(m_hstmt, &param_id)) == SQL_NEED_DATA) {
+                                                if(param_id == (SQLPOINTER)98) {
+                                                    rc = SQLPutData(m_hstmt, (SQLPOINTER)db_name.c_str(), SQL_NTS);
+                                                }
+                                                                            if(param_id == (SQLPOINTER)99) {
+                                                                                rc = SQLPutData(m_hstmt, (SQLPOINTER)formatter.GetString().c_str(), SQL_NTS);
+                                                                            }
+                                                                                                        if(rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
+                                                                                                            error_message = GetAllODBCErrors();
+                                                                                                            error_message.Prepend( "ODBC Library: Library save docs failed (put data).  Details:\n" );
+                                                                                                            had_errors = true;
+                                                                                                        }
+                                            }
+                                                                    if(rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
+                                                                        error_message = GetAllODBCErrors();
+                                                                        error_message.Prepend( "ODBC Library: Library save docs failed (ParamData).  Details:\n" );
+                                                                        had_errors = true;
+                                                                    }
+                                        } else {
+                                            error_message = GetAllODBCErrors();
+                                            error_message.Prepend( "ODBC Library: Library save docs failed (execute).  Details:\n" );
+                                            had_errors = true;
+                                        }
+                }
+            } else {
+                error_message = GetAllODBCErrors();
+                error_message.Prepend( "ODBC Library: Library save docs failed (bind data).  Details:\n" );
+                had_errors = true;
+            }
+        } else {
+            error_message = GetAllODBCErrors();
+            error_message.Prepend( "ODBC Library: Library save docs failed (bind ID).  Details:\n" );
+            had_errors = true;
+        }
+    } else {
+        error_message = GetAllODBCErrors();
+        error_message.Prepend( "ODBC Library: Library save docs failed (prepare).  Details:\n" );
+        had_errors = true;
+    }
+    
+    DisconnectAndCleanUp();
+    if(had_errors)
+        THROW_IO_ERROR(error_message);
+    
     return true; 
+        
 }
 
 
