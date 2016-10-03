@@ -137,7 +137,7 @@ void PCB_EDIT_FRAME::Process_Config( wxCommandEvent& event )
                     wxString msg = wxString::Format( _(
                         "Error occurred saving the global footprint library "
                         "table:\n\n%s" ),
-                        GetChars( ioe.errorText.GetData() )
+                        GetChars( ioe.What().GetData() )
                         );
                     wxMessageBox( msg, _( "File Save Error" ), wxOK | wxICON_ERROR );
                 }
@@ -159,7 +159,7 @@ void PCB_EDIT_FRAME::Process_Config( wxCommandEvent& event )
                     wxString msg = wxString::Format( _(
                         "Error occurred saving project specific footprint library "
                         "table:\n\n%s" ),
-                        GetChars( ioe.errorText )
+                        GetChars( ioe.What() )
                         );
                     wxMessageBox( msg, _( "File Save Error" ), wxOK | wxICON_ERROR );
                 }
@@ -409,8 +409,6 @@ PARAM_CFG_ARRAY& PCB_EDIT_FRAME::GetConfigurationSettings()
         m_configSettings.push_back( new PARAM_CFG_INT( true, wxT( "MaxLnkS" ),
                                                        &displ_opts->m_MaxLinksShowed,
                                                        3, 0, 15 ) );
-        m_configSettings.push_back( new PARAM_CFG_BOOL( true, wxT( "ShowMRa" ),
-                                                        &displ_opts->m_Show_Module_Ratsnest, true ) );
         m_configSettings.push_back( new PARAM_CFG_BOOL( true, wxT( "TwoSegT" ),
                                                         &g_TwoSegmentTrackBuild, true ) );
         m_configSettings.push_back( new PARAM_CFG_BOOL( true, wxT( "SegmPcb45Only" )

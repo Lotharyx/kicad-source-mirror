@@ -28,7 +28,6 @@
 
 
 #include <dialog_edit_module_for_BoardEditor_base.h>
-#include <3d_struct.h>
 #include <wx/valnum.h>
 
 class PANEL_PREV_3D;
@@ -41,10 +40,11 @@ private:
     MODULE*                     m_CurrentModule;
     TEXTE_MODULE*               m_ReferenceCopy;
     TEXTE_MODULE*               m_ValueCopy;
-    std::vector <S3D_MASTER*>   m_Shapes3D_list;
+    std::vector <S3D_INFO>      m_shapes3D_list;
     int                         m_LastSelected3DShapeIndex;
     static size_t               m_page; // remember the last open page during session
     PANEL_PREV_3D*              m_PreviewPane;
+    MODULE*                     m_currentModuleCopy;
 
     wxFloatingPointValidator<double>    m_OrientValidator;
     double  m_OrientValue;
@@ -69,31 +69,46 @@ private:
     void BrowseAndAdd3DShapeFile();
     void InitBoardProperties();
     void InitModeditProperties();
-    void Transfert3DValuesToDisplay( S3D_MASTER * aStruct3DSource );
-    void TransfertDisplayTo3DValues( int aIndexSelection );
     void Edit3DShapeFileName();
 
     // virtual event functions
-    void OnEditValue( wxCommandEvent& event );
-    void OnEditReference( wxCommandEvent& event );
+    void OnEditValue( wxCommandEvent& event ) override;
+    void OnEditReference( wxCommandEvent& event ) override;
     void On3DShapeSelection( wxCommandEvent& event );
-    void On3DShapeNameSelected( wxCommandEvent& event );
-    void Edit3DShapeFilename( wxCommandEvent& event )
+    void On3DShapeNameSelected( wxCommandEvent& event ) override;
+    void Edit3DShapeFilename( wxCommandEvent& event ) override
     {
         Edit3DShapeFileName();
     }
-    void Remove3DShape( wxCommandEvent& event );
-    void Add3DShape( wxCommandEvent& event )
+    void Remove3DShape( wxCommandEvent& event ) override;
+    void Add3DShape( wxCommandEvent& event ) override
     {
         BrowseAndAdd3DShapeFile();
     }
-    void GotoModuleEditor( wxCommandEvent& event );
-    void ExchangeModule( wxCommandEvent& event );
-    void ModuleOrientEvent( wxCommandEvent& event );
-    void Cfg3DPath( wxCommandEvent& event );
+    void GotoModuleEditor( wxCommandEvent& event ) override;
+    void ExchangeModule( wxCommandEvent& event ) override;
+    void ModuleOrientEvent( wxCommandEvent& event ) override;
+    void Cfg3DPath( wxCommandEvent& event ) override;
 
-    bool TransferDataToWindow();
-    bool TransferDataFromWindow();
+    void OnInitDlg( wxInitDialogEvent& event ) override
+    {
+        // Call the default wxDialog handler of a wxInitDialogEvent
+        TransferDataToWindow();
+
+        // Now all widgets have the size fixed, call FinishDialogSettings
+        FinishDialogSettings();
+    }
+
+    bool TransferDataToWindow() override;
+    bool TransferDataFromWindow() override;
+
+    /**
+     * @brief OnCloseWindow - called when the frame is closed
+     * @param event
+     */
+    void OnCloseWindow( wxCloseEvent &event );
+
+    DECLARE_EVENT_TABLE();
 };
 
 

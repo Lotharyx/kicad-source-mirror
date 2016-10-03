@@ -137,7 +137,7 @@ bool convex2pointDRC( wxPoint* aTref, int aTrefCount, wxPoint aPcompare, int aDi
 bool DRC::doTrackDrc( TRACK* aRefSeg, TRACK* aStart, bool testPads )
 {
     TRACK*    track;
-    wxPoint   delta;           // lenght on X and Y axis of segments
+    wxPoint   delta;           // length on X and Y axis of segments
     LSET layerMask;
     int       net_code_ref;
     wxPoint   shape_pos;
@@ -169,6 +169,12 @@ bool DRC::doTrackDrc( TRACK* aRefSeg, TRACK* aStart, bool testPads )
                                               DRCE_TOO_SMALL_MICROVIA, m_currentMarker );
                 return false;
             }
+            if( refvia->GetDrillValue() < dsnSettings.m_MicroViasMinDrill )
+            {
+                m_currentMarker = fillMarker( refvia, NULL,
+                                              DRCE_TOO_SMALL_MICROVIA_DRILL, m_currentMarker );
+                return false;
+            }
         }
         else
         {
@@ -176,6 +182,12 @@ bool DRC::doTrackDrc( TRACK* aRefSeg, TRACK* aStart, bool testPads )
             {
                 m_currentMarker = fillMarker( refvia, NULL,
                                               DRCE_TOO_SMALL_VIA, m_currentMarker );
+                return false;
+            }
+            if( refvia->GetDrillValue() < dsnSettings.m_ViasMinDrill )
+            {
+                m_currentMarker = fillMarker( refvia, NULL,
+                                              DRCE_TOO_SMALL_VIA_DRILL, m_currentMarker );
                 return false;
             }
         }
@@ -530,7 +542,7 @@ bool DRC::doTrackDrc( TRACK* aRefSeg, TRACK* aStart, bool testPads )
                     // Compute the segment orientation (angle) en 0,1 degre
                     double angle = ArcTangente( delta.y, delta.x );
 
-                    // Compute the segment lenght: delta.x = lenght after rotation
+                    // Compute the segment length: delta.x = length after rotation
                     RotatePoint( &delta, angle );
 
                     /* Comute the reference segment coordinates relatives to a

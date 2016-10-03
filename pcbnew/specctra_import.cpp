@@ -103,7 +103,7 @@ void PCB_EDIT_FRAME::ImportSpecctraSession( wxCommandEvent& event )
     }
     catch( const IO_ERROR& ioe )
     {
-        wxString msg = ioe.errorText;
+        wxString msg = ioe.What();
         msg += '\n';
         msg += _("BOARD may be corrupted, do not save it.");
         msg += '\n';
@@ -341,9 +341,9 @@ TRACK* SPECCTRA_DB::makeTRACK( PATH* aPath, int aPointIndex, int aNetcode ) thro
         via->SetLayerPair( topLayer, botLayer );
     }
 
-    if( via )
-        via->SetNetCode( aNetCode );
+    wxASSERT( via );
 
+    via->SetNetCode( aNetCode );
     return via;
 }
 

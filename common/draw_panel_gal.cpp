@@ -39,7 +39,6 @@
 #include <tool/tool_dispatcher.h>
 #include <tool/tool_manager.h>
 
-#include <boost/foreach.hpp>
 
 #ifdef PROFILE
 #include <profile.h>
@@ -64,7 +63,13 @@ EDA_DRAW_PANEL_GAL::EDA_DRAW_PANEL_GAL( wxWindow* aParentWindow, wxWindowID aWin
 
     SwitchBackend( aGalType );
     SetBackgroundStyle( wxBG_STYLE_CUSTOM );
+
+// Scrollbars broken in GAL on OSX
+#ifdef __WXMAC__
+    ShowScrollbars( wxSHOW_SB_NEVER, wxSHOW_SB_NEVER );
+#else
     ShowScrollbars( wxSHOW_SB_ALWAYS, wxSHOW_SB_ALWAYS );
+#endif
     EnableScrolling( false, false );    // otherwise Zoom Auto disables GAL canvas
 
     m_painter = new KIGFX::PCB_PAINTER( m_gal );
@@ -89,7 +94,7 @@ EDA_DRAW_PANEL_GAL::EDA_DRAW_PANEL_GAL( wxWindow* aParentWindow, wxWindowID aWin
         KIGFX::WX_VIEW_CONTROLS::EVT_REFRESH_MOUSE
     };
 
-    BOOST_FOREACH( wxEventType eventType, events )
+    for( wxEventType eventType : events )
     {
         Connect( eventType, wxEventHandler( EDA_DRAW_PANEL_GAL::onEvent ),
                  NULL, m_eventDispatcher );
@@ -120,7 +125,10 @@ EDA_DRAW_PANEL_GAL::EDA_DRAW_PANEL_GAL( wxWindow* aParentWindow, wxWindowID aWin
 
 EDA_DRAW_PANEL_GAL::~EDA_DRAW_PANEL_GAL()
 {
+    StopDrawing();
     SaveGalSettings();
+
+    assert( !m_drawing );
 
     delete m_painter;
     delete m_viewControls;
@@ -160,7 +168,11 @@ void EDA_DRAW_PANEL_GAL::onPaint( wxPaintEvent& WXUNUSED( aEvent ) )
     m_drawing = true;
     KIGFX::PCB_RENDER_SETTINGS* settings = static_cast<KIGFX::PCB_RENDER_SETTINGS*>( m_painter->GetSettings() );
 
+// Scrollbars broken in GAL on OSX
+#ifndef __WXMAC__
     m_viewControls->UpdateScrollbars();
+#endif
+
     m_view->UpdateItems();
 
     m_gal->BeginDrawing();
@@ -244,7 +256,7 @@ void EDA_DRAW_PANEL_GAL::SetEventDispatcher( TOOL_DISPATCHER* aEventDispatcher )
 
     if( m_eventDispatcher )
     {
-        BOOST_FOREACH( wxEventType type, eventTypes )
+        for( wxEventType type : eventTypes )
         {
             m_parent->Connect( type, wxCommandEventHandler( TOOL_DISPATCHER::DispatchWxCommand ),
                                NULL, m_eventDispatcher );
@@ -252,7 +264,7 @@ void EDA_DRAW_PANEL_GAL::SetEventDispatcher( TOOL_DISPATCHER* aEventDispatcher )
     }
     else
     {
-        BOOST_FOREACH( wxEventType type, eventTypes )
+        for( wxEventType type : eventTypes )
         {
             // While loop is used to be sure that all event handlers are removed.
             while( m_parent->Disconnect( type,
@@ -275,7 +287,6 @@ void EDA_DRAW_PANEL_GAL::StopDrawing()
     m_drawingEnabled = false;
     Disconnect( wxEVT_PAINT, wxPaintEventHandler( EDA_DRAW_PANEL_GAL::onPaint ), NULL, this );
     m_pendingRefresh = false;
-    m_drawing = true;
     m_refreshTimer.Stop();
 }
 
@@ -469,7 +480,7 @@ void EDA_DRAW_PANEL_GAL::onRefreshTimer( wxTimerEvent& aEvent )
 
 void EDA_DRAW_PANEL_GAL::onShowTimer( wxTimerEvent& aEvent )
 {
-    if( IsShownOnScreen() )
+    if( m_gal && m_gal->IsVisible() )
     {
         m_onShowTimer.Stop();
         OnShow();

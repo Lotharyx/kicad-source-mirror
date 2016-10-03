@@ -5,8 +5,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2015 Jean-Pierre Charras, jean-pierre.charras@ujf-grenoble.fr
- * Copyright (C) 2009 Dick Hollenbeck, dick@softplc.com
+ * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2009-2016 Dick Hollenbeck, dick@softplc.com
  * Copyright (C) 2004-2016 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
@@ -28,6 +28,9 @@
  */
 
 #include <fctsys.h>
+#include <confirm.h>
+#include <wildcards_and_files_ext.h>
+#include <pgm_base.h>
 #include <dialog_drc.h>
 #include <wxPcbStruct.h>
 #include <base_units.h>
@@ -38,27 +41,27 @@
  * and run DRC tests
  */
 
-DIALOG_DRC_CONTROL::DIALOG_DRC_CONTROL( DRC* aTester, PCB_EDIT_FRAME* parent ) :
-    DIALOG_DRC_CONTROL_BASE( parent )
+DIALOG_DRC_CONTROL::DIALOG_DRC_CONTROL( DRC* aTester, PCB_EDIT_FRAME* aEditorFrame,
+                                        wxWindow* aParent ) :
+    DIALOG_DRC_CONTROL_BASE( aParent )
 {
     m_tester = aTester;
-    m_Parent = parent;
-    m_currentBoard = m_Parent->GetBoard();
-    m_BrdSettings = m_Parent->GetBoard()->GetDesignSettings();
+    m_brdEditor = aEditorFrame;
+    m_currentBoard = m_brdEditor->GetBoard();
+    m_BrdSettings = m_brdEditor->GetBoard()->GetDesignSettings();
 
     InitValues();
-    if( GetSizer() )
-    {
-        GetSizer()->SetSizeHints( this );
-    }
 
-    Centre();
+    FixOSXCancelButtonIssue();
+
+    // Now all widgets have the size fixed, call FinishDialogSettings
+    FinishDialogSettings();
 }
 
 
 void DIALOG_DRC_CONTROL::OnActivateDlg( wxActivateEvent& event )
 {
-    if( m_currentBoard != m_Parent->GetBoard() )
+    if( m_currentBoard != m_brdEditor->GetBoard() )
     {
         // If m_currentBoard is not the current parent board,
         // (for instance because a new board was loaded),
@@ -66,13 +69,13 @@ void DIALOG_DRC_CONTROL::OnActivateDlg( wxActivateEvent& event )
         // in lists
         SetReturnCode( wxID_CANCEL );
         Close();
-        m_tester->DestroyDialog( wxID_CANCEL );
+        m_tester->DestroyDRCDialog( wxID_CANCEL );
         return;
     }
 
     // updating data which can be modified outside the dialog (DRC parameters, units ...)
     // because the dialog is not modal
-    m_BrdSettings = m_Parent->GetBoard()->GetDesignSettings();
+    m_BrdSettings = m_brdEditor->GetBoard()->GetDesignSettings();
     DisplayDRCValues();
 }
 
@@ -109,12 +112,12 @@ void DIALOG_DRC_CONTROL::InitValues()
 
     DisplayDRCValues();
 
-    Layout();      // adding the units above expanded Clearance text, now resize.
-
     // Set the initial "enabled" status of the browse button and the text
     // field for report name
     wxCommandEvent junk;
     OnReportCheckBoxClicked( junk );
+
+    Layout();      // adding the units above expanded Clearance text, now resize.
 
     SetFocus();
 }
@@ -127,33 +130,50 @@ void DIALOG_DRC_CONTROL::SetDrcParmeters( )
     m_BrdSettings.m_ViasMinSize = ValueFromTextCtrl( *m_SetViaMinSizeCtrl );
     m_BrdSettings.m_MicroViasMinSize = ValueFromTextCtrl( *m_SetMicroViakMinSizeCtrl );
 
-    m_Parent->GetBoard()->SetDesignSettings( m_BrdSettings );
+    m_brdEditor->GetBoard()->SetDesignSettings( m_BrdSettings );
 }
 
+
+void DIALOG_DRC_CONTROL::SetRptSettings( bool aEnable, const wxString& aFileName )
+{
+    m_RptFilenameCtrl->Enable( aEnable );
+    m_BrowseButton->Enable( aEnable );
+    m_CreateRptCtrl->SetValue( aEnable );
+    m_RptFilenameCtrl->SetValue( aFileName );
+}
+
+void DIALOG_DRC_CONTROL::GetRptSettings( bool* aEnable, wxString& aFileName )
+{
+    *aEnable = m_CreateRptCtrl->GetValue();
+    aFileName = m_RptFilenameCtrl->GetValue();
+}
 
 void DIALOG_DRC_CONTROL::OnStartdrcClick( wxCommandEvent& event )
 {
     wxString reportName;
 
-    if( m_CreateRptCtrl->IsChecked() )      // Create a file rpt
+    bool make_report = m_CreateRptCtrl->IsChecked();
+
+    if( make_report )      // Create a rpt file
     {
         reportName = m_RptFilenameCtrl->GetValue();
 
         if( reportName.IsEmpty() )
         {
-            wxCommandEvent junk;
-            OnButtonBrowseRptFileClick( junk );
+            wxCommandEvent dummy;
+            OnButtonBrowseRptFileClick( dummy );
         }
 
-        reportName = m_RptFilenameCtrl->GetValue();
+        if( !reportName.IsEmpty() )
+            reportName = makeValidFileNameReport();
     }
 
     SetDrcParmeters();
     m_tester->SetSettings( true,        // Pad to pad DRC test enabled
-                           true,        // unconnected pdas DRC test enabled
+                           true,        // unconnected pads DRC test enabled
                            true,        // DRC test for zones enabled
                            true,        // DRC test for keepout areas enabled
-                           reportName, m_CreateRptCtrl->IsChecked() );
+                           reportName, make_report );
 
     DelDRCMarkers();
 
@@ -162,7 +182,7 @@ void DIALOG_DRC_CONTROL::OnStartdrcClick( wxCommandEvent& event )
     // run all the tests, with no UI at this time.
     m_Messages->Clear();
     wxSafeYield();                          // Allows time slice to refresh the m_Messages window
-    m_Parent->GetBoard()->m_Status_Pcb = 0; // Force full connectivity and ratsnest recalculations
+    m_brdEditor->GetBoard()->m_Status_Pcb = 0; // Force full connectivity and ratsnest recalculations
     m_tester->RunTests(m_Messages);
     m_Notebook->ChangeSelection( 0 );       // display the 1at tab "...Markers ..."
 
@@ -170,17 +190,18 @@ void DIALOG_DRC_CONTROL::OnStartdrcClick( wxCommandEvent& event )
     // Generate the report
     if( !reportName.IsEmpty() )
     {
-        FILE* fp = wxFopen( reportName, wxT( "w" ) );
-        writeReport( fp );
-        fclose( fp );
+        if( writeReport( reportName ) )
+        {
+            wxString        msg;
+            msg.Printf( _( "Report file \"%s\" created" ), GetChars( reportName ) );
 
-        wxString        msg;
-        msg.Printf( _( "Report file \"%s\" created" ), GetChars( reportName ) );
-
-        wxString        caption( _( "Disk File Report Completed" ) );
-        wxMessageDialog popupWindow( this, msg, caption );
-
-        popupWindow.ShowModal();
+            wxString        caption( _( "Disk File Report Completed" ) );
+            wxMessageDialog popupWindow( this, msg, caption );
+            popupWindow.ShowModal();
+        }
+        else
+            DisplayError( this, wxString::Format( _( "Unable to create report file '%s' "),
+                          GetChars( reportName ) ) );
     }
 
     wxEndBusyCursor();
@@ -193,6 +214,7 @@ void DIALOG_DRC_CONTROL::OnDeleteAllClick( wxCommandEvent& event )
 {
     DelDRCMarkers();
     RedrawDrawPanel();
+    UpdateDisplayedCounts();
 }
 
 
@@ -200,7 +222,9 @@ void DIALOG_DRC_CONTROL::OnListUnconnectedClick( wxCommandEvent& event )
 {
     wxString reportName;
 
-    if( m_CreateRptCtrl->IsChecked() )      // Create a file rpt
+    bool make_report = m_CreateRptCtrl->IsChecked();
+
+    if( make_report )      // Create a file rpt
     {
         reportName = m_RptFilenameCtrl->GetValue();
 
@@ -210,16 +234,17 @@ void DIALOG_DRC_CONTROL::OnListUnconnectedClick( wxCommandEvent& event )
             OnButtonBrowseRptFileClick( junk );
         }
 
-        reportName = m_RptFilenameCtrl->GetValue();
+        if( !reportName.IsEmpty() )
+            reportName = makeValidFileNameReport();
     }
 
     SetDrcParmeters();
 
     m_tester->SetSettings( true,        // Pad to pad DRC test enabled
-                           true,        // unconnected pdas DRC test enabled
+                           true,        // unconnected pads DRC test enabled
                            true,        // DRC test for zones enabled
                            true,        // DRC test for keepout areas enabled
-                           reportName, m_CreateRptCtrl->IsChecked() );
+                           reportName, make_report );
 
     DelDRCMarkers();
 
@@ -233,16 +258,20 @@ void DIALOG_DRC_CONTROL::OnListUnconnectedClick( wxCommandEvent& event )
     // Generate the report
     if( !reportName.IsEmpty() )
     {
-        FILE* fp = wxFopen( reportName, wxT( "w" ) );
-        writeReport( fp );
-        fclose( fp );
-
-        wxString        msg;
-        msg.Printf( _( "Report file \"%s\" created" ), GetChars( reportName ) );
-        wxString        caption( _( "Disk File Report Completed" ) );
-        wxMessageDialog popupWindow( this, msg, caption );
-        popupWindow.ShowModal();
+        if( writeReport( reportName ) )
+        {
+            wxString        msg;
+            msg.Printf( _( "Report file \"%s\" created" ), GetChars( reportName ) );
+            wxString        caption( _( "Disk File Report Completed" ) );
+            wxMessageDialog popupWindow( this, msg, caption );
+            popupWindow.ShowModal();
+        }
+        else
+            DisplayError( this, wxString::Format( _( "Unable to create report file '%s' "),
+                          GetChars( reportName ) ) );
     }
+
+    UpdateDisplayedCounts();
 
     wxEndBusyCursor();
 
@@ -252,22 +281,15 @@ void DIALOG_DRC_CONTROL::OnListUnconnectedClick( wxCommandEvent& event )
 }
 
 
-/*!
- * wxEVT_COMMAND_BUTTON_CLICKED event handler for ID_BUTTON_BROWSE_RPT_FILE
- */
-
 void DIALOG_DRC_CONTROL::OnButtonBrowseRptFileClick( wxCommandEvent& event )
 {
-    wxFileName fn;
-    wxString   wildcard( _( "DRC report files (.rpt)|*.rpt" ) );
-    wxString   Ext( wxT( "rpt" ) );
+    wxFileName fn = m_brdEditor->GetBoard()->GetFileName();
+    fn.SetExt( ReportFileExtension );
+    wxString prj_path =  Prj().GetProjectPath();
 
-    fn = m_Parent->GetBoard()->GetFileName() + wxT( "-drc" );
-    fn.SetExt( Ext );
-
-    wxFileDialog dlg( this, _( "Save DRC Report File" ), wxEmptyString,
-                      fn.GetFullName(), wildcard,
-                      wxFD_SAVE | wxFD_OVERWRITE_PROMPT | wxFD_CHANGE_DIR );
+    wxFileDialog dlg( this, _( "Save DRC Report File" ), prj_path,
+                      fn.GetFullName(), ReportFileWildcard,
+                      wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     if( dlg.ShowModal() == wxID_CANCEL )
         return;
@@ -281,7 +303,9 @@ void DIALOG_DRC_CONTROL::OnOkClick( wxCommandEvent& event )
     SetReturnCode( wxID_OK );
     SetDrcParmeters();
 
-    m_tester->DestroyDialog( wxID_OK );
+    // The dialog can be modal or not modal.
+    // Leave the DRC caller destroy (or not) the dialog
+    m_tester->DestroyDRCDialog( wxID_OK );
 }
 
 
@@ -289,7 +313,9 @@ void DIALOG_DRC_CONTROL::OnCancelClick( wxCommandEvent& event )
 {
     SetReturnCode( wxID_CANCEL );
 
-    m_tester->DestroyDialog( wxID_CANCEL );
+    // The dialog can be modal or not modal.
+    // Leave the DRC caller destroy (or not) the dialog
+    m_tester->DestroyDRCDialog( wxID_CANCEL );
 }
 
 
@@ -299,16 +325,8 @@ void DIALOG_DRC_CONTROL::OnCancelClick( wxCommandEvent& event )
 
 void DIALOG_DRC_CONTROL::OnReportCheckBoxClicked( wxCommandEvent& event )
 {
-    if( m_CreateRptCtrl->IsChecked() )
-    {
-        m_RptFilenameCtrl->Enable( true );
-        m_BrowseButton->Enable( true );
-    }
-    else
-    {
-        m_RptFilenameCtrl->Enable( false );
-        m_BrowseButton->Enable( false );
-    }
+    m_RptFilenameCtrl->Enable( m_CreateRptCtrl->IsChecked() );
+    m_BrowseButton->Enable( m_CreateRptCtrl->IsChecked() );
 }
 
 
@@ -325,24 +343,22 @@ void DIALOG_DRC_CONTROL::OnLeftDClickClearance( wxMouseEvent& event )
         // Find the selected MARKER in the PCB, position cursor there.
         // Then close the dialog.
         const DRC_ITEM* item = m_ClearanceListBox->GetItem( selection );
+
         if( item )
         {
-            /*
-             *  // after the goto, process a button OK command later.
-             *  wxCommandEvent  cmd( wxEVT_COMMAND_BUTTON_CLICKED, wxID_OK );
-             *  ::wxPostEvent( GetEventHandler(), cmd );
-             */
+            m_brdEditor->CursorGoto( item->GetPointA() );
+            m_brdEditor->GetGalCanvas()->GetView()->SetCenter( VECTOR2D( item->GetPointA() ) );
 
-            m_Parent->CursorGoto( item->GetPointA() );
-            m_Parent->GetGalCanvas()->GetView()->SetCenter( VECTOR2D( item->GetPointA() ) );
+            if( !IsModal() )
+            {
+                // turn control over to m_brdEditor, hide this DIALOG_DRC_CONTROL window,
+                // no destruction so we can preserve listbox cursor
+                Show( false );
 
-            // turn control over to m_Parent, hide this DIALOG_DRC_CONTROL window,
-            // no destruction so we can preserve listbox cursor
-            Show( false );
-
-            // We do not want the clarification popup window.
-            // when releasing the left button in the main window
-            m_Parent->SkipNextLeftButtonReleaseEvent();
+                // We do not want the clarification popup window.
+                // when releasing the left button in the main window
+                m_brdEditor->SkipNextLeftButtonReleaseEvent();
+            }
         }
     }
 }
@@ -386,10 +402,11 @@ void DIALOG_DRC_CONTROL::OnPopupMenu( wxCommandEvent& event )
 
     if( item )
     {
-        m_Parent->CursorGoto( pos );
-        m_Parent->GetGalCanvas()->GetView()->SetCenter( VECTOR2D( item->GetPointA() ) );
+        m_brdEditor->CursorGoto( pos );
+        m_brdEditor->GetGalCanvas()->GetView()->SetCenter( VECTOR2D( item->GetPointA() ) );
 
-        Show( false );
+        if( !IsModal() )
+            Show( false );
     }
 }
 
@@ -466,14 +483,17 @@ void DIALOG_DRC_CONTROL::OnLeftDClickUnconnected( wxMouseEvent& event )
         const DRC_ITEM* item = m_UnconnectedListBox->GetItem( selection );
         if( item )
         {
-            m_Parent->CursorGoto( item->GetPointA() );
-            m_Parent->GetGalCanvas()->GetView()->SetCenter( VECTOR2D( item->GetPointA() ) );
+            m_brdEditor->CursorGoto( item->GetPointA() );
+            m_brdEditor->GetGalCanvas()->GetView()->SetCenter( VECTOR2D( item->GetPointA() ) );
 
-            Show( false );
+            if( !IsModal() )
+            {
+                Show( false );
 
-            // We do not want the clarification popup window.
-            // when releasing the left button in the main window
-            m_Parent->SkipNextLeftButtonReleaseEvent();
+                // We do not want the clarification popup window.
+                // when releasing the left button in the main window
+                m_brdEditor->SkipNextLeftButtonReleaseEvent();
+            }
         }
     }
 }
@@ -502,8 +522,8 @@ void DIALOG_DRC_CONTROL::OnMarkerSelectionEvent( wxCommandEvent& event )
         const DRC_ITEM* item = m_ClearanceListBox->GetItem( selection );
         if( item )
         {
-            m_Parent->CursorGoto( item->GetPointA(), false );
-            m_Parent->GetGalCanvas()->GetView()->SetCenter( VECTOR2D( item->GetPointA() ) );
+            m_brdEditor->CursorGoto( item->GetPointA(), false );
+            m_brdEditor->GetGalCanvas()->GetView()->SetCenter( VECTOR2D( item->GetPointA() ) );
         }
     }
 
@@ -525,8 +545,8 @@ void DIALOG_DRC_CONTROL::OnUnconnectedSelectionEvent( wxCommandEvent& event )
         const DRC_ITEM* item = m_UnconnectedListBox->GetItem( selection );
         if( item )
         {
-            m_Parent->CursorGoto( item->GetPointA(), false );
-            m_Parent->GetGalCanvas()->GetView()->SetCenter( VECTOR2D( item->GetPointA() ) );
+            m_brdEditor->CursorGoto( item->GetPointA(), false );
+            m_brdEditor->GetGalCanvas()->GetView()->SetCenter( VECTOR2D( item->GetPointA() ) );
         }
     }
 
@@ -536,25 +556,52 @@ void DIALOG_DRC_CONTROL::OnUnconnectedSelectionEvent( wxCommandEvent& event )
 
 void DIALOG_DRC_CONTROL::RedrawDrawPanel()
 {
-    m_Parent->GetCanvas()->Refresh();
+    m_brdEditor->GetCanvas()->Refresh();
 }
 
 
 void DIALOG_DRC_CONTROL::DelDRCMarkers()
 {
-    m_Parent->SetCurItem( NULL );           // clear curr item, because it could be a DRC marker
+    m_brdEditor->SetCurItem( NULL );           // clear curr item, because it could be a DRC marker
     m_ClearanceListBox->DeleteAllItems();
     m_UnconnectedListBox->DeleteAllItems();
     m_DeleteCurrentMarkerButton->Enable( false );
 }
 
 
-void DIALOG_DRC_CONTROL::writeReport( FILE* fp )
+const wxString DIALOG_DRC_CONTROL::makeValidFileNameReport()
 {
+    wxFileName fn = m_RptFilenameCtrl->GetValue();
+
+    if( !fn.HasExt() )
+    {
+        fn.SetExt( ReportFileExtension );
+        m_RptFilenameCtrl->SetValue( fn.GetFullPath() );
+    }
+
+    // Ensure it is an absolute filename. if it is given relative
+    // it will be made relative to the project
+    if( !fn.IsAbsolute() )
+    {
+        wxString prj_path =  Prj().GetProjectPath();
+        fn.MakeAbsolute( prj_path );
+    }
+
+    return fn.GetFullPath();
+}
+
+
+bool DIALOG_DRC_CONTROL::writeReport( const wxString& aFullFileName )
+{
+    FILE* fp = wxFopen( aFullFileName, wxT( "w" ) );
+
+    if( fp == NULL )
+        return false;
+
     int count;
 
     fprintf( fp, "** Drc report for %s **\n",
-             TO_UTF8( m_Parent->GetBoard()->GetFileName() ) );
+             TO_UTF8( m_brdEditor->GetBoard()->GetFileName() ) );
 
     wxDateTime now = wxDateTime::Now();
 
@@ -575,6 +622,10 @@ void DIALOG_DRC_CONTROL::writeReport( FILE* fp )
         fprintf( fp, "%s", TO_UTF8( m_UnconnectedListBox->GetItem( i )->ShowReport() ) );
 
     fprintf( fp, "\n** End of Report **\n" );
+
+    fclose( fp );
+
+    return true;
 }
 
 
@@ -608,4 +659,17 @@ void DIALOG_DRC_CONTROL::OnDeleteOneClick( wxCommandEvent& event )
              */
         }
     }
+
+    UpdateDisplayedCounts();
 }
+
+
+void DIALOG_DRC_CONTROL::UpdateDisplayedCounts()
+{
+    int marker_count = m_ClearanceListBox->GetItemCount();
+    int unconnected_count = m_UnconnectedListBox->GetItemCount();
+
+    m_MarkerCount->SetLabelText( wxString::Format( "%d", marker_count ) );
+    m_UnconnectedCount->SetLabelText( wxString::Format( "%d", unconnected_count ) );
+}
+

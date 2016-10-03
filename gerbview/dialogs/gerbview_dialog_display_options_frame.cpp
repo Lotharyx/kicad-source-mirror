@@ -33,7 +33,6 @@
 #include <macros.h>
 #include <class_drawpanel.h>
 
-#include <pcbplot.h>
 #include <gerbview.h>
 #include <gerbview_frame.h>
 #include <gerbview_dialog_display_options_frame_base.h>
@@ -53,13 +52,9 @@ public:
     ~DIALOG_DISPLAY_OPTIONS() {};
 
 private:
-    void OnOKBUttonClick( wxCommandEvent& event );
-    void OnCancelButtonClick( wxCommandEvent& event );
+    void OnOKBUttonClick( wxCommandEvent& event ) override;
+    void OnCancelButtonClick( wxCommandEvent& event ) override;
     void initOptDialog( );
-    void OnMiddleBtnPanEnbl( wxCommandEvent& event )
-    {
-        m_OptMiddleButtonPanLimited->Enable( m_OptMiddleButtonPan->GetValue() );
-    }
 };
 
 
@@ -133,9 +128,6 @@ void DIALOG_DISPLAY_OPTIONS::initOptDialog( )
 
     m_OptZoomNoCenter->SetValue( m_Parent->GetCanvas()->GetEnableZoomNoCenter() );
     m_OptMousewheelPan->SetValue( m_Parent->GetCanvas()->GetEnableMousewheelPan() );
-    m_OptMiddleButtonPan->SetValue( m_Parent->GetCanvas()->GetEnableMiddleButtonPan() );
-    m_OptMiddleButtonPanLimited->SetValue( m_Parent->GetCanvas()->GetMiddleButtonPanLimited() );
-    m_OptMiddleButtonPanLimited->Enable( m_OptMiddleButtonPan->GetValue() );
 }
 
 
@@ -181,8 +173,6 @@ void DIALOG_DISPLAY_OPTIONS::OnOKBUttonClick( wxCommandEvent& event )
 
     m_Parent->GetCanvas()->SetEnableZoomNoCenter( m_OptZoomNoCenter->GetValue() );
     m_Parent->GetCanvas()->SetEnableMousewheelPan( m_OptMousewheelPan->GetValue() );
-    m_Parent->GetCanvas()->SetEnableMiddleButtonPan( m_OptMiddleButtonPan->GetValue() );
-    m_Parent->GetCanvas()->SetMiddleButtonPanLimited( m_OptMiddleButtonPanLimited->GetValue() );
 
     m_Parent->GetCanvas()->Refresh();
 

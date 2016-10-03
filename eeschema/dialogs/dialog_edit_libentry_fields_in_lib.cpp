@@ -60,12 +60,12 @@ public:
 
 private:
     // Events handlers:
-    void OnInitDialog( wxInitDialogEvent& event );
-    void OnCloseDialog( wxCloseEvent& event );
+    void OnInitDialog( wxInitDialogEvent& event ) override;
+    void OnCloseDialog( wxCloseEvent& event ) override;
 
-    void OnListItemDeselected( wxListEvent& event );
-    void OnListItemSelected( wxListEvent& event );
-    void addFieldButtonHandler( wxCommandEvent& event );
+    void OnListItemDeselected( wxListEvent& event ) override;
+    void OnListItemSelected( wxListEvent& event ) override;
+    void addFieldButtonHandler( wxCommandEvent& event ) override;
 
     /**
      * Function deleteFieldButtonHandler
@@ -74,12 +74,12 @@ private:
      * If a field is empty, it is removed.
      * if not empty, the text is removed.
      */
-    void deleteFieldButtonHandler( wxCommandEvent& event );
+    void deleteFieldButtonHandler( wxCommandEvent& event ) override;
 
-    void moveUpButtonHandler( wxCommandEvent& event );
-    void OnCancelButtonClick( wxCommandEvent& event );
-    void OnOKButtonClick( wxCommandEvent& event );
-    void showButtonHandler( wxCommandEvent& event );
+    void moveUpButtonHandler( wxCommandEvent& event ) override;
+    void OnCancelButtonClick( wxCommandEvent& event ) override;
+    void OnOKButtonClick( wxCommandEvent& event ) override;
+    void showButtonHandler( wxCommandEvent& event ) override;
 
     // internal functions:
     void setSelectedFieldNdx( int aFieldNdx );
@@ -113,7 +113,12 @@ private:
      *   bad data into a field, and this value can be used to deny a row change.
      */
     bool copyPanelToSelectedField();
-    void setRowItem( int aFieldNdx, const LIB_FIELD& aField );
+
+    void setRowItem( int aFieldNdx, const wxString& aName, const wxString& aValue );
+    void setRowItem( int aFieldNdx, const LIB_FIELD& aField )
+    {
+        setRowItem( aFieldNdx, aField.GetName(), aField.GetText() );
+    }
 
     /**
      * Function updateDisplay
@@ -166,9 +171,6 @@ DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB::DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB(
     m_parent   = aParent;
     m_libEntry = aLibEntry;
     m_skipCopyFromPanel = false;
-
-    GetSizer()->SetSizeHints( this );
-    Centre();
 }
 
 
@@ -193,6 +195,11 @@ void DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB::OnInitDialog( wxInitDialogEvent& event 
     copySelectedFieldToPanel();
 
     stdDialogButtonSizerOK->SetDefault();
+
+    FixOSXCancelButtonIssue();
+
+    // Now all widgets have the size fixed, call FinishDialogSettings
+    FinishDialogSettings();
 }
 
 
@@ -408,6 +415,7 @@ void DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB::showButtonHandler( wxCommandEvent& even
         if( frame->ShowModal( &fpid, this ) )
         {
             fieldValueTextCtrl->SetValue( fpid );
+            setRowItem( fieldNdx, m_FieldsBuf[fieldNdx].GetName( false ), fpid );
         }
 
         frame->Destroy();
@@ -576,7 +584,7 @@ void DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB::initBuffers()
 }
 
 
-void DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB::setRowItem( int aFieldNdx, const LIB_FIELD& aField )
+void DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB::setRowItem( int aFieldNdx, const wxString& aName, const wxString& aValue )
 {
     wxASSERT( aFieldNdx >= 0 );
 
@@ -590,8 +598,8 @@ void DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB::setRowItem( int aFieldNdx, const LIB_FI
         fieldListCtrl->SetItem( ndx, COLUMN_TEXT, wxEmptyString );
     }
 
-    fieldListCtrl->SetItem( aFieldNdx, COLUMN_FIELD_NAME, aField.GetName() );
-    fieldListCtrl->SetItem( aFieldNdx, COLUMN_TEXT, aField.GetText() );
+    fieldListCtrl->SetItem( aFieldNdx, COLUMN_FIELD_NAME, aName );
+    fieldListCtrl->SetItem( aFieldNdx, COLUMN_TEXT, aValue );
 
     // recompute the column widths here, after setting texts
     fieldListCtrl->SetColumnWidth( COLUMN_FIELD_NAME, wxLIST_AUTOSIZE );
@@ -666,7 +674,7 @@ void DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB::copySelectedFieldToPanel()
     // if fieldNdx == REFERENCE, VALUE, then disable delete button
     deleteFieldButton->Enable( fieldNdx >= MANDATORY_FIELDS );
 
-    fieldValueTextCtrl->SetValidator( SCH_FIELD_VALIDATOR( field.GetId() ) );
+    fieldValueTextCtrl->SetValidator( SCH_FIELD_VALIDATOR( true, field.GetId() ) );
     fieldValueTextCtrl->SetValue( field.GetText() );
 
     textSizeTextCtrl->SetValue( EDA_GRAPHIC_TEXT_CTRL::FormatSize( g_UserUnit, field.GetSize().x ) );

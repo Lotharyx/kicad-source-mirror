@@ -21,7 +21,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <boost/bind.hpp>
+#include <functional>
+using namespace std::placeholders;
 
 #include <fctsys.h>
 #include <class_drawpanel.h>
@@ -29,6 +30,7 @@
 #include <pcbnew.h>
 #include <wxPcbStruct.h>
 #include <ratsnest_data.h>
+#include <board_commit.h>
 
 #include <class_board.h>
 #include <class_module.h>
@@ -107,11 +109,9 @@ void DIALOG_GLOBAL_DELETION::AcceptPcbDelete()
             return;
 
     BOARD*            pcb = m_Parent->GetBoard();
-    PICKED_ITEMS_LIST pickersList;
-    ITEM_PICKER       itemPicker( NULL, UR_DELETED );
+    BOARD_COMMIT      commit( m_Parent );
     BOARD_ITEM*       item;
     BOARD_ITEM*       nextitem;
-    RN_DATA*          ratsnest = pcb->GetRatsnest();
 
     LSET layers_filter = LSET().set();
 
@@ -127,11 +127,7 @@ void DIALOG_GLOBAL_DELETION::AcceptPcbDelete()
         {
             if( delAll || layers_filter[item->GetLayer()] )
             {
-                itemPicker.SetItem( item );
-                pickersList.PushItem( itemPicker );
-                pcb->Remove( item );
-                item->ViewRelease();
-                ratsnest->Remove( item );
+                commit.Remove( item );
                 gen_rastnest = true;
             }
             else
@@ -159,13 +155,9 @@ void DIALOG_GLOBAL_DELETION::AcceptPcbDelete()
         {
             nextitem = item->Next();
 
-            if( delAll ||
-                ( item->Type() == PCB_LINE_T && masque_layer[item->GetLayer()] ) )
+            if( delAll || ( item->Type() == PCB_LINE_T && masque_layer[item->GetLayer()] ) )
             {
-                itemPicker.SetItem( item );
-                pickersList.PushItem( itemPicker );
-                item->ViewRelease();
-                item->UnLink();
+                commit.Remove( item );
             }
         }
     }
@@ -178,13 +170,9 @@ void DIALOG_GLOBAL_DELETION::AcceptPcbDelete()
         {
             nextitem = item->Next();
 
-            if( delAll ||
-                ( item->Type() == PCB_TEXT_T && del_text_layers[item->GetLayer()] ) )
+            if( delAll || ( item->Type() == PCB_TEXT_T && del_text_layers[item->GetLayer()] ) )
             {
-                itemPicker.SetItem( item );
-                pickersList.PushItem( itemPicker );
-                item->ViewRelease();
-                item->UnLink();
+                commit.Remove( item );
             }
         }
     }
@@ -204,13 +192,7 @@ void DIALOG_GLOBAL_DELETION::AcceptPcbDelete()
 
             if( del_fp )
             {
-                itemPicker.SetItem( item );
-                pickersList.PushItem( itemPicker );
-                static_cast<MODULE*>( item )->RunOnChildren(
-                        boost::bind( &KIGFX::VIEW_ITEM::ViewRelease, _1 ) );
-                ratsnest->Remove( item );
-                item->ViewRelease();
-                item->UnLink();
+                commit.Remove( item );
                 gen_rastnest = true;
             }
         }
@@ -248,17 +230,12 @@ void DIALOG_GLOBAL_DELETION::AcceptPcbDelete()
                     continue;
             }
 
-            itemPicker.SetItem( track );
-            pickersList.PushItem( itemPicker );
-            track->ViewRelease();
-            ratsnest->Remove( track );
-            track->UnLink();
+            commit.Remove( track );
             gen_rastnest = true;
         }
     }
 
-    if( pickersList.GetCount() )
-        m_Parent->SaveCopyInUndoList( pickersList, UR_DELETED );
+    commit.Push( wxT( "Global delete" ) );
 
     if( m_DelMarkers->GetValue() )
         pcb->DeleteMARKERs();
@@ -267,9 +244,7 @@ void DIALOG_GLOBAL_DELETION::AcceptPcbDelete()
         m_Parent->Compile_Ratsnest( NULL, true );
 
     // There is a chance that some of tracks have changed their nets, so rebuild ratsnest from scratch
-    if( m_Parent->IsGalCanvasActive() )
-        pcb->GetRatsnest()->ProcessBoard();
-
-    m_Parent->GetCanvas()->Refresh();
-    m_Parent->OnModify();
+    // TODO necessary? if not, remove rn_data.h header as well
+    //if( m_Parent->IsGalCanvasActive() )
+        //pcb->GetRatsnest()->ProcessBoard();
 }

@@ -36,7 +36,8 @@
 #include <class_track.h>
 #include <wxBasePcbFrame.h>
 
-#include <boost/bind.hpp>
+#include <functional>
+using namespace std::placeholders;
 
 const LAYER_NUM GAL_LAYER_ORDER[] =
 {
@@ -145,7 +146,7 @@ void PCB_DRAW_PANEL_GAL::DisplayBoard( const BOARD* aBoard )
     // Load modules and its additional elements
     for( MODULE* module = aBoard->m_Modules; module; module = module->Next() )
     {
-        module->RunOnChildren( boost::bind( &KIGFX::VIEW::Add, m_view, _1 ) );
+        module->RunOnChildren( std::bind( &KIGFX::VIEW::Add, m_view, _1 ) );
         m_view->Add( module );
     }
 
@@ -416,6 +417,7 @@ void PCB_DRAW_PANEL_GAL::setDefaultLayerDeps()
     m_view->SetRequired( F_Mask, ITEM_GAL_LAYER( PAD_FR_VISIBLE ) );
     m_view->SetRequired( F_CrtYd, ITEM_GAL_LAYER( MOD_FR_VISIBLE ) );
     m_view->SetRequired( F_Fab, ITEM_GAL_LAYER( MOD_FR_VISIBLE ) );
+    m_view->SetRequired( F_SilkS, ITEM_GAL_LAYER( MOD_FR_VISIBLE ) );
 
     // Back modules
     m_view->SetRequired( ITEM_GAL_LAYER( PAD_BK_VISIBLE ), ITEM_GAL_LAYER( MOD_BK_VISIBLE ) );
@@ -426,6 +428,7 @@ void PCB_DRAW_PANEL_GAL::setDefaultLayerDeps()
     m_view->SetRequired( B_Mask, ITEM_GAL_LAYER( PAD_BK_VISIBLE ) );
     m_view->SetRequired( B_CrtYd, ITEM_GAL_LAYER( MOD_BK_VISIBLE ) );
     m_view->SetRequired( B_Fab, ITEM_GAL_LAYER( MOD_BK_VISIBLE ) );
+    m_view->SetRequired( B_SilkS, ITEM_GAL_LAYER( MOD_BK_VISIBLE ) );
 
     m_view->SetLayerTarget( ITEM_GAL_LAYER( GP_OVERLAY ), KIGFX::TARGET_OVERLAY );
     m_view->SetLayerDisplayOnly( ITEM_GAL_LAYER( GP_OVERLAY ) );

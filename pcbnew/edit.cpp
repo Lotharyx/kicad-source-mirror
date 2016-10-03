@@ -294,7 +294,9 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         break;
 
     case ID_DRC_CONTROL:
-        m_drc->ShowDialog();
+        // Shows the DRC dialog in non modal mode, to allows board edition
+        // with the DRC dialog opened and showing errors.
+        m_drc->ShowDRCDialog();
         break;
 
     case ID_GET_NETLIST:
@@ -1429,6 +1431,10 @@ void PCB_EDIT_FRAME::OnSelectTool( wxCommandEvent& aEvent )
         SetToolID( id, m_canvas->GetDefaultCursor(), wxEmptyString );
         break;
 
+    case ID_ZOOM_SELECTION:
+        SetToolID( id, wxCURSOR_MAGNIFIER, _( "Zoom to selection" ) );
+        break;
+
     case ID_TRACK_BUTT:
         if( g_Drc_On )
             SetToolID( id, wxCURSOR_PENCIL, _( "Add tracks" ) );
@@ -1546,6 +1552,7 @@ void PCB_EDIT_FRAME::moveExact()
     m_canvas->MoveCursorToCrossHair();
 }
 
+
 void PCB_EDIT_FRAME::duplicateItems( bool aIncrement )
 {
     BOARD_ITEM* item = GetScreen()->GetCurItem();
@@ -1561,6 +1568,7 @@ void PCB_EDIT_FRAME::duplicateItems( bool aIncrement )
 
     PCB_BASE_EDIT_FRAME::duplicateItem( item, aIncrement );
 }
+
 
 void PCB_BASE_EDIT_FRAME::duplicateItem( BOARD_ITEM* aItem, bool aIncrement )
 {
@@ -1610,34 +1618,34 @@ public:
 
 private:
 
-    int getNumberOfItemsToArray() const //override
+    int getNumberOfItemsToArray() const override
     {
         // only handle single items
         return (m_item != NULL) ? 1 : 0;
     }
 
-    BOARD_ITEM* getNthItemToArray( int n ) const //override
+    BOARD_ITEM* getNthItemToArray( int n ) const override
     {
         wxASSERT_MSG( n == 0, "Legacy array tool can only handle a single item" );
         return m_item;
     }
 
-    BOARD* getBoard() const //override
+    BOARD* getBoard() const override
     {
         return m_parent.GetBoard();
     }
 
-    MODULE* getModule() const //override
+    MODULE* getModule() const override
     {
         return dynamic_cast<MODULE*>( m_item->GetParent() );
     }
 
-    wxPoint getRotationCentre() const //override
+    wxPoint getRotationCentre() const override
     {
         return m_item->GetCenter();
     }
 
-    void finalise() // override
+    void finalise() override
     {
         m_parent.GetCanvas()->Refresh();
     }

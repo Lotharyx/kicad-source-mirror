@@ -70,7 +70,7 @@ bool PCB_CALCULATOR_FRAME::ReadDataFile()
     {
         delete datafile;
 
-        wxString msg = ioe.errorText;
+        wxString msg = ioe.What();
 
         msg += wxChar('\n');
         msg += _("Data file error.");
@@ -255,9 +255,9 @@ void PCB_CALCULATOR_DATAFILE_PARSER::ParseRegulatorDescr( PCB_CALCULATOR_DATAFIL
 
                 case T_reg_type:   // type: normal or 3 terminal reg
                     token = NextTok();
-                   if( stricmp( CurText(), regtype_str[0] ) == 0 )
+                   if( strcasecmp( CurText(), regtype_str[0] ) == 0 )
                         type = 0;
-                    else if( stricmp( CurText(), regtype_str[1] ) == 0 )
+                    else if( strcasecmp( CurText(), regtype_str[1] ) == 0 )
                         type = 1;
                     else
                         Unexpected( CurText() );

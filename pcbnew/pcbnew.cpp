@@ -57,7 +57,7 @@
 #include <module_editor_frame.h>
 #include <modview_frame.h>
 #include <footprint_wizard_frame.h>
-
+#include <gl_context_mgr.h>
 extern bool IsWxPythonLoaded();
 
 // Colors for layers and items
@@ -93,7 +93,6 @@ wxString    g_DocModulesFileName = wxT( "footprints_doc/footprints.pdf" );
  */
 DLIST<TRACK> g_CurrentTrackList;
 
-KIWAY* TheKiway = NULL;
 
 namespace PCB {
 
@@ -105,11 +104,11 @@ static struct IFACE : public KIFACE_I
         KIFACE_I( aName, aType )
     {}
 
-    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits );
+    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits ) override;
 
-    void OnKifaceEnd();
+    void OnKifaceEnd() override;
 
-    wxWindow* CreateWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 )
+    wxWindow* CreateWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 ) override
     {
         wxWindow* frame = NULL;
 
@@ -117,7 +116,6 @@ static struct IFACE : public KIFACE_I
         {
         case FRAME_PCB:
             frame = dynamic_cast< wxWindow* >( new PCB_EDIT_FRAME( aKiway, aParent ) );
-            TheKiway = aKiway;
 
 #if defined( KICAD_SCRIPTING )
             // give the scripting helpers access to our frame
@@ -165,7 +163,7 @@ static struct IFACE : public KIFACE_I
      *
      * @return void* - and must be cast into the know type.
      */
-    void* IfaceOrAddress( int aDataId )
+    void* IfaceOrAddress( int aDataId ) override
     {
         return NULL;
     }
@@ -351,7 +349,7 @@ bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits )
         wxString msg = wxString::Format( _(
             "An error occurred attempting to load the global footprint library "
             "table:\n\n%s" ),
-            GetChars( ioe.errorText )
+            GetChars( ioe.What() )
             );
         DisplayError( NULL, msg );
         return false;
@@ -367,8 +365,12 @@ bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits )
 
 void IFACE::OnKifaceEnd()
 {
-    end_common();
+    // This function deletes OpenGL contexts used (if any) by wxGLCanvas objects.
+    // It can be called only when closing the application, because it deletes an OpenGL context
+    // which can still be in usage. Destroying OpenGL contexts earlier may crash the application.
+    GL_CONTEXT_MANAGER::Get().DeleteAll();
 
+    end_common();
 #if defined( KICAD_SCRIPTING_WXPYTHON )
     // Restore the thread state and tell Python to cleanup after itself.
     // wxPython will do its own cleanup as part of that process.

@@ -43,7 +43,6 @@
 
 #include <dialogs/dialog_schematic_find.h>
 
-#include <boost/foreach.hpp>
 #include <wx/filename.h>
 
 
@@ -207,7 +206,7 @@ void SCH_SHEET_PATH::AnnotatePowerSymbols( PART_LIBS* aLibs, int* aReference )
             refstr.RemoveLast();
 
         if( !refstr.StartsWith( wxT( "#" ) ) )
-            refstr = wxT( "#" ) + refstr;
+            refstr.insert( refstr.begin(), wxChar( '#' ) );
 
         refstr << wxT( "0" ) << ref;
         component->SetRef( this, refstr );
@@ -237,7 +236,8 @@ void SCH_SHEET_PATH::GetComponents( PART_LIBS* aLibs, SCH_REFERENCE_LIST& aRefer
 
             if( part )
             {
-                SCH_REFERENCE reference = SCH_REFERENCE( component, part, *this );
+                SCH_REFERENCE reference( component, part, *this );
+
                 reference.SetSheetNumber( m_pageNumber );
                 aReferences.AddItem( reference );
             }
@@ -247,7 +247,7 @@ void SCH_SHEET_PATH::GetComponents( PART_LIBS* aLibs, SCH_REFERENCE_LIST& aRefer
 
 
 void SCH_SHEET_PATH::GetMultiUnitComponents( PART_LIBS* aLibs,
-                                             SCH_MULTI_UNIT_REFERENCE_MAP &aRefList,
+                                             SCH_MULTI_UNIT_REFERENCE_MAP& aRefList,
                                              bool aIncludePowerSymbols )
 {
 
@@ -585,7 +585,7 @@ void SCH_SHEET_LIST::GetMultiUnitComponents( PART_LIBS* aLibs,
         SCH_MULTI_UNIT_REFERENCE_MAP tempMap;
         (*it).GetMultiUnitComponents( aLibs, tempMap );
 
-        BOOST_FOREACH( SCH_MULTI_UNIT_REFERENCE_MAP::value_type& pair, tempMap )
+        for( SCH_MULTI_UNIT_REFERENCE_MAP::value_type& pair : tempMap )
         {
             // Merge this list into the main one
             unsigned n_refs = pair.second.GetCount();

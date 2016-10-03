@@ -1,3 +1,25 @@
+#
+#  This program source code file is part of KICAD, a free EDA CAD application.
+#
+#  Copyright (C) 2007-2016 Kicad Developers, see AUTHORS.txt for contributors.
+#
+#  This program is free software; you can redistribute it and/or
+#  modify it under the terms of the GNU General Public License
+#  as published by the Free Software Foundation; either version 2
+#  of the License, or (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, you may find one here:
+#  http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+#  or you may search the http://www.gnu.org website for the version 2 license,
+#  or you may write to the Free Software Foundation, Inc.,
+#  51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+#
 
 # Default to CMAKE_BUILD_TYPE = Release unless overridden on command line
 # http://www.cmake.org/pipermail/cmake/2008-September/023808.html
@@ -18,23 +40,10 @@ set( CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/CMakeModules )
 #
 # KiCad build options should be added below.
 #
-# If you add a new build option, please add it's state to the CopyVersionInfoToClipboard()
-# function in common/basicframe.cpp so that build option settings can be included in bug
-# reports.
+# If you add a new build option, please add it's state to the
+# OnCopyVersionInfo() function in common/dialog_about/dialog_about.cpp
+# so that build option settings can be included in bug reports.
 #
-
-# The desire is to migrate designs *away from* case independence, and to create designs which use
-# literally (case specific) interpreted component names.  But for backwards compatibility,
-# you may turn OFF this option if you really must.  (Remember that with KiCad using text
-# data files, typically you would be better off simply doctoring those files into
-# a case literal state with a text editor and move forward into the brave new
-# world of case specificity.  Also, BOM generators may not work properly when you
-# have this option turned OFF, the xml export's referential integrity is broken
-# on library part name.  Hence the default is ON now, as of 29-Jan-2014.
-option( KICAD_KEEPCASE
-    "Use case sensitive string matching for component names (default ON)."
-    ON
-    )
 
 option( USE_WX_GRAPHICS_CONTEXT
     "Use wxGraphicsContext for rendering (default OFF).  Warning, this is experimental" )
@@ -47,12 +56,24 @@ option( KICAD_SCRIPTING
     )
 
 option( KICAD_SCRIPTING_MODULES
-    "Build KiCad Python modules that can be used from scripting languages (default OFF)."
+    "Build native portion of the pcbnew Python module: _pcbnew.{pyd,so} for OS command line use of Python."
     )
 
 option( KICAD_SCRIPTING_WXPYTHON
     "Build wxPython implementation for wx interface building in Python and py.shell (default OFF)."
     )
+
+option( KICAD_USE_SCH_IO_MANAGER
+    "Build Eeschema with the I/O manager for handling schematic and symbol library I/O. (default OFF)"
+    )
+
+option( KICAD_USE_OCE
+    "Build tools and plugins related to OpenCascade Community Edition (default OFF)"
+    )
+
+option( KICAD_INSTALL_DEMOS
+    "Install kicad demos and examples (default ON)"
+    ON )
 
 # when option KICAD_SCRIPTING OR KICAD_SCRIPTING_MODULES is enabled:
 # PYTHON_EXECUTABLE can be defined when invoking cmake
@@ -67,10 +88,15 @@ if ( KICAD_SCRIPTING_MODULES AND NOT KICAD_SCRIPTING )
 endif()
 
 option( BUILD_GITHUB_PLUGIN "Build the GITHUB_PLUGIN for pcbnew." ON )
+<<<<<<< HEAD
 option( BUILD_MYODBC_PLUGIN "Build the MYODBC_PLUGIN for pcbnew." ON )
+=======
+
+option( KICAD_SPICE "Build Kicad with internal Spice simulator." OFF )
+>>>>>>> upstream/master
 
 # This can be set to a custom name to brag about a particular branch in the "About" dialog:
-set( KICAD_REPO_NAME "product" CACHE STRING "Name of the tree from which this build came." )
+set( KICAD_REPO_NAME "unknown" CACHE STRING "Name of the tree from which this build came." )
 
 
 # Global setting: exports are explicit
@@ -148,6 +174,20 @@ if( CMAKE_VERSION VERSION_LESS 3.1 AND ( CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_C
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
     else()
         message(STATUS "The compiler ${CMAKE_CXX_COMPILER} has no C++11 support. Please use a different C++ compiler.")
+    endif()
+endif()
+
+
+# Warn about missing override specifiers, if supported
+if( CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang" )
+    include(CheckCXXCompilerFlag)
+
+    CHECK_CXX_COMPILER_FLAG("-Wsuggest-override" COMPILER_SUPPORTS_WSUGGEST_OVERRIDE)
+
+    # Swig generated files do not use override specifier and create a lot of warnings
+    # So do not use -Wsuggest-override with KICAD_SCRIPTING ON, untill a best way is found
+    if(COMPILER_SUPPORTS_WSUGGEST_OVERRIDE AND NOT KICAD_SCRIPTING)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wsuggest-override")
     endif()
 endif()
 
@@ -243,10 +283,6 @@ if( CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang" )
 
 endif( CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang" )
 
-if( KICAD_KEEPCASE )
-    add_definitions( -DKICAD_KEEPCASE )
-endif()
-
 if( USE_WX_OVERLAY OR APPLE )
     add_definitions( -DUSE_WX_OVERLAY )
 endif()
@@ -261,6 +297,18 @@ endif()
 
 if( KICAD_SCRIPTING_WXPYTHON )
     add_definitions( -DKICAD_SCRIPTING_WXPYTHON )
+endif()
+
+if( KICAD_SPICE )
+    add_definitions( -DKICAD_SPICE )
+endif()
+
+if( KICAD_USE_SCH_IO_MANAGER )
+    add_definitions( -DKICAD_USE_SCH_IO_MANAGER )
+endif()
+
+if( KICAD_USE_OCE )
+    add_definitions( -DKICAD_USE_OCE )
 endif()
 
 if( USE_WX_GRAPHICS_CONTEXT OR APPLE )
@@ -299,7 +347,7 @@ set( KIFACE_PREFIX  "_" )
 #================================================
 if( NOT APPLE )
     # Everything without leading / is relative to CMAKE_INSTALL_PREFIX.
-    set( KICAD_BIN ${CMAKE_INSTALL_PREFIX}/bin
+    set( KICAD_BIN bin
         CACHE PATH "Location of KiCad binaries." )
 
     if( WIN32 )
@@ -315,10 +363,10 @@ if( NOT APPLE )
         set( KICAD_PLUGINS lib/kicad/plugins
             CACHE PATH "Location of KiCad plugins." )
 
-        set( KICAD_LIB ${CMAKE_INSTALL_PREFIX}/lib
+        set( KICAD_LIB lib
             CACHE PATH "Location of KiCad shared objects" )
 
-        set( KICAD_USER_PLUGIN ${CMAKE_INSTALL_PREFIX}/lib/kicad/plugins
+        set( KICAD_USER_PLUGIN lib/kicad/plugins
             CACHE PATH "Location of KiCad user-loaded plugins" )
     endif()
 
@@ -485,7 +533,9 @@ find_package( GLM 0.9.5.1 REQUIRED )
 #
 # Find CURL library, required for github plugin
 #
-find_package( CURL REQUIRED )
+if( BUILD_GITHUB_PLUGIN )
+    find_package( CURL REQUIRED )
+endif()
 
 #
 # Find Cairo library, required
@@ -506,6 +556,18 @@ include( MinGWResourceCompiler )
 if( MINGW AND USE_WX_GRAPHICS_CONTEXT )
     find_package( GdiPlus )
     check_find_package_result( GDI_PLUS_FOUND "GDI+" )
+endif()
+
+# Find ngspice library, required for integrated circuit simulator
+if( KICAD_SPICE )
+    find_package( ngspice REQUIRED )
+endif()
+
+# Find OpenCascade Community Edition, required for STEP plugin and tools
+if( KICAD_USE_OCE )
+    set( LIBS_OCE TKBinXCAF TKPCAF TKSTEP TKXDESTEP TKIGES TKXDEIGES )
+
+    find_package( OCE 0.16 REQUIRED ${LIBS_OCE} )
 endif()
 
 # Assist with header file searching optimization:
@@ -530,6 +592,11 @@ set( INC_AFTER
 
 # Find Python and other scripting resources
 if( KICAD_SCRIPTING OR KICAD_SCRIPTING_MODULES )
+
+    # SWIG 3.0 or later require for C++11 support.
+    find_package( SWIG 3.0 REQUIRED )
+    include( ${SWIG_USE_FILE} )
+
     # force a python version < 3.0
     set( PythonInterp_FIND_VERSION 2.6 )
     set( PythonLibs_FIND_VERSION 2.6 )
@@ -721,16 +788,9 @@ if( UNIX AND NOT APPLE )
 
     # Set paths
     set( UNIX_MIME_DIR resources/linux/mime )
-    set( UNIX_MIMELNK_FILES ${UNIX_MIME_DIR}/mimelnk )
     set( UNIX_MIME_FILES ${UNIX_MIME_DIR}/mime )
     set( UNIX_ICON_FILES ${UNIX_MIME_DIR}/icons )
     set( UNIX_APPLICATIONS_FILES ${UNIX_MIME_DIR}/applications )
-
-    # Install Mimelnk directory
-    install( DIRECTORY ${UNIX_MIMELNK_FILES}
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/share
-        COMPONENT resources
-        )
 
     # Install Mime directory
     install( DIRECTORY ${UNIX_ICON_FILES}
@@ -795,5 +855,7 @@ add_subdirectory( utils )
 add_subdirectory( qa )
 
 # Resources
+if ( KICAD_INSTALL_DEMOS )
 add_subdirectory( demos )
+endif ( KICAD_INSTALL_DEMOS )
 add_subdirectory( template )

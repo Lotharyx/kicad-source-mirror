@@ -131,7 +131,7 @@ void MODULE::TransformPadsShapesWithClearanceToPolygon( LAYER_ID aLayer,
                         int                    aInflateValue,
                         int                    aCircleToSegmentsCount,
                         double                 aCorrectionFactor,
-                        bool                   aSkipNPTHPadsWihNoCopper )
+                        bool                   aSkipNPTHPadsWihNoCopper ) const
 {
     D_PAD* pad = Pads();
 
@@ -206,7 +206,7 @@ void MODULE::TransformGraphicShapesWithClearanceToPolygonSet(
                         int             aInflateValue,
                         int             aCircleToSegmentsCount,
                         double          aCorrectionFactor,
-                        int             aCircleToSegmentsCountForTexts )
+                        int             aCircleToSegmentsCountForTexts ) const
 {
     std::vector<TEXTE_MODULE *> texts;  // List of TEXTE_MODULE to convert
     EDGE_MODULE* outline;
@@ -230,10 +230,78 @@ void MODULE::TransformGraphicShapesWithClearanceToPolygonSet(
 
             if( outline->GetLayer() != aLayer )
                 break;
-                outline->TransformShapeWithClearanceToPolygon( aCornerBuffer,
-                                                        0,
-                                                        aCircleToSegmentsCount,
-                                                        aCorrectionFactor );
+
+            outline->TransformShapeWithClearanceToPolygon( aCornerBuffer, 0,
+                                                    aCircleToSegmentsCount, aCorrectionFactor );
+            break;
+
+            default:
+                break;
+        }
+    }
+
+    // Convert texts sur modules
+    if( Reference().GetLayer() == aLayer && Reference().IsVisible() )
+        texts.push_back( &Reference() );
+
+    if( Value().GetLayer() == aLayer && Value().IsVisible() )
+        texts.push_back( &Value() );
+
+    s_cornerBuffer = &aCornerBuffer;
+
+    // To allow optimization of circles approximated by segments,
+    // aCircleToSegmentsCountForTexts, when not 0, is used.
+    // if 0 (default value) the aCircleToSegmentsCount is used
+    s_textCircle2SegmentCount = aCircleToSegmentsCountForTexts ?
+                                aCircleToSegmentsCountForTexts : aCircleToSegmentsCount;
+
+    for( unsigned ii = 0; ii < texts.size(); ii++ )
+    {
+        TEXTE_MODULE *textmod = texts[ii];
+        s_textWidth  = textmod->GetThickness() + ( 2 * aInflateValue );
+        wxSize size = textmod->GetSize();
+
+        if( textmod->IsMirrored() )
+            size.x = -size.x;
+
+        DrawGraphicText( NULL, NULL, textmod->GetTextPosition(), BLACK,
+                         textmod->GetShownText(), textmod->GetDrawRotation(), size,
+                         textmod->GetHorizJustify(), textmod->GetVertJustify(),
+                         textmod->GetThickness(), textmod->IsItalic(),
+                         true, addTextSegmToPoly );
+    }
+
+}
+
+
+// Same as function TransformGraphicShapesWithClearanceToPolygonSet but
+// this only render text
+void MODULE::TransformGraphicTextWithClearanceToPolygonSet(
+                        LAYER_ID        aLayer,
+                        SHAPE_POLY_SET& aCornerBuffer,
+                        int             aInflateValue,
+                        int             aCircleToSegmentsCount,
+                        double          aCorrectionFactor,
+                        int             aCircleToSegmentsCountForTexts ) const
+{
+    std::vector<TEXTE_MODULE *> texts;  // List of TEXTE_MODULE to convert
+
+    for( EDA_ITEM* item = GraphicalItems(); item != NULL; item = item->Next() )
+    {
+        switch( item->Type() )
+        {
+        case PCB_MODULE_TEXT_T:
+            {
+                TEXTE_MODULE* text = static_cast<TEXTE_MODULE*>( item );
+
+                if( text->GetLayer() == aLayer && text->IsVisible() )
+                    texts.push_back( text );
+
+                break;
+            }
+
+        case PCB_MODULE_EDGE_T:
+                // This function does not render this
                 break;
 
             default:
@@ -287,7 +355,7 @@ void MODULE::TransformGraphicShapesWithClearanceToPolygonSet(
 void ZONE_CONTAINER::TransformSolidAreasShapesToPolygonSet(
         SHAPE_POLY_SET& aCornerBuffer,
         int                    aCircleToSegmentsCount,
-        double                 aCorrectionFactor )
+        double                 aCorrectionFactor ) const
 {
     if( GetFilledPolysList().IsEmpty() )
         return;
@@ -758,9 +826,6 @@ void    CreateThermalReliefPadPolygon( SHAPE_POLY_SET& aCornerBuffer,
                                                 // the pad position is NOT the shape position
     wxSize  copper_thickness;
 
-    int     dx = aPad.GetSize().x / 2;
-    int     dy = aPad.GetSize().y / 2;
-
     double  delta = 3600.0 / aCircleToSegmentsCount; // rot angle in 0.1 degree
 
     /* Keep in account the polygon outline thickness
@@ -777,6 +842,9 @@ void    CreateThermalReliefPadPolygon( SHAPE_POLY_SET& aCornerBuffer,
 
     if( aCopperThickness < 0 )
         aCopperThickness = 0;
+
+    int     dx = aPad.GetSize().x / 2;
+    int     dy = aPad.GetSize().y / 2;
 
     copper_thickness.x = std::min( dx, aCopperThickness );
     copper_thickness.y = std::min( dy, aCopperThickness );
@@ -870,8 +938,8 @@ void    CreateThermalReliefPadPolygon( SHAPE_POLY_SET& aCornerBuffer,
             // Oval pad support along the lines of round and rectangular pads
             std::vector <wxPoint> corners_buffer;               // Polygon buffer as vector
 
-            int     dx = (aPad.GetSize().x / 2) + aThermalGap;     // Cutout radius x
-            int     dy = (aPad.GetSize().y / 2) + aThermalGap;     // Cutout radius y
+            dx = (aPad.GetSize().x / 2) + aThermalGap;     // Cutout radius x
+            dy = (aPad.GetSize().y / 2) + aThermalGap;     // Cutout radius y
 
             wxPoint shape_offset;
 
@@ -1023,8 +1091,8 @@ void    CreateThermalReliefPadPolygon( SHAPE_POLY_SET& aCornerBuffer,
 
             std::vector <wxPoint> corners_buffer;               // Polygon buffer as vector
 
-            int dx = (aPad.GetSize().x / 2) + aThermalGap;         // Cutout radius x
-            int dy = (aPad.GetSize().y / 2) + aThermalGap;         // Cutout radius y
+            dx = (aPad.GetSize().x / 2) + aThermalGap;         // Cutout radius x
+            dy = (aPad.GetSize().y / 2) + aThermalGap;         // Cutout radius y
 
             // The first point of polygon buffer is left lower corner, second the crosspoint of
             // thermal spoke sides, the third is upper right corner and the rest are rounding

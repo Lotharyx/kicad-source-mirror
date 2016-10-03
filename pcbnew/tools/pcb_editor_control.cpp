@@ -21,8 +21,7 @@
  * or you may write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
-
-#include <boost/bind.hpp>
+#include <cstdint>
 
 #include "pcb_editor_control.h"
 #include "common_actions.h"
@@ -43,12 +42,14 @@
 #include <ratsnest_data.h>
 #include <collectors.h>
 #include <zones_functions_for_undo_redo.h>
+#include <board_commit.h>
 
 #include <view/view_group.h>
 #include <view/view_controls.h>
 #include <origin_viewitem.h>
 
-#include <boost/bind.hpp>
+#include <functional>
+using namespace std::placeholders;
 
 
 class ZONE_CONTEXT_MENU : public CONTEXT_MENU
@@ -57,7 +58,7 @@ public:
     ZONE_CONTEXT_MENU()
     {
         SetIcon( add_zone_xpm );
-        SetUpdateHandler( boost::bind( &ZONE_CONTEXT_MENU::update, this ) );
+        SetUpdateHandler( std::bind( &ZONE_CONTEXT_MENU::update, this ) );
         Add( COMMON_ACTIONS::zoneFill );
         Add( COMMON_ACTIONS::zoneFillAll );
         Add( COMMON_ACTIONS::zoneUnfill );
@@ -250,11 +251,10 @@ int PCB_EDITOR_CONTROL::PlaceModule( const TOOL_EVENT& aEvent )
         {
             if( module )
             {
-                board->Delete( module );  // it was added by LoadModuleFromLibrary()
+                delete module;
                 module = NULL;
 
                 preview.Clear();
-                preview.ViewUpdate( KIGFX::VIEW_ITEM::GEOMETRY );
                 controls->ShowCursor( true );
             }
             else
@@ -286,30 +286,28 @@ int PCB_EDITOR_CONTROL::PlaceModule( const TOOL_EVENT& aEvent )
                 module = m_frame->LoadModuleFromLibrary( wxEmptyString,
                                                          m_frame->Prj().PcbFootprintLibs(),
                                                          true, NULL );
+
                 if( module == NULL )
                     continue;
 
+                // Module has been added in LoadModuleFromLibrary(),
+                // so we have to remove it before committing the change     @todo LEGACY
+                board->Remove( module );
                 module->SetPosition( wxPoint( cursorPos.x, cursorPos.y ) );
 
                 // Add all the drawable parts to preview
                 preview.Add( module );
-                module->RunOnChildren( boost::bind( &KIGFX::VIEW_GROUP::Add, &preview, _1 ) );
-
-                preview.ViewUpdate( KIGFX::VIEW_ITEM::GEOMETRY );
+                module->RunOnChildren( std::bind( &KIGFX::VIEW_GROUP::Add, &preview, _1 ) );
             }
             else
             {
-                // Place the selected module
-                module->RunOnChildren( boost::bind( &KIGFX::VIEW::Add, view, _1 ) );
-                view->Add( module );
-                module->ViewUpdate( KIGFX::VIEW_ITEM::GEOMETRY );
-
-                m_frame->OnModify();
-                m_frame->SaveCopyInUndoList( module, UR_NEW );
+                BOARD_COMMIT commit( m_frame );
+                commit.Add( module );
+                commit.Push( _( "Place a module" ) );
 
                 // Remove from preview
                 preview.Remove( module );
-                module->RunOnChildren( boost::bind( &KIGFX::VIEW_GROUP::Remove, &preview, _1 ) );
+                module->RunOnChildren( std::bind( &KIGFX::VIEW_GROUP::Remove, &preview, _1 ) );
                 module = NULL;  // to indicate that there is no module that we currently modify
             }
 
@@ -417,7 +415,6 @@ int PCB_EDITOR_CONTROL::PlaceTarget( const TOOL_EVENT& aEvent )
     KIGFX::VIEW_GROUP preview( view );
     preview.Add( target );
     view->Add( &preview );
-    preview.ViewUpdate( KIGFX::VIEW_ITEM::GEOMETRY );
 
     m_toolMgr->RunAction( COMMON_ACTIONS::selectionClear, true );
     controls->SetSnapping( true );
@@ -455,12 +452,9 @@ int PCB_EDITOR_CONTROL::PlaceTarget( const TOOL_EVENT& aEvent )
             assert( target->GetSize() > 0 );
             assert( target->GetWidth() > 0 );
 
-            view->Add( target );
-            board->Add( target );
-            target->ViewUpdate( KIGFX::VIEW_ITEM::GEOMETRY );
-
-            m_frame->OnModify();
-            m_frame->SaveCopyInUndoList( target, UR_NEW );
+            BOARD_COMMIT commit( m_frame );
+            commit.Add( target );
+            commit.Push( _( "Place a layer alignment target" ) );
 
             preview.Remove( target );
 
@@ -580,6 +574,7 @@ int PCB_EDITOR_CONTROL::ZoneMerge( const TOOL_EVENT& aEvent )
     BOARD* board = getModel<BOARD>();
     RN_DATA* ratsnest = board->GetRatsnest();
     KIGFX::VIEW* view = getView();
+    BOARD_COMMIT commit( m_frame );
 
     if( selection.Size() < 2 )
         return 0;
@@ -647,7 +642,8 @@ int PCB_EDITOR_CONTROL::ZoneMerge( const TOOL_EVENT& aEvent )
     }
 
     m_toolMgr->RunAction( COMMON_ACTIONS::selectionClear, true );
-    m_frame->SaveCopyInUndoList( changes, UR_UNSPECIFIED );
+
+    commit.Stage( changes );
 
     for( unsigned i = 0; i < changes.GetCount(); ++i )
     {
@@ -661,10 +657,11 @@ int PCB_EDITOR_CONTROL::ZoneMerge( const TOOL_EVENT& aEvent )
         }
         else if( picker.GetStatus() == UR_CHANGED )
         {
-            item->ViewUpdate( KIGFX::VIEW_ITEM::ALL );
             m_toolMgr->RunAction( COMMON_ACTIONS::selectItem, true, item );
         }
     }
+
+    commit.Push( _( "Merge zones" ) );
 
     return 0;
 }
@@ -734,7 +731,7 @@ int PCB_EDITOR_CONTROL::DrillOrigin( const TOOL_EVENT& aEvent )
     assert( picker );
 
     m_frame->SetToolID( ID_PCB_PLACE_OFFSET_COORD_BUTT, wxCURSOR_PENCIL, _( "Adjust zero" ) );
-    picker->SetClickHandler( boost::bind( setDrillOrigin, getView(), m_frame, m_placeOrigin, _1 ) );
+    picker->SetClickHandler( std::bind( setDrillOrigin, getView(), m_frame, m_placeOrigin, _1 ) );
     picker->Activate();
     Wait();
 
@@ -780,7 +777,7 @@ static bool highlightNet( TOOL_MANAGER* aToolMgr, const VECTOR2D& aPosition )
 
 int PCB_EDITOR_CONTROL::HighlightNet( const TOOL_EVENT& aEvent )
 {
-    int netcode = aEvent.Parameter<long>();
+    int netcode = aEvent.Parameter<intptr_t>();
 
     if( netcode > 0 )
     {
@@ -806,7 +803,7 @@ int PCB_EDITOR_CONTROL::HighlightNetCursor( const TOOL_EVENT& aEvent )
     assert( picker );
 
     m_frame->SetToolID( ID_PCB_HIGHLIGHT_BUTT, wxCURSOR_PENCIL, _( "Highlight net" ) );
-    picker->SetClickHandler( boost::bind( highlightNet, m_toolMgr, _1 ) );
+    picker->SetClickHandler( std::bind( highlightNet, m_toolMgr, _1 ) );
     picker->SetSnapping( false );
     picker->Activate();
     Wait();

@@ -77,24 +77,18 @@ void DIALOG_GENERALOPTIONS::init()
     rotationAngle = AngleToStringDegrees( (double)GetParent()->GetRotationAngle() );
     m_RotationAngle->SetValue( rotationAngle );
 
-    m_spinMaxUndoItems->SetValue( GetParent()->GetScreen()->GetMaxUndoItems() );
-
     wxString timevalue;
     timevalue << GetParent()->GetAutoSaveInterval() / 60;
     m_SaveTime->SetValue( timevalue );
     m_MaxShowLinks->SetValue( displ_opts->m_MaxLinksShowed );
 
     m_DrcOn->SetValue( g_Drc_On );
-    m_ShowModuleRatsnest->SetValue( displ_opts->m_Show_Module_Ratsnest );
     m_ShowGlobalRatsnest->SetValue( m_Board->IsElementVisible( RATSNEST_VISIBLE ) );
     m_TrackAutodel->SetValue( g_AutoDeleteOldTrack );
     m_Track_45_Only_Ctrl->SetValue( g_Track_45_Only_Allowed );
     m_Segments_45_Only_Ctrl->SetValue( g_Segments_45_Only );
     m_ZoomCenterOpt->SetValue( ! GetParent()->GetCanvas()->GetEnableZoomNoCenter() );
     m_MousewheelPANOpt->SetValue( GetParent()->GetCanvas()->GetEnableMousewheelPan() );
-    m_MiddleButtonPANOpt->SetValue( GetParent()->GetCanvas()->GetEnableMiddleButtonPan() );
-    m_OptMiddleButtonPanLimited->SetValue( GetParent()->GetCanvas()->GetMiddleButtonPanLimited() );
-    m_OptMiddleButtonPanLimited->Enable( m_MiddleButtonPANOpt->GetValue() );
     m_AutoPANOpt->SetValue( GetParent()->GetCanvas()->GetEnableAutoPan() );
     m_Track_DoubleSegm_Ctrl->SetValue( g_TwoSegmentTrackBuild );
     m_MagneticPadOptCtrl->SetSelection( g_MagneticPadOption );
@@ -126,8 +120,6 @@ void DIALOG_GENERALOPTIONS::OnOkClick( wxCommandEvent& event )
     GetParent()->SetAutoSaveInterval( m_SaveTime->GetValue() * 60 );
     GetParent()->SetRotationAngle( wxRound( 10.0 * wxAtof( m_RotationAngle->GetValue() ) ) );
 
-    GetParent()->GetScreen()->SetMaxUndoItems( m_spinMaxUndoItems->GetValue() );
-
     /* Updating the combobox to display the active layer. */
     displ_opts->m_MaxLinksShowed = m_MaxShowLinks->GetValue();
     g_Drc_On = m_DrcOn->GetValue();
@@ -139,15 +131,12 @@ void DIALOG_GENERALOPTIONS::OnOkClick( wxCommandEvent& event )
         GetParent()->OnModify();
     }
 
-    displ_opts->m_Show_Module_Ratsnest = m_ShowModuleRatsnest->GetValue();
     g_AutoDeleteOldTrack   = m_TrackAutodel->GetValue();
     g_Segments_45_Only = m_Segments_45_Only_Ctrl->GetValue();
     g_Track_45_Only_Allowed    = m_Track_45_Only_Ctrl->GetValue();
 
     GetParent()->GetCanvas()->SetEnableZoomNoCenter( ! m_ZoomCenterOpt->GetValue() );
     GetParent()->GetCanvas()->SetEnableMousewheelPan( m_MousewheelPANOpt->GetValue() );
-    GetParent()->GetCanvas()->SetEnableMiddleButtonPan( m_MiddleButtonPANOpt->GetValue() );
-    GetParent()->GetCanvas()->SetMiddleButtonPanLimited( m_OptMiddleButtonPanLimited->GetValue() );
     GetParent()->GetCanvas()->SetEnableAutoPan( m_AutoPANOpt->GetValue() );
 
     g_TwoSegmentTrackBuild = m_Track_DoubleSegm_Ctrl->GetValue();

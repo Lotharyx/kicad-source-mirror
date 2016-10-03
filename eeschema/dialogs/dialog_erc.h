@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2007 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 1992-2014 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 1992-2014 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -58,17 +58,17 @@ private:
     void Init();
 
     // from DIALOG_ERC_BASE:
-    void OnCloseErcDialog( wxCloseEvent& event );
-    void OnErcCmpClick( wxCommandEvent& event );
-    void OnEraseDrcMarkersClick( wxCommandEvent& event );
-    void OnButtonCloseClick( wxCommandEvent& event );
-    void OnResetMatrixClick( wxCommandEvent& event );
+    void OnCloseErcDialog( wxCloseEvent& event ) override;
+    void OnErcCmpClick( wxCommandEvent& event ) override;
+    void OnEraseDrcMarkersClick( wxCommandEvent& event ) override;
+    void OnButtonCloseClick( wxCommandEvent& event ) override;
+    void OnResetMatrixClick( wxCommandEvent& event ) override;
 
     // Click on a marker info:
-    void OnLeftClickMarkersList( wxHtmlLinkEvent& event );
+    void OnLeftClickMarkersList( wxHtmlLinkEvent& event ) override;
 
     // Double click on a marker info:
-    void OnLeftDblClickMarkersList( wxMouseEvent& event );
+    void OnLeftDblClickMarkersList( wxMouseEvent& event ) override;
 
     void TestErc( wxArrayString* aMessagesList );
     void DisplayERC_MarkersList();

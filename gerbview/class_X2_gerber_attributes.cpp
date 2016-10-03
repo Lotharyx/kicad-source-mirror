@@ -35,10 +35,10 @@
  * %TF.FileFunction,Copper,L1,Top*%
  *
  * Currently:
- *  .FileFunction .FileFunction Identifies the file's function in the PCB.
- * Other Standard Attributes, not yet used in Gerbview:
- *  .Part Identifies the part the file represents, e.g. a single PCB
- *  .MD5 Sets the MD5 file signature or checksum.
+ * .FileFunction .FileFunction Identifies the file's function in the PCB.
+ *  Other Standard Attributes, not yet used in Gerbview:
+ * .Part Identifies the part the file represents, e.g. a single PCB
+ * .MD5 Sets the MD5 file signature or checksum.
  */
 
 #include <wx/log.h>
@@ -46,7 +46,7 @@
 
 /*
  * class X2_ATTRIBUTE
- * The attribute value consists of a number of substrings separated by a ","
+ * The attribute value consists of a number of substrings separated by a comma
  */
 
 X2_ATTRIBUTE::X2_ATTRIBUTE()
@@ -74,13 +74,13 @@ const wxString& X2_ATTRIBUTE::GetPrm( int aIdx)
 {
     static const wxString dummy;
 
-    if( GetPrmCount() < aIdx && aIdx >= 0 )
+    if( GetPrmCount() > aIdx && aIdx >= 0 )
         return m_Prms.Item( aIdx );
 
     return dummy;
 }
 
-// Debug function: pring using wxLogMessage le list of parameters
+// Debug function: pring using wxLogMessage the list of parameters
 void X2_ATTRIBUTE::DbgListPrms()
 {
     wxLogMessage( wxT("prms count %d"), GetPrmCount() );

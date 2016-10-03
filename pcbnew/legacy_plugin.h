@@ -26,13 +26,15 @@
  */
 
 #include <io_mgr.h>
-#include <boost/shared_ptr.hpp>
 #include <string>
 #include <layers_id_colors_and_visibility.h>
+#include <memory>
+
 
 // FOOTPRINT_LIBRARY_HEADER_CNT gives the number of characters to compare to detect
 // a footprint library. A few variants may have been used, and so we can only be
 // sure that the header contains "PCBNEW-LibModule-V", not "PCBNEW-LibModule-V1".
+
 #define FOOTPRINT_LIBRARY_HEADER       "PCBNEW-LibModule-V1"
 #define FOOTPRINT_LIBRARY_HEADER_CNT    18
 
@@ -69,28 +71,28 @@ public:
 
     //-----<PLUGIN IMPLEMENTATION>----------------------------------------------
 
-    const wxString PluginName() const
+    const wxString PluginName() const override
     {
         return wxT( "KiCad-Legacy" );
     }
 
-    const wxString GetFileExtension() const
+    const wxString GetFileExtension() const override
     {
         return wxT( "brd" );
     }
 
     BOARD* Load( const wxString& aFileName, BOARD* aAppendToMe,
-            const PROPERTIES* aProperties = NULL );
+            const PROPERTIES* aProperties = NULL ) override;
 
     wxArrayString FootprintEnumerate( const wxString& aLibraryPath,
-            const PROPERTIES* aProperties = NULL );
+            const PROPERTIES* aProperties = NULL ) override;
 
     MODULE* FootprintLoad( const wxString& aLibraryPath, const wxString& aFootprintName,
-            const PROPERTIES* aProperties = NULL );
+            const PROPERTIES* aProperties = NULL ) override;
 
-    bool FootprintLibDelete( const wxString& aLibraryPath, const PROPERTIES* aProperties = NULL );
+    bool FootprintLibDelete( const wxString& aLibraryPath, const PROPERTIES* aProperties = NULL ) override;
 
-    bool IsFootprintLibWritable( const wxString& aLibraryPath );
+    bool IsFootprintLibWritable( const wxString& aLibraryPath ) override;
 
     //-----</PLUGIN IMPLEMENTATION>---------------------------------------------
 

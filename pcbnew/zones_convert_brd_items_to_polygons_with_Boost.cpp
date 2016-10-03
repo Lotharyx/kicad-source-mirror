@@ -69,8 +69,6 @@
 #include <geometry/shape_poly_set.h>
 #include <geometry/shape_file_io.h>
 
-#include <boost/foreach.hpp>
-
 /* DEBUG OPTION:
  * To emit zone data to a file when filling zones for the debugging purposes,
  * set this 'true' and build.
@@ -415,7 +413,7 @@ void ZONE_CONTAINER::AddClearanceAreasPolygonsToPolysList_NG( BOARD* aPcb )
     int outline_half_thickness = m_ZoneMinThickness / 2;
 
 
-    std::auto_ptr<SHAPE_FILE_IO> dumper( new SHAPE_FILE_IO(
+    std::unique_ptr<SHAPE_FILE_IO> dumper( new SHAPE_FILE_IO(
             g_DumpZonesWhenFilling ? "zones_dump.txt" : "", SHAPE_FILE_IO::IOM_APPEND ) );
 
     // Set the number of segments in arc approximations

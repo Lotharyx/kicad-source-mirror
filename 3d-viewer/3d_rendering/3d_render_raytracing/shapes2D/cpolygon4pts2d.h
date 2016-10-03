@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2015 Mario Luzeiro <mrluzeiro@ua.pt>
- * Copyright (C) 1992-2015 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2015-2016 Mario Luzeiro <mrluzeiro@ua.pt>
+ * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -37,7 +37,7 @@
  *  (rectangles, trapezoids, with rotation.etc)
  *  This is a simplified version of the cpolygon2d class
  */
-class GLM_ALIGN(CLASS_ALIGNMENT) CPOLYGON4PTS2D : public COBJECT2D
+class  CPOLYGON4PTS2D : public COBJECT2D
 {
 private:
     SFVEC2F m_segments[4];
@@ -62,11 +62,11 @@ public:
     const SFVEC2F &GetN3() const { return m_seg_normal[3]; }
 
     // Imported from COBJECT2D
-    bool Overlaps( const CBBOX2D &aBBox ) const;
-    bool Intersects( const CBBOX2D &aBBox ) const;
-    bool Intersect( const RAYSEG2D &aSegRay, float *aOutT, SFVEC2F *aNormalOut ) const;
-    INTERSECTION_RESULT IsBBoxInside( const CBBOX2D &aBBox ) const;
-    bool IsPointInside( const SFVEC2F &aPoint ) const;
+    bool Overlaps( const CBBOX2D &aBBox ) const override;
+    bool Intersects( const CBBOX2D &aBBox ) const override;
+    bool Intersect( const RAYSEG2D &aSegRay, float *aOutT, SFVEC2F *aNormalOut ) const override;
+    INTERSECTION_RESULT IsBBoxInside( const CBBOX2D &aBBox ) const override;
+    bool IsPointInside( const SFVEC2F &aPoint ) const override;
 };
 
 

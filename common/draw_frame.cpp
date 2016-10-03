@@ -61,13 +61,34 @@
 static const wxString traceScrollSettings( wxT( "KicadScrollSettings" ) );
 
 
-// Configuration entry names.
-static const wxString CursorShapeEntryKeyword( wxT( "CursorShape" ) );
-static const wxString ShowGridEntryKeyword( wxT( "ShowGrid" ) );
-static const wxString GridColorEntryKeyword( wxT( "GridColor" ) );
-static const wxString LastGridSizeIdKeyword( wxT( "_LastGridSize" ) );
-static const wxString MaxUndoItemsEntry(wxT( "MaxUndoItems" ) );
+///@{
+/// \ingroup config
 
+/// Nonzero iff fullscreen cursor is to be used (suffix)
+static const wxString CursorShapeEntryKeyword( wxT( "CursorShape" ) );
+/// Nonzero to show grid (suffix)
+static const wxString ShowGridEntryKeyword( wxT( "ShowGrid" ) );
+/// Grid color ID (suffix)
+static const wxString GridColorEntryKeyword( wxT( "GridColor" ) );
+/// Most recently used grid size (suffix)
+static const wxString LastGridSizeIdKeyword( wxT( "_LastGridSize" ) );
+
+///@}
+
+/**
+ * Integer to set the maximum number of undo items on the stack. If zero,
+ * undo items are unlimited.
+ *
+ * Present as:
+ *
+ * - SchematicFrameDevelMaxUndoItems (file: eeschema)
+ * - LibeditFrameDevelMaxUndoItems (file: eeschema)
+ * - PcbFrameDevelMaxUndoItems (file: pcbnew)
+ * - ModEditFrameDevelMaxUndoItems (file: pcbnew)
+ *
+ * \ingroup develconfig
+ */
+static const wxString MaxUndoItemsEntry(wxT( "DevelMaxUndoItems" ) );
 
 BEGIN_EVENT_TABLE( EDA_DRAW_FRAME, KIWAY_PLAYER )
     EVT_MOUSEWHEEL( EDA_DRAW_FRAME::OnMouseEvent )
@@ -762,8 +783,6 @@ void EDA_DRAW_FRAME::UpdateMsgPanel()
 void EDA_DRAW_FRAME::PushPreferences( const EDA_DRAW_PANEL* aParentCanvas )
 {
     m_canvas->SetEnableZoomNoCenter( aParentCanvas->GetEnableZoomNoCenter() );
-    m_canvas->SetEnableMiddleButtonPan( aParentCanvas->GetEnableMiddleButtonPan() );
-    m_canvas->SetMiddleButtonPanLimited( aParentCanvas->GetMiddleButtonPanLimited() );
     m_canvas->SetEnableAutoPan( aParentCanvas->GetEnableAutoPan() );
 }
 
@@ -778,14 +797,18 @@ wxString EDA_DRAW_FRAME::LengthDoubleToString( double aValue, bool aConvertToMil
 }
 
 
-bool EDA_DRAW_FRAME::HandleBlockBegin( wxDC* aDC, EDA_KEY aKey, const wxPoint& aPosition )
+bool EDA_DRAW_FRAME::HandleBlockBegin( wxDC* aDC, EDA_KEY aKey, const wxPoint& aPosition,
+       int aExplicitCommand )
 {
     BLOCK_SELECTOR* block = &GetScreen()->m_BlockLocate;
 
     if( ( block->GetCommand() != BLOCK_IDLE ) || ( block->GetState() != STATE_NO_BLOCK ) )
         return false;
 
-    block->SetCommand( (BLOCK_COMMAND_T) BlockCommand( aKey ) );
+    if( aExplicitCommand == 0 )
+        block->SetCommand( (BLOCK_COMMAND_T) BlockCommand( aKey ) );
+    else
+        block->SetCommand( (BLOCK_COMMAND_T) aExplicitCommand );
 
     if( block->GetCommand() == 0 )
         return false;
@@ -882,9 +905,14 @@ void EDA_DRAW_FRAME::AdjustScrollBars( const wxPoint& aCenterPositionIU )
     // Full drawing or "page" rectangle in internal units
     DBOX    pageRectIU( wxPoint( 0, 0 ), wxSize( GetPageSizeIU().x, GetPageSizeIU().y ) );
 
+    // Account for scrollbars
+    wxSize  scrollbarSizeDU = m_canvas->GetSize() - m_canvas->GetClientSize();
+    wxSize  scrollbarSizeIU = scrollbarSizeDU * (1 / scale);
+    wxPoint centerAdjustedIU = aCenterPositionIU + scrollbarSizeIU / 2;
+
     // The upper left corner of the client rectangle in internal units.
-    double xIU = aCenterPositionIU.x - clientSizeIU.x / 2.0;
-    double yIU = aCenterPositionIU.y - clientSizeIU.y / 2.0;
+    double xIU = centerAdjustedIU.x - clientSizeIU.x / 2.0;
+    double yIU = centerAdjustedIU.y - clientSizeIU.y / 2.0;
 
     // If drawn around the center, adjust the client rectangle accordingly.
     if( screen->m_Center )
@@ -1005,10 +1033,11 @@ void EDA_DRAW_FRAME::AdjustScrollBars( const wxPoint& aCenterPositionIU )
     double unitsX = virtualSizeIU.x * scale;
     double unitsY = virtualSizeIU.y * scale;
 
+    // Store the requested center position for later use
+    SetScrollCenterPosition( aCenterPositionIU );
+
     // Calculate the scroll bar position in internal units to place the
     // center position at the center of client rectangle.
-    SetScrollCenterPosition( centerPositionIU );
-
     double posX = centerPositionIU.x - clientRectIU.GetWidth()  / 2.0 - screen->m_DrawOrg.x;
     double posY = centerPositionIU.y - clientRectIU.GetHeight() / 2.0 - screen->m_DrawOrg.y;
 

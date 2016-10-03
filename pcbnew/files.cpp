@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004-2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2011-2015 Wayne Stambaugh <stambaughw@verizon.net>
+ * Copyright (C) 2011-2016 Wayne Stambaugh <stambaughw@verizon.net>
  * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
@@ -35,7 +35,7 @@
 #include <gestfich.h>
 #include <wxPcbStruct.h>
 #include <macros.h>
-#include <3d_viewer.h>
+#include <3d_viewer/eda_3d_viewer.h>
 #include <richio.h>
 #include <filter_reader.h>
 #include <pgm_base.h>
@@ -62,6 +62,12 @@
 
 static const wxChar backupSuffix[]   = wxT( "-bak" );
 static const wxChar autosavePrefix[] = wxT( "_autosave-" );
+
+
+wxString PCB_EDIT_FRAME::GetAutoSaveFilePrefix()
+{
+    return wxString( autosavePrefix );
+}
 
 
 /**
@@ -325,6 +331,7 @@ void PCB_EDIT_FRAME::Files_io_from_id( int id )
         GetBoard()->SetFileName( fn.GetFullPath() );
         UpdateTitle();
         ReCreateLayerBox();
+        OnModify();
         break;
     }
 
@@ -515,7 +522,7 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
         {
             wxString msg = wxString::Format( _(
                     "Error loading board.\n%s" ),
-                    GetChars( ioe.errorText )
+                    GetChars( ioe.What() )
                     );
             DisplayError( this, msg );
             return false;
@@ -570,8 +577,17 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
     // Rebuild the new pad list (for drc and ratsnet control ...)
     GetBoard()->m_Status_Pcb = 0;
 
-    // Update info shown by the horizontal toolbars
+    // Select netclass Default as current netclass (it always exists)
     SetCurrentNetClass( NETCLASS::Default );
+
+    // Rebuild list of nets (full ratsnest rebuild)
+    {
+        wxBusyCursor dummy;    // Displays an Hourglass while building connectivity
+        Compile_Ratsnest( NULL, true );
+        GetBoard()->GetRatsnest()->ProcessBoard();
+    }
+
+    // Update info shown by the horizontal toolbars
     ReFillLayerWidget();
     ReCreateLayerBox();
 
@@ -591,17 +607,10 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
     // Display the loaded board:
     Zoom_Automatique( false );
 
-    // Compile ratsnest and displays net info
-    {
-        wxBusyCursor dummy;    // Displays an Hourglass while building connectivity
-        Compile_Ratsnest( NULL, true );
-        GetBoard()->GetRatsnest()->ProcessBoard();
-    }
-
     SetMsgPanel( GetBoard() );
 
     // Refresh the 3D view, if any
-    EDA_3D_FRAME* draw3DFrame = Get3DViewerFrame();
+    EDA_3D_VIEWER* draw3DFrame = Get3DViewerFrame();
 
     if( draw3DFrame )
         draw3DFrame->NewDisplay();
@@ -718,7 +727,7 @@ bool PCB_EDIT_FRAME::SavePcbFile( const wxString& aFileName, bool aCreateBackupF
         wxString msg = wxString::Format( _(
                 "Error saving board file '%s'.\n%s" ),
                 GetChars( pcbFileName.GetFullPath() ),
-                GetChars( ioe.errorText )
+                GetChars( ioe.What() )
                 );
         DisplayError( this, msg );
 
@@ -798,7 +807,7 @@ bool PCB_EDIT_FRAME::SavePcbCopy( const wxString& aFileName )
         wxString msg = wxString::Format( _(
                 "Error saving board file '%s'.\n%s" ),
                 GetChars( pcbFileName.GetFullPath() ),
-                GetChars( ioe.errorText )
+                GetChars( ioe.What() )
                 );
         DisplayError( this, msg );
 
@@ -806,7 +815,7 @@ bool PCB_EDIT_FRAME::SavePcbCopy( const wxString& aFileName )
     }
 
     DisplayInfoMessage( this, wxString::Format( _( "Board copied to:\n'%s'" ),
-                                GetChars( pcbFileName.GetFullPath() ) ) );
+                                                GetChars( pcbFileName.GetFullPath() ) ) );
 
     return true;
 }
@@ -814,19 +823,40 @@ bool PCB_EDIT_FRAME::SavePcbCopy( const wxString& aFileName )
 
 bool PCB_EDIT_FRAME::doAutoSave()
 {
-    wxFileName tmpFileName = Prj().AbsolutePath( GetBoard()->GetFileName() );
-    wxFileName fn = tmpFileName;
+    wxFileName tmpFileName;
 
-    // Auto save file name is the normal file name prepended with
-    // autosaveFilePrefix string.
-    fn.SetName( wxString( autosavePrefix ) + fn.GetName() );
+    if( GetBoard()->GetFileName().IsEmpty() )
+    {
+        tmpFileName = wxFileName( wxStandardPaths::Get().GetDocumentsDir(), wxT( "noname" ),
+                                  KiCadPcbFileExtension );
+        GetBoard()->SetFileName( tmpFileName.GetFullPath() );
+    }
+    else
+    {
+        tmpFileName = Prj().AbsolutePath( GetBoard()->GetFileName() );
+    }
 
-    wxLogTrace( traceAutoSave,
-                wxT( "Creating auto save file <" + fn.GetFullPath() ) + wxT( ">" ) );
+    wxFileName autoSaveFileName = tmpFileName;
 
-    if( !fn.IsOk() )
+    // Auto save file name is the board file name prepended with autosaveFilePrefix string.
+    autoSaveFileName.SetName( wxString( autosavePrefix ) + autoSaveFileName.GetName() );
+
+    if( !autoSaveFileName.IsOk() )
         return false;
-    else if( SavePcbFile( fn.GetFullPath(), NO_BACKUP_FILE ) )
+
+    // If the board file path is not writable, try writing to a platform specific temp file
+    // path.  If that path isn't writabe, give up.
+    if( !autoSaveFileName.IsDirWritable() )
+    {
+        autoSaveFileName.SetPath( wxFileName::GetTempDir() );
+
+        if( !autoSaveFileName.IsOk() || !autoSaveFileName.IsDirWritable() )
+            return false;
+    }
+
+    wxLogTrace( traceAutoSave, "Creating auto save file <" + autoSaveFileName.GetFullPath() + ">" );
+
+    if( SavePcbFile( autoSaveFileName.GetFullPath(), NO_BACKUP_FILE ) )
     {
         GetScreen()->SetModify();
         GetBoard()->SetFileName( tmpFileName.GetFullPath() );

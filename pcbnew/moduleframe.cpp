@@ -4,7 +4,7 @@
  * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2015 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
  * Copyright (C) 2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2015 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -39,7 +39,7 @@
 #include <confirm.h>
 #include <wxPcbStruct.h>
 #include <dialog_helpers.h>
-#include <3d_viewer.h>
+#include <3d_viewer/eda_3d_viewer.h>
 #include <msgpanel.h>
 #include <fp_lib_table.h>
 
@@ -59,6 +59,7 @@
 #include <tool/tool_manager.h>
 #include <tool/tool_dispatcher.h>
 #include "tools/selection_tool.h"
+#include "tools/zoom_tool.h"
 #include "tools/edit_tool.h"
 #include "tools/drawing_tool.h"
 #include "tools/point_editor.h"
@@ -109,6 +110,7 @@ BEGIN_EVENT_TABLE( FOOTPRINT_EDIT_FRAME, PCB_BASE_FRAME )
 
     // Vertical tool bar button click event handler.
     EVT_TOOL( ID_NO_TOOL_SELECTED, FOOTPRINT_EDIT_FRAME::OnVerticalToolbar )
+    EVT_TOOL( ID_ZOOM_SELECTION, FOOTPRINT_EDIT_FRAME::OnVerticalToolbar )
     EVT_TOOL_RANGE( ID_MODEDIT_PAD_TOOL, ID_MODEDIT_PLACE_GRID_COORD,
                     FOOTPRINT_EDIT_FRAME::OnVerticalToolbar )
 
@@ -185,6 +187,7 @@ BEGIN_EVENT_TABLE( FOOTPRINT_EDIT_FRAME, PCB_BASE_FRAME )
     EVT_UPDATE_UI( ID_MODEDIT_UPDATE_MODULE_IN_BOARD,
                    FOOTPRINT_EDIT_FRAME::OnUpdateReplaceModuleInBoard )
     EVT_UPDATE_UI( ID_NO_TOOL_SELECTED, FOOTPRINT_EDIT_FRAME::OnUpdateVerticalToolbar )
+    EVT_UPDATE_UI( ID_ZOOM_SELECTION, FOOTPRINT_EDIT_FRAME::OnUpdateVerticalToolbar )
 
     EVT_UPDATE_UI_RANGE( ID_MODEDIT_PAD_TOOL, ID_MODEDIT_PLACE_GRID_COORD,
                          FOOTPRINT_EDIT_FRAME::OnUpdateVerticalToolbar )
@@ -344,6 +347,12 @@ FOOTPRINT_EDIT_FRAME::~FOOTPRINT_EDIT_FRAME()
     retainLastFootprint();
 
     delete m_Layers;
+}
+
+
+BOARD_ITEM_CONTAINER* FOOTPRINT_EDIT_FRAME::GetModel() const
+{
+    return GetBoard()->m_Modules;
 }
 
 
@@ -672,7 +681,7 @@ void FOOTPRINT_EDIT_FRAME::OnUpdateSelectCurrentLib( wxUpdateUIEvent& aEvent )
 
 void FOOTPRINT_EDIT_FRAME::Show3D_Frame( wxCommandEvent& event )
 {
-    EDA_3D_FRAME* draw3DFrame = Get3DViewerFrame();
+    EDA_3D_VIEWER* draw3DFrame = Get3DViewerFrame();
 
     if( draw3DFrame )
     {
@@ -690,7 +699,7 @@ void FOOTPRINT_EDIT_FRAME::Show3D_Frame( wxCommandEvent& event )
         return;
     }
 
-    draw3DFrame = new EDA_3D_FRAME( &Kiway(), this, _( "3D Viewer" ) );
+    draw3DFrame = new EDA_3D_VIEWER( &Kiway(), this, _( "3D Viewer" ) );
     draw3DFrame->Raise();     // Needed with some Window Managers
     draw3DFrame->Show( true );
 }
@@ -737,7 +746,7 @@ void FOOTPRINT_EDIT_FRAME::OnModify()
 {
     PCB_BASE_FRAME::OnModify();
 
-    EDA_3D_FRAME* draw3DFrame = Get3DViewerFrame();
+    EDA_3D_VIEWER* draw3DFrame = Get3DViewerFrame();
 
     if( draw3DFrame )
         draw3DFrame->ReloadRequest();
@@ -746,35 +755,41 @@ void FOOTPRINT_EDIT_FRAME::OnModify()
 
 void FOOTPRINT_EDIT_FRAME::updateTitle()
 {
-    wxString title   = _( "Footprint Editor " );
-
     wxString nickname = GetCurrentLib();
+    wxString nickname_display = _( "no active library" );
+    bool writable = true;
 
-    if( !nickname )
-    {
-    L_none:
-        title += _( "(no active library)" );
-    }
-    else
+    if( !!nickname )
     {
         try
         {
-            bool writable = Prj().PcbFootprintLibs()->IsFootprintLibWritable( nickname );
+            writable = Prj().PcbFootprintLibs()->IsFootprintLibWritable( nickname );
 
-            // no exception was thrown, this means libPath is valid, but it may be read only.
-            title = _( "Footprint Editor (active library: " ) + nickname + wxT( ")" );
-
-            if( !writable )
-                title += _( " [Read Only]" );
+            nickname_display = nickname;
         }
         catch( const IO_ERROR& ioe )
         {
             // user may be bewildered as to why after selecting a library it is not showing up
             // in the title, we could show an error message, but that should have been done at time
             // of libary selection UI.
-            goto L_none;
         }
     }
+
+    wxString path_display;
+    if( nickname.size() )
+    {
+        FP_LIB_TABLE* libtable = Prj().PcbFootprintLibs();
+        const FP_LIB_TABLE::ROW* row = libtable->FindRow( nickname );
+
+        if( row )
+            path_display = L" \u2014 " + row->GetFullURI( true );
+    }
+
+    wxString title;
+    title.Printf( _( "Footprint Editor" ) + L" \u2014 %s%s%s",
+            nickname_display,
+            writable ? wxString( wxEmptyString ) : _( " [Read Only]" ),
+            path_display );
 
     SetTitle( title );
 }
@@ -863,7 +878,7 @@ void FOOTPRINT_EDIT_FRAME::ProcessPreferences( wxCommandEvent& event )
                     wxString msg = wxString::Format( _(
                         "Error occurred saving the global footprint library "
                         "table:\n\n%s" ),
-                        GetChars( ioe.errorText.GetData() )
+                        GetChars( ioe.What().GetData() )
                         );
                     wxMessageBox( msg, _( "File Save Error" ), wxOK | wxICON_ERROR );
                 }
@@ -883,7 +898,7 @@ void FOOTPRINT_EDIT_FRAME::ProcessPreferences( wxCommandEvent& event )
                     wxString msg = wxString::Format( _(
                         "Error occurred saving project specific footprint library "
                         "table:\n\n%s" ),
-                        GetChars( ioe.errorText )
+                        GetChars( ioe.What() )
                         );
                     wxMessageBox( msg, _( "File Save Error" ), wxOK | wxICON_ERROR );
                 }
@@ -926,6 +941,7 @@ void FOOTPRINT_EDIT_FRAME::setupTools()
     drawPanel->SetEventDispatcher( m_toolDispatcher );
 
     m_toolManager->RegisterTool( new SELECTION_TOOL );
+    m_toolManager->RegisterTool( new ZOOM_TOOL );
     m_toolManager->RegisterTool( new EDIT_TOOL );
     m_toolManager->RegisterTool( new DRAWING_TOOL );
     m_toolManager->RegisterTool( new POINT_EDITOR );
@@ -934,13 +950,12 @@ void FOOTPRINT_EDIT_FRAME::setupTools()
     m_toolManager->RegisterTool( new PLACEMENT_TOOL );
     m_toolManager->RegisterTool( new PICKER_TOOL );
 
-    m_toolManager->GetTool<SELECTION_TOOL>()->EditModules( true );
-    m_toolManager->GetTool<EDIT_TOOL>()->EditModules( true );
-    m_toolManager->GetTool<DRAWING_TOOL>()->EditModules( true );
+    m_toolManager->GetTool<SELECTION_TOOL>()->SetEditModules( true );
+    m_toolManager->GetTool<EDIT_TOOL>()->SetEditModules( true );
+    m_toolManager->GetTool<DRAWING_TOOL>()->SetEditModules( true );
 
     m_toolManager->ResetTools( TOOL_BASE::RUN );
     m_toolManager->InvokeTool( "pcbnew.InteractiveSelection" );
-
 }
 
 

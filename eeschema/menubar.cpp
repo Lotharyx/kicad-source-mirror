@@ -492,6 +492,16 @@ void SCH_EDIT_FRAME::ReCreateMenuBar()
                  _( "Run CvPcb" ),
                  KiBitmap( cvpcb_xpm ) );
 
+    toolsMenu->AppendSeparator();
+
+#ifdef KICAD_SPICE
+    // Simulator
+    AddMenuItem( toolsMenu,
+                 ID_SIM_SHOW,
+                 _("Simula&tor"), _( "Simulate the circuit" ),
+                 KiBitmap( simulator_xpm ) );
+#endif /* KICAD_SPICE */
+
     // Help Menu:
     wxMenu* helpMenu = new wxMenu;
 
@@ -506,6 +516,12 @@ void SCH_EDIT_FRAME::ReCreateMenuBar()
                  _( "&Getting Started in KiCad" ),
                  _( "Open \"Getting Started in KiCad\" guide for beginners" ),
                  KiBitmap( help_xpm ) );
+
+    AddMenuItem( helpMenu,
+                 ID_PREFERENCES_HOTKEY_SHOW_CURRENT_LIST,
+                 _( "&List Hotkeys" ),
+                 _( "Displays the current hotkeys list and corresponding commands" ),
+                 KiBitmap( hotkeys_xpm ) );
 
     helpMenu->AppendSeparator();
     AddMenuItem( helpMenu,

@@ -36,10 +36,10 @@
 #include <sch_field.h>
 #include <transform.h>
 #include <general.h>
-#include <boost/weak_ptr.hpp>
 #include <vector>
 #include <lib_draw_item.h>
 
+class SCH_SCREEN;
 class SCH_SHEET_PATH;
 class LIB_ITEM;
 class LIB_PIN;
@@ -48,12 +48,16 @@ class NETLIST_OBJECT_LIST;
 class LIB_PART;
 class PART_LIBS;
 class SCH_COLLECTOR;
+class SCH_SCREEN;
 
 
 /// A container for several SCH_FIELD items
-typedef std::vector<SCH_FIELD>      SCH_FIELDS;
+typedef std::vector<SCH_FIELD>    SCH_FIELDS;
 
-typedef boost::weak_ptr<LIB_PART>   PART_REF;
+typedef std::weak_ptr<LIB_PART>   PART_REF;
+
+
+extern std::string toUTFTildaText( const wxString& txt );
 
 
 /**
@@ -137,10 +141,12 @@ public:
 
     ~SCH_COMPONENT() { }
 
-    wxString GetClass() const
+    wxString GetClass() const override
     {
         return wxT( "SCH_COMPONENT" );
     }
+
+    const wxArrayString& GetPathsAndReferences() const { return m_PathsAndReferences; }
 
     /**
      * Virtual function IsMovableFromAnchorPoint
@@ -150,7 +156,7 @@ public:
      * items which can be large (hierarchical sheets, compoments)
      * @return false for a componant
      */
-    bool IsMovableFromAnchorPoint() { return false; }
+    bool IsMovableFromAnchorPoint() override { return false; }
 
     void SetPartName( const wxString& aName, PART_LIBS* aLibs=NULL );
     const wxString& GetPartName() const        { return m_part_name; }
@@ -190,6 +196,8 @@ public:
 
     wxString GetPrefix() const { return m_prefix; }
 
+    void SetPrefix( const wxString& aPrefix ) { m_prefix = aPrefix; }
+
     TRANSFORM& GetTransform() const { return const_cast< TRANSFORM& >( m_transform ); }
 
     void SetTransform( const TRANSFORM& aTransform );
@@ -202,9 +210,9 @@ public:
      */
     int GetUnitCount() const;
 
-    bool Save( FILE* aFile ) const;
+    bool Save( FILE* aFile ) const override;
 
-    bool Load( LINE_READER& aLine, wxString& aErrorMsg );
+    bool Load( LINE_READER& aLine, wxString& aErrorMsg ) override;
 
     /**
      * Function SetOrientation
@@ -239,7 +247,7 @@ public:
      */
     wxPoint GetScreenCoord( const wxPoint& aPoint );
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList );
+    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
 
     /**
      * Function ClearAnnotation
@@ -257,7 +265,7 @@ public:
      */
     void SetTimeStamp( time_t aNewTimeStamp );
 
-    const EDA_RECT GetBoundingBox() const;    // Virtual
+    const EDA_RECT GetBoundingBox() const override;
 
     /**
      * Function GetBodyBoundingBox
@@ -307,7 +315,7 @@ public:
      * Function GetFieldCount
      * returns the number of fields in this component.
      */
-    int GetFieldCount() const { return (int) m_Fields.size(); }
+    int GetFieldCount() const { return (int)m_Fields.size(); }
 
     /**
      * Function GetFieldsAutoplaced
@@ -368,7 +376,7 @@ public:
      * Virtual function, from the base class SCH_ITEM::Draw
      */
     void Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-               GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR )
+               GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR ) override
     {
         Draw( aPanel, aDC, aOffset, aDrawMode, aColor, true );
     }
@@ -389,7 +397,7 @@ public:
                GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor,
                bool aDrawPinText );
 
-    void SwapData( SCH_ITEM* aItem );
+    void SwapData( SCH_ITEM* aItem ) override;
 
     // returns a unique ID, in the form of a path.
     wxString GetPath( const SCH_SHEET_PATH* sheet ) const;
@@ -440,7 +448,7 @@ public:
 
     // Geometric transforms (used in block operations):
 
-    void Move( const wxPoint& aMoveVector )
+    void Move( const wxPoint& aMoveVector ) override
     {
         if( aMoveVector == wxPoint( 0, 0 ) )
             return;
@@ -453,15 +461,15 @@ public:
         SetModified();
     }
 
-    void MirrorY( int aYaxis_position );
+    void MirrorY( int aYaxis_position ) override;
 
-    void MirrorX( int aXaxis_position );
+    void MirrorX( int aXaxis_position ) override;
 
-    void Rotate( wxPoint aPosition );
+    void Rotate( wxPoint aPosition ) override;
 
-    bool Matches( wxFindReplaceData& aSearchData, void* aAuxData, wxPoint* aFindLocation );
+    bool Matches( wxFindReplaceData& aSearchData, void* aAuxData, wxPoint* aFindLocation ) override;
 
-    void GetEndPoints( std::vector<DANGLING_END_ITEM>& aItemList );
+    void GetEndPoints( std::vector<DANGLING_END_ITEM>& aItemList ) override;
 
     /**
      * Test if the component's dangling state has changed for one given pin index. As
@@ -482,19 +490,19 @@ public:
      * @param aItemList - list of all DANGLING_END_ITEMs to be tested
      * @return true if any pin's state has changed.
      */
-    bool IsDanglingStateChanged( std::vector<DANGLING_END_ITEM>& aItemList );
+    bool IsDanglingStateChanged( std::vector<DANGLING_END_ITEM>& aItemList ) override;
 
     /**
      * Return whether any pin has dangling status. Does NOT update the internal status,
      * only checks the existing status.
      */
-    bool IsDangling() const;
+    bool IsDangling() const override;
 
     wxPoint GetPinPhysicalPosition( LIB_PIN* Pin );
 
-    bool IsSelectStateChanged( const wxRect& aRect );
+    bool IsSelectStateChanged( const wxRect& aRect ) override;
 
-    bool IsConnectable() const { return true; }
+    bool IsConnectable() const override { return true; }
 
     /**
      * @return true if the component is in netlist
@@ -503,10 +511,9 @@ public:
      */
     bool IsInNetlist() const;
 
-    void GetConnectionPoints( std::vector<wxPoint>& aPoints ) const;
+    void GetConnectionPoints( std::vector<wxPoint>& aPoints ) const override;
 
-    SEARCH_RESULT Visit( INSPECTOR* inspector, const void* testData,
-                                 const KICAD_T scanTypes[] );
+    SEARCH_RESULT Visit( INSPECTOR inspector, void* testData, const KICAD_T scanTypes[] ) override;
 
     /**
      * Function GetDrawItem().
@@ -518,40 +525,40 @@ public:
      */
     LIB_ITEM* GetDrawItem( const wxPoint& aPosition, KICAD_T aType = TYPE_NOT_INIT );
 
-    wxString GetSelectMenuText() const;
+    wxString GetSelectMenuText() const override;
 
-    BITMAP_DEF GetMenuImage() const { return  add_component_xpm; }
+    BITMAP_DEF GetMenuImage() const override { return  add_component_xpm; }
 
     void GetNetListItem( NETLIST_OBJECT_LIST& aNetListItems,
-                         SCH_SHEET_PATH*      aSheetPath );
+                         SCH_SHEET_PATH*      aSheetPath ) override;
 
-    bool operator <( const SCH_ITEM& aItem ) const;
+    bool operator <( const SCH_ITEM& aItem ) const override;
 
     bool operator==( const SCH_COMPONENT& aComponent) const;
     bool operator!=( const SCH_COMPONENT& aComponent) const;
 
     SCH_ITEM& operator=( const SCH_ITEM& aItem );
 
-    bool IsReplaceable() const { return true; }
+    bool IsReplaceable() const override { return true; }
 
-    wxPoint GetPosition() const { return m_Pos; }
+    wxPoint GetPosition() const override { return m_Pos; }
 
-    void SetPosition( const wxPoint& aPosition ) { Move( aPosition - m_Pos ); }
+    void SetPosition( const wxPoint& aPosition ) override { Move( aPosition - m_Pos ); }
 
-    bool HitTest( const wxPoint& aPosition, int aAccuracy ) const;
+    bool HitTest( const wxPoint& aPosition, int aAccuracy ) const override;
 
-    bool HitTest( const EDA_RECT& aRect, bool aContained = false, int aAccuracy = 0 ) const;
+    bool HitTest( const EDA_RECT& aRect, bool aContained = false, int aAccuracy = 0 ) const override;
 
-    void Plot( PLOTTER* aPlotter );
+    void Plot( PLOTTER* aPlotter ) override;
 
-    EDA_ITEM* Clone() const;
+    EDA_ITEM* Clone() const override;
 
 #if defined(DEBUG)
-    void Show( int nestLevel, std::ostream& os ) const;     // override
+    void Show( int nestLevel, std::ostream& os ) const override;
 #endif
 
 private:
-    bool doIsConnected( const wxPoint& aPosition ) const;
+    bool doIsConnected( const wxPoint& aPosition ) const override;
 };
 
 

@@ -221,6 +221,10 @@ void PCB_EDIT_FRAME::ReCreateMenuBar()
                  _( "I&DFv3" ), _( "IDFv3 board and component export" ),
                  KiBitmap( export_idf_xpm ) );
 
+    AddMenuItem( submenuexport, ID_GEN_EXPORT_FILE_STEP,
+                 _( "S&TEP" ), _( "STEP export" ),
+                 KiBitmap( export_idf_xpm ) );
+
     AddMenuItem( submenuexport, ID_PCB_GEN_CMP_FILE,
                  _( "&Component (.cmp) File" ),
                  _( "Export component file (*.cmp) for Eeschema footprint field back-annotation" ),
@@ -391,7 +395,7 @@ void PCB_EDIT_FRAME::ReCreateMenuBar()
                  _( "Add footprints" ), KiBitmap( module_xpm ) );
 
     text = AddHotkeyName( _( "&Track" ), g_Pcbnew_Editor_Hokeys_Descr,
-                          HK_ADD_NEW_TRACK );
+                          HK_ADD_NEW_TRACK, IS_ACCELERATOR );
     AddMenuItem( placeMenu, ID_TRACK_BUTT, text,
                  _( "Add tracks and vias" ), KiBitmap( add_tracks_xpm ) );
 
@@ -645,6 +649,11 @@ void PCB_EDIT_FRAME::ReCreateMenuBar()
                  _( "&Getting Started in KiCad" ),
                  _( "Open the \"Getting Started in KiCad\" guide for beginners" ),
                  KiBitmap( help_xpm ) );
+
+    AddMenuItem( helpMenu, ID_PREFERENCES_HOTKEY_SHOW_CURRENT_LIST,
+                 _( "&List Hotkeys" ),
+                 _( "Displays the current hotkeys list and corresponding commands" ),
+                 KiBitmap( hotkeys_xpm ) );
 
     helpMenu->AppendSeparator();
     AddMenuItem( helpMenu, wxID_ABOUT,

@@ -52,6 +52,7 @@
 #include <eeschema_config.h>
 #include <sch_sheet.h>
 #include <sch_sheet_path.h>
+#include "sim/sim_plot_frame.h"
 
 #include <invoke_sch_dialog.h>
 #include <dialogs/dialog_schematic_find.h>
@@ -116,7 +117,7 @@ SEARCH_STACK* PROJECT::SchSearchS()
         }
         catch( const IO_ERROR& ioe )
         {
-            DBG(printf( "%s: %s\n", __func__, TO_UTF8( ioe.errorText ) );)
+            DBG(printf( "%s: %s\n", __func__, TO_UTF8( ioe.What() ) );)
         }
 
         if( !!libDir )
@@ -181,7 +182,7 @@ PART_LIBS* PROJECT::SchLibs()
         }
         catch( const IO_ERROR& ioe )
         {
-            DisplayError( NULL, ioe.errorText );
+            DisplayError( NULL, ioe.What() );
         }
     }
 
@@ -276,8 +277,15 @@ BEGIN_EVENT_TABLE( SCH_EDIT_FRAME, EDA_DRAW_FRAME )
 
     // Tools and buttons for vertical toolbar.
     EVT_TOOL( ID_NO_TOOL_SELECTED, SCH_EDIT_FRAME::OnSelectTool )
+    EVT_TOOL( ID_ZOOM_SELECTION, SCH_EDIT_FRAME::OnSelectTool )
     EVT_TOOL_RANGE( ID_SCHEMATIC_VERTICAL_TOOLBAR_START, ID_SCHEMATIC_VERTICAL_TOOLBAR_END,
                     SCH_EDIT_FRAME::OnSelectTool )
+
+#ifdef KICAD_SPICE
+    EVT_TOOL( ID_SIM_SHOW, SCH_EDIT_FRAME::OnSimulate )
+    EVT_TOOL( ID_SIM_PROBE, SCH_EDIT_FRAME::OnSelectTool )
+    EVT_TOOL( ID_SIM_TUNE, SCH_EDIT_FRAME::OnSelectTool )
+#endif /* KICAD_SPICE */
 
     EVT_MENU( ID_CANCEL_CURRENT_COMMAND, SCH_EDIT_FRAME::OnCancelCurrentCommand )
     EVT_MENU( ID_SCH_DRAG_ITEM, SCH_EDIT_FRAME::OnDragItem )
@@ -310,6 +318,7 @@ BEGIN_EVENT_TABLE( SCH_EDIT_FRAME, EDA_DRAW_FRAME )
     EVT_UPDATE_UI( ID_TB_OPTIONS_HIDDEN_PINS, SCH_EDIT_FRAME::OnUpdateHiddenPins )
     EVT_UPDATE_UI( ID_TB_OPTIONS_BUS_WIRES_ORIENT, SCH_EDIT_FRAME::OnUpdateBusOrientation )
     EVT_UPDATE_UI( ID_NO_TOOL_SELECTED, SCH_EDIT_FRAME::OnUpdateSelectTool )
+    EVT_UPDATE_UI( ID_ZOOM_SELECTION, SCH_EDIT_FRAME::OnUpdateSelectTool )
     EVT_UPDATE_UI_RANGE( ID_SCHEMATIC_VERTICAL_TOOLBAR_START, ID_SCHEMATIC_VERTICAL_TOOLBAR_END,
                          SCH_EDIT_FRAME::OnUpdateSelectTool )
     EVT_UPDATE_UI( ID_SAVE_PROJECT, SCH_EDIT_FRAME::OnUpdateSave )
@@ -349,8 +358,7 @@ SCH_EDIT_FRAME::SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ):
     m_hasAutoSave = true;
 
     SetForceHVLines( true );
-    SetSpiceAddReferencePrefix( false );
-    SetSpiceUseNetcodeAsNetname( false );
+    SetSpiceAjustPassiveValues( false );
 
     // Give an icon
     wxIcon icon;
@@ -614,6 +622,11 @@ void SCH_EDIT_FRAME::OnCloseWindow( wxCloseEvent& aEvent )
         if( viewlibFrame && !viewlibFrame->Close() )   // Can close modal component viewer?
             return;
     }
+
+    SIM_PLOT_FRAME* simFrame = (SIM_PLOT_FRAME*) Kiway().Player( FRAME_SIMULATOR, false );
+
+    if( simFrame && !simFrame->Close() )   // Can close the simulator?
+        return;
 
     SCH_SHEET_LIST sheetList( g_RootSheet );
 
@@ -1345,15 +1358,14 @@ void SCH_EDIT_FRAME::UpdateTitle()
 
     if( GetScreen()->GetFileName() == m_DefaultSchematicFileName )
     {
-        title.Printf( wxT( "Eeschema %s [%s]" ), GetChars( GetBuildVersion() ),
-                            GetChars( GetScreen()->GetFileName() ) );
+        title.Printf( L"Eeschema \u2014 %s", GetChars( GetScreen()->GetFileName() ) );
     }
     else
     {
         wxString    fileName = Prj().AbsolutePath( GetScreen()->GetFileName() );
         wxFileName  fn = fileName;
 
-        title.Printf( wxT( "[ %s %s] (%s)" ),
+        title.Printf( L"Eeschema \u2014 %s [%s] \u2014 %s",
                       GetChars( fn.GetName() ),
                       GetChars( m_CurrentSheet->PathHumanReadable() ),
                       GetChars( fn.GetPath() ) );
@@ -1369,4 +1381,3 @@ void SCH_EDIT_FRAME::UpdateTitle()
 
     SetTitle( title );
 }
-

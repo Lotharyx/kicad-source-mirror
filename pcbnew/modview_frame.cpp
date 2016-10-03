@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2012-2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2008-2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2004-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -33,7 +33,7 @@
 #include <class_drawpanel.h>
 #include <pcb_draw_panel_gal.h>
 #include <wxPcbStruct.h>
-#include <3d_viewer.h>
+#include <3d_viewer/eda_3d_viewer.h>
 #include <dialog_helpers.h>
 #include <msgpanel.h>
 #include <fp_lib_table.h>
@@ -57,7 +57,8 @@
 #include "tools/pcbnew_control.h"
 #include "tools/common_actions.h"
 
-#include <boost/bind.hpp>
+#include <functional>
+using namespace std::placeholders;
 
 
 #define NEXT_PART       1
@@ -290,7 +291,7 @@ FOOTPRINT_VIEWER_FRAME::FOOTPRINT_VIEWER_FRAME( KIWAY* aKiway, wxWindow* aParent
 
 FOOTPRINT_VIEWER_FRAME::~FOOTPRINT_VIEWER_FRAME()
 {
-    EDA_3D_FRAME* draw3DFrame = Get3DViewerFrame();
+    EDA_3D_VIEWER* draw3DFrame = Get3DViewerFrame();
 
     if( draw3DFrame )
         draw3DFrame->Destroy();
@@ -393,7 +394,7 @@ void FOOTPRINT_VIEWER_FRAME::ReCreateFootprintList()
         return;
     }
 
-    BOOST_FOREACH( const FOOTPRINT_INFO& footprint, fp_info_list.GetList() )
+    for( const FOOTPRINT_INFO& footprint : fp_info_list.GetList() )
     {
         m_footprintList->Append( footprint.GetFootprintName() );
     }
@@ -462,7 +463,7 @@ void FOOTPRINT_VIEWER_FRAME::ClickOnFootprintList( wxCommandEvent& event )
                         _( "Could not load footprint \"%s\" from library \"%s\".\n\nError %s." ),
                         GetChars( getCurFootprintName() ),
                         GetChars( getCurNickname() ),
-                        GetChars( ioe.errorText ) );
+                        GetChars( ioe.What() ) );
 
             DisplayError( this, msg );
         }
@@ -627,7 +628,7 @@ bool FOOTPRINT_VIEWER_FRAME::GeneralControl( wxDC* aDC, const wxPoint& aPosition
 
 void FOOTPRINT_VIEWER_FRAME::Show3D_Frame( wxCommandEvent& event )
 {
-    EDA_3D_FRAME* draw3DFrame = Get3DViewerFrame();
+    EDA_3D_VIEWER* draw3DFrame = Get3DViewerFrame();
 
     if( draw3DFrame )
     {
@@ -645,7 +646,7 @@ void FOOTPRINT_VIEWER_FRAME::Show3D_Frame( wxCommandEvent& event )
         return;
     }
 
-    draw3DFrame = new EDA_3D_FRAME( &Kiway(), this, wxEmptyString );
+    draw3DFrame = new EDA_3D_VIEWER( &Kiway(), this, wxEmptyString );
     Update3D_Frame( false );
     draw3DFrame->Raise();     // Needed with some Window Managers
     draw3DFrame->Show( true );
@@ -654,16 +655,16 @@ void FOOTPRINT_VIEWER_FRAME::Show3D_Frame( wxCommandEvent& event )
 
 void FOOTPRINT_VIEWER_FRAME::Update3D_Frame( bool aForceReloadFootprint )
 {
-    EDA_3D_FRAME* draw3DFrame = Get3DViewerFrame();
+    EDA_3D_VIEWER* draw3DFrame = Get3DViewerFrame();
 
     if( draw3DFrame == NULL )
         return;
 
-    wxString frm3Dtitle = wxString::Format(
-                _( "ModView: 3D Viewer [%s]" ),
-                GetChars( getCurFootprintName() ) );
+    wxString title = wxString::Format(
+                _( "3D Viewer" ) + L" \u2014 %s",
+                getCurFootprintName() );
 
-    draw3DFrame->SetTitle( frm3Dtitle );
+    draw3DFrame->SetTitle( title );
 
     if( aForceReloadFootprint )
     {
@@ -714,19 +715,25 @@ bool FOOTPRINT_VIEWER_FRAME::OnRightClick( const wxPoint& MousePos, wxMenu* PopM
 
 void FOOTPRINT_VIEWER_FRAME::UpdateTitle()
 {
-    wxString     msg;
+    wxString title;
+    wxString path;
 
-    msg = _( "Library Browser" );
-    msg << wxT( " [" );
+    title.Printf( _( "Library Browser" ) + L" \u2014 %s",
+            getCurNickname().size()
+                ? getCurNickname()
+                : _( "no library selected" ) );
 
+    // Now, add the full path, for info
     if( getCurNickname().size() )
-        msg << getCurNickname();
-    else
-        msg += _( "no library selected" );
+    {
+        FP_LIB_TABLE* libtable = Prj().PcbFootprintLibs();
+        const FP_LIB_TABLE::ROW* row = libtable->FindRow( getCurNickname() );
 
-    msg << wxT( "]" );
+        if( row )
+            title << L" \u2014 " << row->GetFullURI( true );
+    }
 
-    SetTitle( msg );
+    SetTitle( title );
 }
 
 

@@ -28,11 +28,13 @@ set( GERBVIEW_SRCS
     class_DCodeSelectionbox.cpp
     class_gbr_screen.cpp
     class_gbr_layout.cpp
-    class_GERBER.cpp
+    class_gerber_file_image.cpp
+    class_gerber_file_image_list.cpp
     class_gerber_draw_item.cpp
     class_gerbview_layer_widget.cpp
     class_gbr_layer_box_selector.cpp
     class_X2_gerber_attributes.cpp
+    clear_gbr_drawlayers.cpp
     controle.cpp
     dcode.cpp
     draw_gerber_screen.cpp
@@ -43,12 +45,11 @@ set( GERBVIEW_SRCS
     gerbview_config.cpp
     gerbview_frame.cpp
     hotkeys.cpp
-    init_gbr_drawlayers.cpp
+    clear_gbr_drawlayers.cpp
     locate.cpp
     menubar.cpp
     onleftclick.cpp
     onrightclick.cpp
-    pcbplot.cpp
     printout_control.cpp
     readgerb.cpp
     rs274_read_XY_and_IJ_coordinates.cpp

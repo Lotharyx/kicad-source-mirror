@@ -44,6 +44,7 @@
 #include <class_board_design_settings.h>
 #include <base_units.h>
 #include <wx/valnum.h>
+#include <board_commit.h>
 
 #include <class_board.h>
 #include <class_drawsegment.h>
@@ -69,10 +70,20 @@ public:
     ~DIALOG_GRAPHIC_ITEM_PROPERTIES() {};
 
 private:
-    bool TransferDataToWindow();
-    bool TransferDataFromWindow();
+    bool TransferDataToWindow() override;
+    bool TransferDataFromWindow() override;
     void OnLayerChoice( wxCommandEvent& event );
-    bool Validate();
+
+    void OnInitDlg( wxInitDialogEvent& event ) override
+    {
+        // Call the default wxDialog handler of a wxInitDialogEvent
+        TransferDataToWindow();
+
+        // Now all widgets have the size fixed, call FinishDialogSettings
+        FinishDialogSettings();
+    }
+
+    bool Validate() override;
 };
 
 DIALOG_GRAPHIC_ITEM_PROPERTIES::DIALOG_GRAPHIC_ITEM_PROPERTIES( PCB_EDIT_FRAME* aParent,
@@ -92,9 +103,7 @@ DIALOG_GRAPHIC_ITEM_PROPERTIES::DIALOG_GRAPHIC_ITEM_PROPERTIES( PCB_EDIT_FRAME* 
 
     m_StandardButtonsSizerOK->SetDefault();
 
-    Layout();
-    GetSizer()->SetSizeHints( this );
-    Centre();
+    FixOSXCancelButtonIssue();
 }
 
 
@@ -219,7 +228,8 @@ bool DIALOG_GRAPHIC_ITEM_PROPERTIES::TransferDataFromWindow()
     if( !DIALOG_GRAPHIC_ITEM_PROPERTIES_BASE::TransferDataFromWindow() )
         return false;
 
-    m_parent->SaveCopyInUndoList( m_item, UR_CHANGED );
+    BOARD_COMMIT commit( m_parent );
+    commit.Modify( m_item );
 
     wxString msg;
 
@@ -256,7 +266,7 @@ bool DIALOG_GRAPHIC_ITEM_PROPERTIES::TransferDataFromWindow()
         m_item->SetAngle( m_AngleValue * 10.0 );
     }
 
-    m_parent->OnModify();
+    commit.Push( _( "Modify drawing properties" ) );
 
     if( m_DC )
         m_item->Draw( m_parent->GetCanvas(), m_DC, GR_OR );

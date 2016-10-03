@@ -387,7 +387,7 @@ void PAGE_LAYOUT_READER_PARSER::parseBitmap( WORKSHEET_DATAITEM_BITMAP * aItem )
             break;
 
         case T_scale:
-            aItem->m_ImageBitmap->m_Scale = parseDouble();
+            aItem->m_ImageBitmap->SetScale( parseDouble() );
             NeedRIGHT();
             break;
 
@@ -783,7 +783,7 @@ void WORKSHEET_LAYOUT::SetDefaultLayout()
     }
     catch( const IO_ERROR& ioe )
     {
-        wxLogMessage( ioe.errorText );
+        wxLogMessage( ioe.What() );
     }
 }
 
@@ -804,7 +804,7 @@ void WORKSHEET_LAYOUT::SetPageLayout( const char* aPageLayout, bool Append )
     }
     catch( const IO_ERROR& ioe )
     {
-        wxLogMessage( ioe.errorText );
+        wxLogMessage( ioe.What() );
     }
 }
 
@@ -867,7 +867,7 @@ void WORKSHEET_LAYOUT::SetPageLayout( const wxString& aFullFileName, bool Append
         }
         catch( const IO_ERROR& ioe )
         {
-            wxLogMessage( ioe.errorText );
+            wxLogMessage( ioe.What() );
         }
     }
 

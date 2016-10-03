@@ -63,11 +63,12 @@
 #include <string.h>
 #include <errno.h>
 #include <wx/ffile.h>
-
+#include <wx/string.h>
 #include <legacy_plugin.h>   // implement this here
 
 #include <kicad_string.h>
 #include <macros.h>
+#include <properties.h>
 #include <zones.h>
 
 #include <class_board.h>
@@ -79,15 +80,13 @@
 #include <class_drawsegment.h>
 #include <class_mire.h>
 #include <class_edge_mod.h>
-#include <3d_struct.h>
+#include <3d_cache/3d_info.h>
 #include <pcb_plot_params.h>
 #include <pcb_plot_params_parser.h>
 #include <drawtxt.h>
 #include <convert_to_biu.h>
 #include <trigo.h>
 #include <build_version.h>
-
-#include <boost/make_shared.hpp>
 
 
 typedef LEGACY_PLUGIN::BIU      BIU;
@@ -204,10 +203,10 @@ static bool inline isSpace( int c ) { return strchr( delims, c ) != 0; }
 //-----<BOARD Load Functions>---------------------------------------------------
 
 /// C string compare test for a specific length of characters.
-#define TESTLINE( x )   ( !strnicmp( line, x, SZ( x ) ) && isSpace( line[SZ( x )] ) )
+#define TESTLINE( x )   ( !strncasecmp( line, x, SZ( x ) ) && isSpace( line[SZ( x )] ) )
 
 /// C sub-string compare test for a specific length of characters.
-#define TESTSUBSTR( x ) ( !strnicmp( line, x, SZ( x ) ) )
+#define TESTSUBSTR( x ) ( !strncasecmp( line, x, SZ( x ) ) )
 
 
 #if 1
@@ -238,7 +237,7 @@ static inline char* ReadLine( LINE_READER* rdr, const char* caller )
 
 
 
-using namespace std;    // auto_ptr
+using namespace std;    // unique_ptr
 
 
 static EDA_TEXT_HJUSTIFY_T horizJustify( const char* horizontal )
@@ -401,7 +400,7 @@ BOARD* LEGACY_PLUGIN::Load( const wxString& aFileName, BOARD* aAppendToMe,
         m_board->SetFileName( aFileName );
 
     // delete on exception, iff I own m_board, according to aAppendToMe
-    auto_ptr<BOARD> deleter( aAppendToMe ? NULL : m_board );
+    unique_ptr<BOARD> deleter( aAppendToMe ? NULL : m_board );
 
     FILE_LINE_READER    reader( aFileName );
 
@@ -433,7 +432,7 @@ void LEGACY_PLUGIN::loadAllSections( bool doAppend )
 
         if( TESTLINE( "$MODULE" ) )
         {
-            auto_ptr<MODULE>    module( new MODULE( m_board ) );
+            unique_ptr<MODULE>    module( new MODULE( m_board ) );
 
             FPID        fpid;
             std::string fpName = StrPurge( line + SZ( "$MODULE" ) );
@@ -1386,7 +1385,7 @@ void LEGACY_PLUGIN::loadMODULE( MODULE* aModule )
 
 void LEGACY_PLUGIN::loadPAD( MODULE* aModule )
 {
-    auto_ptr<D_PAD> pad( new D_PAD( aModule ) );
+    unique_ptr<D_PAD> pad( new D_PAD( aModule ) );
     char*           line;
     char*           saveptr;
 
@@ -1644,7 +1643,7 @@ void LEGACY_PLUGIN::loadMODULE_EDGE( MODULE* aModule )
         THROW_IO_ERROR( m_error );
     }
 
-    auto_ptr<EDGE_MODULE> dwg( new EDGE_MODULE( aModule, shape ) );    // a drawing
+    unique_ptr<EDGE_MODULE> dwg( new EDGE_MODULE( aModule, shape ) );    // a drawing
 
     const char* data;
 
@@ -1880,16 +1879,7 @@ void LEGACY_PLUGIN::loadMODULE_TEXT( TEXTE_MODULE* aText )
 
 void LEGACY_PLUGIN::load3D( MODULE* aModule )
 {
-    S3D_MASTER* t3D = aModule->Models();
-
-    if( !t3D->GetShape3DName().IsEmpty() )
-    {
-        S3D_MASTER* n3D = new S3D_MASTER( aModule );
-
-        aModule->Models().PushBack( n3D );
-
-        t3D = n3D;
-    }
+    S3D_INFO t3D;
 
     char*   line;
     while( ( line = READLINE( m_reader ) ) != NULL )
@@ -1898,35 +1888,38 @@ void LEGACY_PLUGIN::load3D( MODULE* aModule )
         {
             char    buf[512];
             ReadDelimitedText( buf, line + SZ( "Na" ), sizeof(buf) );
-            t3D->SetShape3DName( FROM_UTF8( buf ) );
+            t3D.m_Filename = buf;
         }
 
         else if( TESTLINE( "Sc" ) )     // Scale
         {
             sscanf( line + SZ( "Sc" ), "%lf %lf %lf\n",
-                    &t3D->m_MatScale.x,
-                    &t3D->m_MatScale.y,
-                    &t3D->m_MatScale.z );
+                    &t3D.m_Scale.x,
+                    &t3D.m_Scale.y,
+                    &t3D.m_Scale.z );
         }
 
         else if( TESTLINE( "Of" ) )     // Offset
         {
             sscanf( line + SZ( "Of" ), "%lf %lf %lf\n",
-                    &t3D->m_MatPosition.x,
-                    &t3D->m_MatPosition.y,
-                    &t3D->m_MatPosition.z );
+                    &t3D.m_Offset.x,
+                    &t3D.m_Offset.y,
+                    &t3D.m_Offset.z );
         }
 
         else if( TESTLINE( "Ro" ) )     // Rotation
         {
             sscanf( line + SZ( "Ro" ), "%lf %lf %lf\n",
-                    &t3D->m_MatRotation.x,
-                    &t3D->m_MatRotation.y,
-                    &t3D->m_MatRotation.z );
+                    &t3D.m_Rotation.x,
+                    &t3D.m_Rotation.y,
+                    &t3D.m_Rotation.z );
         }
 
         else if( TESTLINE( "$EndSHAPE3D" ) )
+        {
+            aModule->Models().push_back( t3D );
             return;         // preferred exit
+        }
     }
 
     THROW_IO_ERROR( "Missing '$EndSHAPE3D'" );
@@ -1942,7 +1935,7 @@ void LEGACY_PLUGIN::loadPCB_LINE()
         $EndDRAWSEGMENT
     */
 
-    auto_ptr<DRAWSEGMENT>   dseg( new DRAWSEGMENT( m_board ) );
+    unique_ptr<DRAWSEGMENT>   dseg( new DRAWSEGMENT( m_board ) );
 
     char*   line;
     char*   saveptr;
@@ -2087,7 +2080,7 @@ void LEGACY_PLUGIN::loadNETINFO_ITEM()
             // if it is not the net 0, or if the net 0 does not exists.
             if( net && ( net->GetNet() > 0 || m_board->FindNet( 0 ) == NULL ) )
             {
-                m_board->AppendNet( net );
+                m_board->Add( net );
 
                 // Be sure we have room to store the net in m_netCodes
                 if( (int)m_netCodes.size() <= netCode )
@@ -2406,9 +2399,9 @@ void LEGACY_PLUGIN::loadNETCLASS()
 
     // create an empty NETCLASS without a name, but do not add it to the BOARD
     // yet since that would bypass duplicate netclass name checking within the BOARD.
-    // store it temporarily in an auto_ptr until successfully inserted into the BOARD
+    // store it temporarily in an unique_ptr until successfully inserted into the BOARD
     // just before returning.
-    NETCLASSPTR nc = boost::make_shared<NETCLASS>( wxEmptyString );
+    NETCLASSPTR nc = std::make_shared<NETCLASS>( wxEmptyString );
 
     while( ( line = READLINE( m_reader ) ) != NULL )
     {
@@ -2475,7 +2468,7 @@ void LEGACY_PLUGIN::loadNETCLASS()
                 // Must have been a name conflict, this is a bad board file.
                 // User may have done a hand edit to the file.
 
-                // auto_ptr will delete nc on this code path
+                // unique_ptr will delete nc on this code path
 
                 m_error.Printf( _( "duplicate NETCLASS name '%s'" ), nc->GetName().GetData() );
                 THROW_IO_ERROR( m_error );
@@ -2491,7 +2484,7 @@ void LEGACY_PLUGIN::loadNETCLASS()
 
 void LEGACY_PLUGIN::loadZONE_CONTAINER()
 {
-    auto_ptr<ZONE_CONTAINER> zc( new ZONE_CONTAINER( m_board ) );
+    unique_ptr<ZONE_CONTAINER> zc( new ZONE_CONTAINER( m_board ) );
 
     CPolyLine::HATCH_STYLE outline_hatch = CPolyLine::NO_HATCH;
     bool    sawCorner = false;
@@ -2760,7 +2753,7 @@ void LEGACY_PLUGIN::loadZONE_CONTAINER()
 
 void LEGACY_PLUGIN::loadDIMENSION()
 {
-    auto_ptr<DIMENSION> dim( new DIMENSION( m_board ) );
+    unique_ptr<DIMENSION> dim( new DIMENSION( m_board ) );
 
     char*   line;
     char*   saveptr;
@@ -3079,55 +3072,65 @@ void LEGACY_PLUGIN::init( const PROPERTIES* aProperties )
     // mm to nanometers.  The deci-mil legacy files have no such "Units" marker
     // so we must assume the file is in deci-mils until told otherwise.
 
-    diskToBiu = IU_PER_DECIMILS;    // BIUs are nanometers
+    diskToBiu = IU_PER_MILS / 10;    // BIUs are nanometers
 }
 
 
 void LEGACY_PLUGIN::SaveModule3D( const MODULE* me ) const
 {
-    for( S3D_MASTER* t3D = me->Models();  t3D;  t3D = t3D->Next() )
+    std::list<S3D_INFO>::const_iterator sM = me->Models().begin();
+    std::list<S3D_INFO>::const_iterator eM = me->Models().end();
+
+    while( sM != eM )
     {
-        if( !t3D->GetShape3DName().IsEmpty() )
+        if( sM->m_Filename.empty() )
         {
-            fprintf( m_fp, "$SHAPE3D\n" );
-
-            fprintf( m_fp, "Na %s\n", EscapedUTF8( t3D->GetShape3DName() ).c_str() );
-
-            fprintf(m_fp,
-#if defined(DEBUG)
-                    // use old formats for testing, just to verify compatibility
-                    // using "diff", then switch to more concise form for release builds.
-                    "Sc %lf %lf %lf\n",
-#else
-                    "Sc %.10g %.10g %.10g\n",
-#endif
-                    t3D->m_MatScale.x,
-                    t3D->m_MatScale.y,
-                    t3D->m_MatScale.z );
-
-            fprintf(m_fp,
-#if defined(DEBUG)
-                    "Of %lf %lf %lf\n",
-#else
-                    "Of %.10g %.10g %.10g\n",
-#endif
-                    t3D->m_MatPosition.x,
-                    t3D->m_MatPosition.y,
-                    t3D->m_MatPosition.z );
-
-            fprintf(m_fp,
-#if defined(DEBUG)
-                    "Ro %lf %lf %lf\n",
-#else
-                    "Ro %.10g %.10g %.10g\n",
-#endif
-                    t3D->m_MatRotation.x,
-                    t3D->m_MatRotation.y,
-                    t3D->m_MatRotation.z );
-
-            fprintf( m_fp, "$EndSHAPE3D\n" );
+            ++sM;
+            continue;
         }
+
+        fprintf( m_fp, "$SHAPE3D\n" );
+
+        fprintf( m_fp, "Na %s\n", EscapedUTF8( sM->m_Filename ).c_str() );
+
+        fprintf(m_fp,
+#if defined(DEBUG)
+            // use old formats for testing, just to verify compatibility
+            // using "diff", then switch to more concise form for release builds.
+                "Sc %lf %lf %lf\n",
+#else
+            "Sc %.10g %.10g %.10g\n",
+#endif
+                sM->m_Scale.x,
+                sM->m_Scale.y,
+                sM->m_Scale.z );
+
+        fprintf(m_fp,
+#if defined(DEBUG)
+                "Of %lf %lf %lf\n",
+#else
+            "Of %.10g %.10g %.10g\n",
+#endif
+                sM->m_Offset.x,
+                sM->m_Offset.y,
+                sM->m_Offset.z );
+
+        fprintf(m_fp,
+#if defined(DEBUG)
+                "Ro %lf %lf %lf\n",
+#else
+            "Ro %.10g %.10g %.10g\n",
+#endif
+                sM->m_Rotation.x,
+                sM->m_Rotation.y,
+                sM->m_Rotation.z );
+
+        fprintf( m_fp, "$EndSHAPE3D\n" );
+
+        ++sM;
     }
+
+    return;
 }
 
 
@@ -3310,7 +3313,7 @@ void LP_CACHE::LoadModules( LINE_READER* aReader )
         // test first for the $MODULE, even before reading because of INDEX bug.
         if( TESTLINE( "$MODULE" ) )
         {
-            auto_ptr<MODULE>    module( new MODULE( m_owner->m_board ) );
+            unique_ptr<MODULE>    module( new MODULE( m_owner->m_board ) );
 
             std::string         footprintName = StrPurge( line + SZ( "$MODULE" ) );
 

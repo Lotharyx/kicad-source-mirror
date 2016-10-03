@@ -52,7 +52,7 @@ void PCB_BASE_FRAME::Export_Pad_Settings( D_PAD* aPad )
 
     D_PAD& mp = GetDesignSettings().m_Pad_Master;
     // Copy all settings. Some of them are not used, but they break anything
-    mp.Copy( aPad );
+    mp = *aPad;
     // The pad orientation, for historical reasons is the
     // pad rotation + parent rotation.
     // store only the pad rotation.
@@ -62,6 +62,7 @@ void PCB_BASE_FRAME::Export_Pad_Settings( D_PAD* aPad )
 
 /* Imports the board design settings to aPad
  * - The position, names, and keys are not modifed.
+ * The parameters are expected to be correct (i.e. settings are valid)
  */
 void PCB_BASE_FRAME::Import_Pad_Settings( D_PAD* aPad, bool aDraw )
 {
@@ -104,8 +105,9 @@ void PCB_BASE_FRAME::Import_Pad_Settings( D_PAD* aPad, bool aDraw )
     {
     case PAD_ATTRIB_SMD:
     case PAD_ATTRIB_CONN:
+        // These pads do not have hole (they are expected to be only on one
+        // external copper layer)
         aPad->SetDrillSize( wxSize( 0, 0 ) );
-        aPad->SetOffset( wxPoint( 0, 0 ) );
         break;
 
     default:

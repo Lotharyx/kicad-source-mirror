@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2008-2013 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2004-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -50,22 +50,12 @@
 
 void LIB_EDIT_FRAME::DisplayLibInfos()
 {
-    wxString        msg = _( "Part Library Editor: " );
-    PART_LIB*    lib = GetCurLib();
+    PART_LIB* lib = GetCurLib();
+    wxString title = wxString::Format( L"Part Library Editor \u2014 %s%s",
+            lib ? lib->GetFullFileName() : _( "no library selected" ),
+            lib && lib->IsReadOnly() ? _( " [Read Only] ") : wxString( wxEmptyString ) );
 
-    if( lib )
-    {
-        msg += lib->GetFullFileName();
-
-        if( lib->IsReadOnly() )
-            msg += _( " [Read Only]" );
-    }
-    else
-    {
-        msg += _( "no library selected" );
-    }
-
-    SetTitle( msg );
+    SetTitle( title );
 }
 
 
@@ -150,7 +140,7 @@ void LIB_EDIT_FRAME::LoadOneLibraryPart( wxCommandEvent& event )
     m_aliasName.Empty();
 
     // Load the new library component
-    libEntry = lib->FindEntry( cmp_name );
+    libEntry = lib->FindAlias( cmp_name );
     PART_LIB* searchLib = lib;
 
     if( !libEntry )
@@ -555,7 +545,7 @@ void LIB_EDIT_FRAME::DeleteOnePart( wxCommandEvent& event )
     if( dlg.ShowModal() == wxID_CANCEL || dlg.GetStringSelection().IsEmpty() )
         return;
 
-    libEntry = lib->FindEntry( dlg.GetStringSelection() );
+    libEntry = lib->FindAlias( dlg.GetStringSelection() );
 
     if( !libEntry )
     {
@@ -643,7 +633,7 @@ void LIB_EDIT_FRAME::CreateNewLibraryPart( wxCommandEvent& event )
     PART_LIB* lib = GetCurLib();
 
     // Test if there a component with this name already.
-    if( lib && lib->FindEntry( name ) )
+    if( lib && lib->FindAlias( name ) )
     {
         wxString msg = wxString::Format( _(
             "Part '%s' already exists in library '%s'" ),

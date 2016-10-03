@@ -29,7 +29,7 @@
 
 #include <dialog_dxf_import.h>
 #include <kiface_i.h>
-#include <convert_from_iu.h>
+#include <convert_to_biu.h>
 #include <class_pcb_layer_box_selector.h>
 
 #include <class_board.h>
@@ -245,7 +245,7 @@ bool InvokeDXFDialogModuleImport( PCB_BASE_FRAME* aCaller, MODULE* aModule )
     {
         const std::list<BOARD_ITEM*>& list = dlg.GetImportedItems();
 
-        aCaller->SaveCopyInUndoList( aModule, UR_MODEDIT );
+        aCaller->SaveCopyInUndoList( aModule, UR_CHANGED );
         aCaller->OnModify();
 
         std::list<BOARD_ITEM*>::const_iterator it, itEnd;
@@ -264,7 +264,6 @@ bool InvokeDXFDialogModuleImport( PCB_BASE_FRAME* aCaller, MODULE* aModule )
                 converted = new EDGE_MODULE( aModule );
                 *static_cast<DRAWSEGMENT*>( converted ) = *static_cast<DRAWSEGMENT*>( item );
                 aModule->Add( converted );
-                static_cast<EDGE_MODULE*>( converted )->SetLocalCoord();
                 delete item;
                 break;
             }
@@ -274,7 +273,6 @@ bool InvokeDXFDialogModuleImport( PCB_BASE_FRAME* aCaller, MODULE* aModule )
                 converted = new TEXTE_MODULE( aModule );
                 *static_cast<TEXTE_PCB*>( converted ) = *static_cast<TEXTE_PCB*>( item );
                 aModule->Add( converted );
-                static_cast<TEXTE_MODULE*>( converted )->SetLocalCoord();
                 delete item;
                 break;
             }

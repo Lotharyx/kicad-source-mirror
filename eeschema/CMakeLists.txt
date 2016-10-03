@@ -1,5 +1,9 @@
 add_definitions( -DEESCHEMA )
 
+if( KICAD_SPICE )
+    set( INC_AFTER ${INC_AFTER} ${NGSPICE_INCLUDE_DIR} )
+endif()
+
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
     ./dialogs
@@ -146,11 +150,14 @@ set( EESCHEMA_SRCS
     sch_collectors.cpp
     sch_component.cpp
     sch_field.cpp
+    sch_io_mgr.cpp
     sch_item_struct.cpp
     sch_junction.cpp
+    sch_legacy_plugin.cpp
     sch_line.cpp
     sch_marker.cpp
     sch_no_connect.cpp
+    sch_plugin.cpp
     sch_screen.cpp
     sch_sheet.cpp
     sch_sheet_path.cpp
@@ -190,6 +197,29 @@ set( EESCHEMA_COMMON_SRCS
     ../common/class_page_info.cpp
     ../common/base_units.cpp
     )
+
+
+if( KICAD_SPICE )
+    set( EESCHEMA_SRCS
+        ${EESCHEMA_SRCS}
+        sim/simulate.cpp
+        sim/sim_plot_frame_base.cpp
+        sim/sim_plot_frame.cpp
+        sim/sim_plot_panel.cpp
+        sim/spice_simulator.cpp
+        sim/spice_value.cpp
+        sim/ngspice.cpp
+        sim/netlist_exporter_pspice_sim.cpp
+        dialogs/dialog_signal_list.cpp
+        dialogs/dialog_signal_list_base.cpp
+        dialogs/dialog_sim_settings.cpp
+        dialogs/dialog_sim_settings_base.cpp
+        dialogs/dialog_spice_model.cpp
+        dialogs/dialog_spice_model_base.cpp
+        widgets/tuner_slider.cpp
+        widgets/tuner_slider_base.cpp
+    )
+endif()
 
 
 if( MINGW )
@@ -263,6 +293,7 @@ target_link_libraries( eeschema_kiface
     ${GDI_PLUS_LIBRARIES}
     odbc
     odbcinst
+    ${NGSPICE_LIBRARY}
     )
 set_target_properties( eeschema_kiface PROPERTIES
     # Decorate OUTPUT_NAME with PREFIX and SUFFIX, creating something like

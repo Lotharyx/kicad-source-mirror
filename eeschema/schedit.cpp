@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2008-2013 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2004-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -188,8 +188,8 @@ void SCH_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         screen->SetCurItem( NULL );
         SetRepeatItem( NULL );
 
-        if( screen->TestDanglingEnds() )
-            m_canvas->Refresh();
+        screen->TestDanglingEnds();
+        m_canvas->Refresh();
 
         break;
 
@@ -529,6 +529,10 @@ void SCH_EDIT_FRAME::OnSelectTool( wxCommandEvent& aEvent )
         SetToolID( id, m_canvas->GetDefaultCursor(), _( "No tool selected" ) );
         break;
 
+    case ID_ZOOM_SELECTION:
+        SetToolID( id, wxCURSOR_MAGNIFIER, _( "Zoom to selection" ) );
+        break;
+
     case ID_HIERARCHY_PUSH_POP_BUTT:
         SetToolID( id, wxCURSOR_HAND, _( "Descend or ascend hierarchy" ) );
         break;
@@ -604,6 +608,18 @@ void SCH_EDIT_FRAME::OnSelectTool( wxCommandEvent& aEvent )
     case ID_SCHEMATIC_DELETE_ITEM_BUTT:
         SetToolID( id, wxCURSOR_BULLSEYE, _( "Delete item" ) );
         break;
+
+#ifdef KICAD_SPICE
+    case ID_SIM_PROBE:
+        SetToolID( id, -1, _( "Add a simulator probe" ) );
+        m_canvas->SetCursor( CURSOR_PROBE );
+        break;
+
+    case ID_SIM_TUNE:
+        SetToolID( id, -1, _( "Select a value to be tuned" ) );
+        m_canvas->SetCursor( CURSOR_TUNE );
+        break;
+#endif /* KICAD_SPICE */
 
     default:
         SetRepeatItem( NULL );

@@ -1,11 +1,7 @@
-/**
- * @file eeschema_config.cpp
- */
-
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2014-2016 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2014-2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -23,6 +19,10 @@
  * or you may search the http://www.gnu.org website for the version 2 license,
  * or you may write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
+
+/**
+ * @file eeschema_config.cpp
  */
 
 #include <fctsys.h>
@@ -140,7 +140,7 @@ void LIB_EDIT_FRAME::InstallConfigFrame( wxCommandEvent& event )
     }
     catch( const IO_ERROR& ioe )
     {
-        DBG(printf( "%s: %s\n", __func__, TO_UTF8( ioe.errorText ) );)
+        DBG(printf( "%s: %s\n", __func__, TO_UTF8( ioe.What() ) );)
         return;
     }
 
@@ -200,7 +200,7 @@ void SCH_EDIT_FRAME::InstallConfigFrame( wxCommandEvent& event )
     }
     catch( const IO_ERROR& ioe )
     {
-        DBG(printf( "%s: %s\n", __func__, TO_UTF8( ioe.errorText ) );)
+        DBG(printf( "%s: %s\n", __func__, TO_UTF8( ioe.What() ) );)
         return;
     }
 
@@ -307,16 +307,13 @@ void SCH_EDIT_FRAME::OnPreferencesOptions( wxCommandEvent& event )
     dlg.SetRepeatVertical( GetRepeatStep().y );
     dlg.SetRepeatLabel( GetRepeatDeltaLabel() );
     dlg.SetAutoSaveInterval( GetAutoSaveInterval() / 60 );
-    dlg.SetMaxUndoItems( GetScreen()->GetMaxUndoItems() );
     dlg.SetRefIdSeparator( LIB_PART::GetSubpartIdSeparator(),
                            LIB_PART::GetSubpartFirstId() );
 
     dlg.SetShowGrid( IsGridVisible() );
     dlg.SetShowHiddenPins( m_showAllPins );
-    dlg.SetEnableMiddleButtonPan( m_canvas->GetEnableMiddleButtonPan() );
     dlg.SetEnableMousewheelPan( m_canvas->GetEnableMousewheelPan() );
     dlg.SetEnableZoomNoCenter( m_canvas->GetEnableZoomNoCenter() );
-    dlg.SetMiddleButtonPanLimited( m_canvas->GetMiddleButtonPanLimited() );
     dlg.SetEnableAutoPan( m_canvas->GetEnableAutoPan() );
     dlg.SetEnableHVBusOrientation( GetForceHVLines() );
     dlg.SetShowPageLimits( m_showPageLimits );
@@ -362,13 +359,10 @@ void SCH_EDIT_FRAME::OnPreferencesOptions( wxCommandEvent& event )
     SetRepeatDeltaLabel( dlg.GetRepeatLabel() );
 
     SetAutoSaveInterval( dlg.GetAutoSaveInterval() * 60 );
-    GetScreen()->SetMaxUndoItems( dlg.GetMaxUndoItems() );
     SetGridVisibility( dlg.GetShowGrid() );
     m_showAllPins = dlg.GetShowHiddenPins();
-    m_canvas->SetEnableMiddleButtonPan( dlg.GetEnableMiddleButtonPan() );
     m_canvas->SetEnableMousewheelPan( dlg.GetEnableMousewheelPan() );
     m_canvas->SetEnableZoomNoCenter( dlg.GetEnableZoomNoCenter() );
-    m_canvas->SetMiddleButtonPanLimited( dlg.GetMiddleButtonPanLimited() );
     m_canvas->SetEnableAutoPan( dlg.GetEnableAutoPan() );
     SetForceHVLines( dlg.GetEnableHVBusOrientation() );
     m_showPageLimits = dlg.GetShowPageLimits();
@@ -425,10 +419,8 @@ PARAM_CFG_ARRAY& SCH_EDIT_FRAME::GetProjectFileParametersList()
 
     m_projectFileParams.push_back( new PARAM_CFG_WXSTRING( wxT( "NetFmtName" ),
                                             &m_netListFormat) );
-    m_projectFileParams.push_back( new PARAM_CFG_BOOL( wxT( "SpiceForceRefPrefix" ),
-                                            &m_spiceNetlistAddReferencePrefix, false ) );
-    m_projectFileParams.push_back( new PARAM_CFG_BOOL( wxT( "SpiceUseNetNumbers" ),
-                                            &m_spiceNetlistUseNetcodeAsNetname, false ) );
+    m_projectFileParams.push_back( new PARAM_CFG_BOOL( wxT( "SpiceAjustPassiveValues" ),
+                                            &m_spiceAjustPassiveValues, false ) );
 
     m_projectFileParams.push_back( new PARAM_CFG_INT( wxT( "LabSize" ),
                                             &s_defaultTextSize,
@@ -496,10 +488,13 @@ void SCH_EDIT_FRAME::SaveProjectSettings( bool aAskForSave )
     prj.ConfigSave( Kiface().KifaceSearch(), GROUP_SCH_EDITOR, GetProjectFileParametersList() );
 }
 
+///@{
+/// \ingroup config
 
-static const wxChar AutoplaceFieldsEntry[] =        wxT( "AutoplaceFields" );
-static const wxChar AutoplaceJustifyEntry[] =       AUTOPLACE_JUSTIFY_KEY;
-static const wxChar AutoplaceAlignEntry[] =         AUTOPLACE_ALIGN_KEY;
+const wxChar RescueNeverShowEntry[] =               wxT( "RescueNeverShow" );
+const wxChar AutoplaceFieldsEntry[] =               wxT( "AutoplaceFields" );
+const wxChar AutoplaceJustifyEntry[] =              wxT( "AutoplaceJustify" );
+const wxChar AutoplaceAlignEntry[] =                wxT( "AutoplaceAlign" );
 static const wxChar DefaultBusWidthEntry[] =        wxT( "DefaultBusWidth" );
 static const wxChar DefaultDrawLineWidthEntry[] =   wxT( "DefaultDrawLineWidth" );
 static const wxChar ShowHiddenPinsEntry[] =         wxT( "ShowHiddenPins" );
@@ -523,6 +518,13 @@ static const wxChar FindStringHistoryEntry[] =      wxT( "FindStringHistoryList%
 static const wxChar ReplaceStringHistoryEntry[] =   wxT( "ReplaceStringHistoryList%d" );
 static const wxChar FieldNamesEntry[] =             wxT( "FieldNames" );
 static const wxChar SimulatorCommandEntry[] =       wxT( "SimCmdLine" );
+static const wxString ShowPageLimitsEntry =         "ShowPageLimits";
+static const wxString UnitsEntry =                  "Units";
+static const wxString PrintMonochromeEntry =        "PrintMonochrome";
+static const wxString PrintSheetRefEntry =          "PrintSheetReferenceAndTitleBlock";
+static const wxString RepeatStepXEntry =            "RepeatStepX";
+static const wxString RepeatStepYEntry =            "RepeatStepY";
+static const wxString RepeatLabelIncrementEntry =   "RepeatLabelIncrement";
 
 // Library editor wxConfig entry names.
 static const wxChar lastLibExportPathEntry[] =      wxT( "LastLibraryExportPath" );
@@ -535,33 +537,34 @@ static const wxChar pinRepeatStepEntry[] =          wxT( "LibeditPinRepeatStep" 
 static const wxChar repeatLibStepXEntry[] =         wxT( "LibeditRepeatStepX" );
 static const wxChar repeatLibStepYEntry[] =         wxT( "LibeditRepeatStepY" );
 
+///@}
 
 PARAM_CFG_ARRAY& SCH_EDIT_FRAME::GetConfigurationSettings()
 {
     if( !m_configSettings.empty() )
         return m_configSettings;
 
-    m_configSettings.push_back( new PARAM_CFG_BOOL( true, wxT( "ShowPageLimits" ),
+    m_configSettings.push_back( new PARAM_CFG_BOOL( true, ShowPageLimitsEntry,
                                                     &m_showPageLimits, true ) );
-    m_configSettings.push_back( new PARAM_CFG_INT( true, wxT( "Units" ),
+    m_configSettings.push_back( new PARAM_CFG_INT( true, UnitsEntry,
                                                    (int*)&g_UserUnit, MILLIMETRES ) );
 
-    m_configSettings.push_back( new PARAM_CFG_BOOL( true, wxT( "PrintMonochrome" ),
+    m_configSettings.push_back( new PARAM_CFG_BOOL( true, PrintMonochromeEntry,
                                                     &m_printMonochrome, true ) );
-    m_configSettings.push_back( new PARAM_CFG_BOOL( true, wxT( "PrintSheetReferenceAndTitleBlock" ),
+    m_configSettings.push_back( new PARAM_CFG_BOOL( true, PrintSheetRefEntry,
                                                     &m_printSheetReference, true ) );
 
-    m_configSettings.push_back( new PARAM_CFG_INT( true, wxT( "RepeatStepX" ),
+    m_configSettings.push_back( new PARAM_CFG_INT( true, RepeatStepXEntry,
                                                       &m_repeatStep.x,
                                                       DEFAULT_REPEAT_OFFSET_X,
                                                       -REPEAT_OFFSET_MAX,
                                                       REPEAT_OFFSET_MAX ) );
-    m_configSettings.push_back( new PARAM_CFG_INT( true, wxT( "RepeatStepY" ),
+    m_configSettings.push_back( new PARAM_CFG_INT( true, RepeatStepYEntry,
                                                       &m_repeatStep.y,
                                                       DEFAULT_REPEAT_OFFSET_Y,
                                                       -REPEAT_OFFSET_MAX,
                                                       REPEAT_OFFSET_MAX ) );
-    m_configSettings.push_back( new PARAM_CFG_INT( true, wxT( "RepeatLabelIncrement" ),
+    m_configSettings.push_back( new PARAM_CFG_INT( true, RepeatLabelIncrementEntry,
                                                       &m_repeatDeltaLabel,
                                                       DEFAULT_REPEAT_LABEL_INC, -10, +10 ) );
     return m_configSettings;
@@ -660,7 +663,7 @@ void SCH_EDIT_FRAME::LoadSettings( wxConfigBase* aCfg )
         {
             // @todo show error msg
             DBG( printf( "templatefieldnames parsing error: '%s'\n",
-                       TO_UTF8( e.errorText ) ); )
+                       TO_UTF8( e.What() ) ); )
         }
     }
 }
@@ -782,7 +785,6 @@ void LIB_EDIT_FRAME::OnPreferencesOptions( wxCommandEvent& event )
     dlg.SetPinLength( GetDefaultPinLength() );
     dlg.SetPinNumSize( m_textPinNumDefaultSize );
     dlg.SetPinNameSize( m_textPinNameDefaultSize );
-    dlg.SetMaxUndoItems( GetScreen()->GetMaxUndoItems() );
 
     dlg.SetShowGrid( IsGridVisible() );
     dlg.Layout();
@@ -802,7 +804,6 @@ void LIB_EDIT_FRAME::OnPreferencesOptions( wxCommandEvent& event )
     SetRepeatPinStep( dlg.GetPinRepeatStep() );
     SetRepeatStep( dlg.GetItemRepeatStep() );
     SetRepeatDeltaLabel( dlg.GetRepeatLabelInc() );
-    GetScreen()->SetMaxUndoItems( dlg.GetMaxUndoItems() );
 
     SaveSettings( config() );  // save values shared by eeschema applications.
 

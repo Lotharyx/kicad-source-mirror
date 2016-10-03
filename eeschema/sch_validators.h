@@ -38,17 +38,23 @@
  *
  * is the text control validator used for validating the text allowed in library and
  * schematic component fields.
+ * Note
+ * Reference field does not accept spaces
+ * Value field does not accept spaces in Component Library Editor, because in .lib component
+ * libraries, the value field is the component name in lib, and spaces are not allowed
+ * in component names in lib
  */
 class SCH_FIELD_VALIDATOR : public wxTextValidator
 {
-    int m_fieldId;
+    int  m_fieldId;
+    bool m_isLibEditor;
 
 public:
-    SCH_FIELD_VALIDATOR( int aFieldId, wxString* aValue = NULL );
+    SCH_FIELD_VALIDATOR( bool aIsCmplibEditor, int aFieldId, wxString* aValue = NULL );
 
     SCH_FIELD_VALIDATOR( const SCH_FIELD_VALIDATOR& aValidator );
 
-    virtual wxObject* Clone() const { return new SCH_FIELD_VALIDATOR( *this ); }
+    virtual wxObject* Clone() const override { return new SCH_FIELD_VALIDATOR( *this ); }
 
     /**
      * Function Validate
@@ -59,7 +65,7 @@ public:
      * @param aParent - a pointer to the parent window of the error message dialog.
      * @return true if the text in the control is valid otherwise false.
      */
-    virtual bool Validate( wxWindow *aParent );
+    virtual bool Validate( wxWindow *aParent ) override;
 };
 
 

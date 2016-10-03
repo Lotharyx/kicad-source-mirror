@@ -54,10 +54,16 @@
 #define FRAME_MIN_SIZE_Y 300
 
 
-// option key to close CvPcb after saving files
-static const wxString KeepCvpcbOpenEntry( wxT( "KeepCvpcbOpen" ) );
-static const wxString FootprintDocFileEntry( wxT( "footprints_doc_file" ) );
+///@{
+/// \ingroup config
 
+/// Nonzero iff cvpcb should be kept open after saving files
+static const wxString KeepCvpcbOpenEntry = "KeepCvpcbOpen";
+
+static const wxString FootprintDocFileEntry = "footprints_doc_file";
+
+static const wxString FilterFootprintEntry = "FilterFootprint";
+///@}
 
 BEGIN_EVENT_TABLE( CVPCB_MAINFRAME, KIWAY_PLAYER )
 
@@ -210,7 +216,7 @@ void CVPCB_MAINFRAME::LoadSettings( wxConfigBase* aCfg )
     aCfg->Read( KeepCvpcbOpenEntry, &m_keepCvpcbOpen, true );
     aCfg->Read( FootprintDocFileEntry, &m_DocModulesFileName,
                 DEFAULT_FOOTPRINTS_LIST_FILENAME );
-    aCfg->Read( FILTERFOOTPRINTKEY, &m_filteringOptions, FOOTPRINTS_LISTBOX::UNFILTERED_FP_LIST );
+    aCfg->Read( FilterFootprintEntry, &m_filteringOptions, FOOTPRINTS_LISTBOX::UNFILTERED_FP_LIST );
 }
 
 
@@ -220,7 +226,7 @@ void CVPCB_MAINFRAME::SaveSettings( wxConfigBase* aCfg )
 
     aCfg->Write( KeepCvpcbOpenEntry, m_keepCvpcbOpen );
     aCfg->Write( FootprintDocFileEntry, m_DocModulesFileName );
-    aCfg->Write( FILTERFOOTPRINTKEY, m_filteringOptions );
+    aCfg->Write( FilterFootprintEntry, m_filteringOptions );
 }
 
 
@@ -419,7 +425,7 @@ void CVPCB_MAINFRAME::OnEditFootprintLibraryTable( wxCommandEvent& aEvent )
             wxString msg = wxString::Format(
                     _( "Error occurred saving the global footprint library table:\n'%s'\n%s" ),
                     GetChars( fileName ),
-                    GetChars( ioe.errorText )
+                    GetChars( ioe.What() )
                     );
             wxMessageBox( msg, _( "File Save Error" ), wxOK | wxICON_ERROR );
         }
@@ -439,7 +445,7 @@ void CVPCB_MAINFRAME::OnEditFootprintLibraryTable( wxCommandEvent& aEvent )
             wxString msg = wxString::Format(
                     _( "Error occurred saving the project footprint library table:\n'%s'\n%s" ),
                     GetChars( fileName ),
-                    GetChars( ioe.errorText )
+                    GetChars( ioe.What() )
                     );
             wxMessageBox( msg, _( "File Save Error" ), wxOK | wxICON_ERROR );
         }
@@ -742,21 +748,22 @@ bool CVPCB_MAINFRAME::LoadFootprintFiles()
 
 void CVPCB_MAINFRAME::UpdateTitle()
 {
-    wxString    title = wxString::Format( wxT( "Cvpcb %s  " ), GetChars( GetBuildVersion() ) );
+    wxString    title;
     PROJECT&    prj = Prj();
     wxFileName fn = prj.GetProjectFullName();
 
     if( fn.IsOk() && !prj.GetProjectFullName().IsEmpty() && fn.FileExists() )
     {
-        title += wxString::Format( _("Project: '%s'"),
-                                   GetChars( fn.GetFullPath() )
-                                 );
-
-        if( !fn.IsFileWritable() )
-            title += _( " [Read Only]" );
+        title.Printf( L"Cvpcb \u2014 %s%s",
+                fn.GetFullPath(),
+                fn.IsFileWritable()
+                    ? wxString( wxEmptyString )
+                    : _( " [Read Only]" ) );
     }
     else
-        title += _( "[no project]" );
+    {
+        title = "Cvpcb";
+    }
 
     SetTitle( title );
 }
@@ -799,7 +806,7 @@ int CVPCB_MAINFRAME::ReadSchematicNetlist( const std::string& aNetlist )
     }
     catch( const IO_ERROR& ioe )
     {
-        wxString msg = wxString::Format( _( "Error loading netlist.\n%s" ), ioe.errorText.GetData() );
+        wxString msg = wxString::Format( _( "Error loading netlist.\n%s" ), ioe.What().GetData() );
         wxMessageBox( msg, _( "Netlist Load Error" ), wxOK | wxICON_ERROR );
         return 1;
     }

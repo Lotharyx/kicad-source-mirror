@@ -476,27 +476,25 @@ SGNODE* WRL2SHAPE::TranslateToSG( SGNODE* aParent )
 
     SGNODE* pShape = shNode.GetRawPtr();
     SGNODE* pGeom = geometry->TranslateToSG( pShape );
+
+    if( NULL == pGeom )
+    {
+        // this can happen if a VRML file contains
+        // empty point or index sets
+        shNode.Destroy();
+        return NULL;
+    }
+
     SGNODE* pApp = NULL;
 
     if( NULL != appearance )
         pApp = appearance->TranslateToSG( pShape );
 
-    if( ( NULL != appearance && NULL == pApp ) || NULL == pGeom )
+    if( NULL != appearance && NULL == pApp )
     {
-        if( pGeom )
-        {
-            IFSG_FACESET tmp( false );
-            tmp.Attach( pGeom );
-            tmp.Destroy();
-        }
-
-        if( pApp )
-        {
-            IFSG_APPEARANCE tmp( false );
-            tmp.Attach( pApp );
-            tmp.Destroy();
-        }
-
+        IFSG_FACESET tmp( false );
+        tmp.Attach( pGeom );
+        tmp.Destroy();
         shNode.Destroy();
         return NULL;
     }

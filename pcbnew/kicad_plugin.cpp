@@ -27,7 +27,6 @@
 #include <common.h>
 #include <build_version.h>      // LEGACY_BOARD_FILE_VERSION
 #include <macros.h>
-#include <3d_struct.h>
 #include <wildcards_and_files_ext.h>
 #include <base_units.h>
 
@@ -88,7 +87,7 @@ class FP_CACHE_ITEM
 {
     wxFileName              m_file_name; ///< The the full file name and path of the footprint to cache.
     wxDateTime              m_mod_time;  ///< The last file modified time stamp.
-    std::auto_ptr<MODULE>   m_module;
+    std::unique_ptr<MODULE> m_module;
 
 public:
     FP_CACHE_ITEM( MODULE* aModule, const wxFileName& aFileName );
@@ -780,7 +779,7 @@ void PCB_IO::format( DIMENSION* aDimension, int aNestLevel ) const
     formatLayer( aDimension );
 
     if( aDimension->GetTimeStamp() )
-        m_out->Print( 0, " (tstamp %lX)", aDimension->GetTimeStamp() );
+        m_out->Print( 0, " (tstamp %lX)", (unsigned long)aDimension->GetTimeStamp() );
 
     m_out->Print( 0, "\n" );
 
@@ -889,7 +888,7 @@ void PCB_IO::format( DRAWSEGMENT* aSegment, int aNestLevel ) const
         m_out->Print( 0, " (width %s)", FMT_IU( aSegment->GetWidth() ).c_str() );
 
     if( aSegment->GetTimeStamp() )
-        m_out->Print( 0, " (tstamp %lX)", aSegment->GetTimeStamp() );
+        m_out->Print( 0, " (tstamp %lX)", (unsigned long)aSegment->GetTimeStamp() );
 
     if( aSegment->GetStatus() )
         m_out->Print( 0, " (status %X)", aSegment->GetStatus() );
@@ -976,7 +975,7 @@ void PCB_IO::format( PCB_TARGET* aTarget, int aNestLevel ) const
     formatLayer( aTarget );
 
     if( aTarget->GetTimeStamp() )
-        m_out->Print( 0, " (tstamp %lX)", aTarget->GetTimeStamp() );
+        m_out->Print( 0, " (tstamp %lX)", (unsigned long)aTarget->GetTimeStamp() );
 
     m_out->Print( 0, ")\n" );
 }
@@ -1009,11 +1008,11 @@ void PCB_IO::format( MODULE* aModule, int aNestLevel ) const
 
     formatLayer( aModule );
 
-    m_out->Print( 0, " (tedit %lX)", aModule->GetLastEditTime() );
+    m_out->Print( 0, " (tedit %lX)", (unsigned long)aModule->GetLastEditTime() );
 
     if( !( m_ctl & CTL_OMIT_TSTAMPS ) )
     {
-        m_out->Print( 0, " (tstamp %lX)\n", aModule->GetTimeStamp() );
+        m_out->Print( 0, " (tstamp %lX)\n", (unsigned long)aModule->GetTimeStamp() );
     }
     else
         m_out->Print( 0, "\n" );
@@ -1099,30 +1098,34 @@ void PCB_IO::format( MODULE* aModule, int aNestLevel ) const
         format( pad, aNestLevel+1 );
 
     // Save 3D info.
-    for( S3D_MASTER* t3D = aModule->Models();  t3D;  t3D = t3D->Next() )
+    std::list<S3D_INFO>::const_iterator bs3D = aModule->Models().begin();
+    std::list<S3D_INFO>::const_iterator es3D = aModule->Models().end();
+
+    while( bs3D != es3D )
     {
-        if( !t3D->GetShape3DName().IsEmpty() )
+        if( !bs3D->m_Filename.IsEmpty() )
         {
             m_out->Print( aNestLevel+1, "(model %s\n",
-                          m_out->Quotew( t3D->GetShape3DName() ).c_str() );
+                          m_out->Quotew( bs3D->m_Filename ).c_str() );
 
             m_out->Print( aNestLevel+2, "(at (xyz %s %s %s))\n",
-                          Double2Str( t3D->m_MatPosition.x ).c_str(),
-                          Double2Str( t3D->m_MatPosition.y ).c_str(),
-                          Double2Str( t3D->m_MatPosition.z ).c_str() );
+                          Double2Str( bs3D->m_Offset.x ).c_str(),
+                          Double2Str( bs3D->m_Offset.y ).c_str(),
+                          Double2Str( bs3D->m_Offset.z ).c_str() );
 
             m_out->Print( aNestLevel+2, "(scale (xyz %s %s %s))\n",
-                          Double2Str( t3D->m_MatScale.x ).c_str(),
-                          Double2Str( t3D->m_MatScale.y ).c_str(),
-                          Double2Str( t3D->m_MatScale.z ).c_str() );
+                          Double2Str( bs3D->m_Scale.x ).c_str(),
+                          Double2Str( bs3D->m_Scale.y ).c_str(),
+                          Double2Str( bs3D->m_Scale.z ).c_str() );
 
             m_out->Print( aNestLevel+2, "(rotate (xyz %s %s %s))\n",
-                          Double2Str( t3D->m_MatRotation.x ).c_str(),
-                          Double2Str( t3D->m_MatRotation.y ).c_str(),
-                          Double2Str( t3D->m_MatRotation.z ).c_str() );
+                          Double2Str( bs3D->m_Rotation.x ).c_str(),
+                          Double2Str( bs3D->m_Rotation.y ).c_str(),
+                          Double2Str( bs3D->m_Rotation.z ).c_str() );
 
             m_out->Print( aNestLevel+1, ")\n" );
         }
+        ++bs3D;
     }
 
     m_out->Print( aNestLevel, ")\n" );
@@ -1362,7 +1365,7 @@ void PCB_IO::format( TEXTE_PCB* aText, int aNestLevel ) const
     formatLayer( aText );
 
     if( aText->GetTimeStamp() )
-        m_out->Print( 0, " (tstamp %lX)", aText->GetTimeStamp() );
+        m_out->Print( 0, " (tstamp %lX)", (unsigned long)aText->GetTimeStamp() );
 
     m_out->Print( 0, "\n" );
 
@@ -1470,7 +1473,7 @@ void PCB_IO::format( TRACK* aTrack, int aNestLevel ) const
     m_out->Print( 0, " (net %d)", m_mapping->Translate( aTrack->GetNetCode() ) );
 
     if( aTrack->GetTimeStamp() != 0 )
-        m_out->Print( 0, " (tstamp %lX)", aTrack->GetTimeStamp() );
+        m_out->Print( 0, " (tstamp %lX)", (unsigned long)aTrack->GetTimeStamp() );
 
     if( aTrack->GetStatus() != 0 )
         m_out->Print( 0, " (status %X)", aTrack->GetStatus() );
@@ -1491,7 +1494,7 @@ void PCB_IO::format( ZONE_CONTAINER* aZone, int aNestLevel ) const
 
     formatLayer( aZone );
 
-    m_out->Print( 0, " (tstamp %lX)", aZone->GetTimeStamp() );
+    m_out->Print( 0, " (tstamp %lX)", (unsigned long) aZone->GetTimeStamp() );
 
     // Save the outline aux info
     std::string hatch;
@@ -1736,6 +1739,11 @@ BOARD* PCB_IO::Load( const wxString& aFileName, BOARD* aAppendToMe, const PROPER
     try
     {
         board = dynamic_cast<BOARD*>( m_parser->Parse() );
+    }
+    catch( const FUTURE_FORMAT_ERROR& parse_error )
+    {
+        // Don't wrap a FUTURE_FORMAT_ERROR in another
+        throw;
     }
     catch( const PARSE_ERROR& parse_error )
     {

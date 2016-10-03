@@ -35,6 +35,10 @@
 #include <layers_id_colors_and_visibility.h>    // LAYER_ID
 #include <common.h>                             // KiROUND
 #include <convert_to_biu.h>                     // IU_PER_MM
+#include <3d_cache/3d_info.h>
+
+#include <boost/unordered_map.hpp>
+#include <boost/unordered_set.hpp>
 
 
 class BOARD;
@@ -50,7 +54,6 @@ class TRACK;
 class MODULE;
 class PCB_TARGET;
 class VIA;
-class S3D_MASTER;
 class ZONE_CONTAINER;
 struct LAYER;
 
@@ -203,7 +206,7 @@ class PCB_PARSER : public PCB_LEXER
      */
     void parseEDA_TEXT( EDA_TEXT* aText ) throw( PARSE_ERROR, IO_ERROR );
 
-    S3D_MASTER* parse3DModel() throw( PARSE_ERROR, IO_ERROR );
+    S3D_INFO* parse3DModel() throw( PARSE_ERROR, IO_ERROR );
 
     /**
      * Function parseDouble

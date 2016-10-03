@@ -98,39 +98,6 @@ std::string StrPrintf( const char* format, ... )
 }
 
 
-void IO_ERROR::init( const char* aThrowersFile, const char* aThrowersLoc, const wxString& aMsg )
-{
-    // The throwers filename is a full filename, depending on Kicad source location.
-    // a short filename will be printed (it is better for user, the full filename has no meaning).
-    wxString srcname = wxString::FromUTF8( aThrowersFile );
-
-    errorText.Printf( IO_FORMAT, aMsg.GetData(),
-        srcname.AfterLast( '/' ).GetData(),
-        wxString::FromUTF8( aThrowersLoc ).GetData() );
-}
-
-
-void PARSE_ERROR::init( const char* aThrowersFile, const char* aThrowersLoc,
-           const wxString& aMsg, const wxString& aSource,
-           const char* aInputLine,
-           int aLineNumber, int aByteIndex )
-{
-    // save inpuLine, lineNumber, and offset for UI (.e.g. Sweet text editor)
-    inputLine  = aInputLine;
-    lineNumber = aLineNumber;
-    byteIndex  = aByteIndex;
-
-    // The throwers filename is a full filename, depending on Kicad source location.
-    // a short filename will be printed (it is better for user, the full filename has no meaning).
-    wxString srcname = wxString::FromUTF8( aThrowersFile );
-
-    errorText.Printf( PARSE_FORMAT, aMsg.GetData(), aSource.GetData(),
-        aLineNumber, aByteIndex,
-        srcname.AfterLast( '/' ).GetData(),
-        wxString::FromUTF8( aThrowersLoc ).GetData() );
-}
-
-
 //-----<LINE_READER>------------------------------------------------------
 
 LINE_READER::LINE_READER( unsigned aMaxLineLength ) :
@@ -201,8 +168,6 @@ FILE_LINE_READER::FILE_LINE_READER( const wxString& aFileName,
         THROW_IO_ERROR( msg );
     }
 
-    setvbuf( fp, NULL, _IOFBF, BUFSIZ * 8 );
-
     source  = aFileName;
     lineNum = aStartingLineNumber;
 }
@@ -216,12 +181,6 @@ FILE_LINE_READER::FILE_LINE_READER( FILE* aFile, const wxString& aFileName,
     iOwn( doOwn ),
     fp( aFile )
 {
-    if( doOwn && ftell( aFile ) == 0L )
-    {
-#ifndef __WXMAC__
-        setvbuf( fp, NULL, _IOFBF, BUFSIZ * 8 );
-#endif
-    }
     source  = aFileName;
     lineNum = aStartingLineNumber;
 }

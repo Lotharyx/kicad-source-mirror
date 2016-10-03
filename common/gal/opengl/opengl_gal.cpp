@@ -2,7 +2,7 @@
  * This program source code file is part of KICAD, a free EDA CAD application.
  *
  * Copyright (C) 2012 Torsten Hueter, torstenhtr <at> gmx.de
- * Copyright (C) 2012 Kicad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2012-2016 Kicad Developers, see AUTHORS.txt for contributors.
  * Copyright (C) 2013-2016 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
@@ -29,6 +29,7 @@
 #include <gal/opengl/opengl_gal.h>
 #include <gal/opengl/utils.h>
 #include <gal/definitions.h>
+#include <gl_context_mgr.h>
 
 #include <macros.h>
 
@@ -38,41 +39,59 @@
 #endif /* __WXDEBUG__ */
 
 #include <limits>
-#include <boost/bind.hpp>
+#include <functional>
+using namespace std::placeholders;
+
 
 using namespace KIGFX;
 
+// The current font is "Ubuntu Mono" available under Ubuntu Font Licence 1.0
+// (see ubuntu-font-licence-1.0.txt for details)
 #include "bitmap_font_img.c"
 #include "bitmap_font_desc.c"
 
 static void InitTesselatorCallbacks( GLUtesselator* aTesselator );
 static const int glAttributes[] = { WX_GL_RGBA, WX_GL_DOUBLEBUFFER, WX_GL_DEPTH_SIZE, 8, 0 };
 
-wxGLContext* OPENGL_GAL::glContext = NULL;
+wxGLContext* OPENGL_GAL::glMainContext = NULL;
 int OPENGL_GAL::instanceCounter = 0;
+GLuint OPENGL_GAL::fontTexture = 0;
 bool OPENGL_GAL::isBitmapFontLoaded = false;
+SHADER* OPENGL_GAL::shader = NULL;
+
 
 OPENGL_GAL::OPENGL_GAL( wxWindow* aParent, wxEvtHandler* aMouseListener,
                         wxEvtHandler* aPaintListener, const wxString& aName ) :
     wxGLCanvas( aParent, wxID_ANY, (int*) glAttributes, wxDefaultPosition, wxDefaultSize,
                 wxEXPAND, aName ),
     mouseListener( aMouseListener ),
-    paintListener( aPaintListener ),
-    cachedManager( true ),
-    nonCachedManager( false ),
-    overlayManager( false )
+    paintListener( aPaintListener )
 {
-    if( glContext == NULL )
-        glContext = new wxGLContext( this );
+    if( glMainContext == NULL )
+    {
+        glMainContext = GL_CONTEXT_MANAGER::Get().CreateCtx( this );
+        glPrivContext = glMainContext;
+        shader = new SHADER();
+    }
+    else
+    {
+        glPrivContext = GL_CONTEXT_MANAGER::Get().CreateCtx( this, glMainContext );
+    }
+
+    ++instanceCounter;
 
     // Check if OpenGL requirements are met
     runTest();
-    ++instanceCounter;
 
     // Make VBOs use shaders
-    cachedManager.SetShader( shader );
-    nonCachedManager.SetShader( shader );
-    overlayManager.SetShader( shader );
+    cachedManager = new VERTEX_MANAGER( true );
+    cachedManager->SetShader( *shader );
+    nonCachedManager = new VERTEX_MANAGER( false );
+    nonCachedManager->SetShader( *shader );
+    overlayManager = new VERTEX_MANAGER( false );
+    overlayManager->SetShader( *shader );
+
+    compositor = new OPENGL_COMPOSITOR;
 
     // Initialize the flags
     isFramebufferInitialized = false;
@@ -121,35 +140,49 @@ OPENGL_GAL::OPENGL_GAL( wxWindow* aParent, wxEvtHandler* aMouseListener,
 
     gluTessProperty( tesselator, GLU_TESS_WINDING_RULE, GLU_TESS_WINDING_POSITIVE );
 
-    currentManager = &nonCachedManager;
+    currentManager = nonCachedManager;
 }
 
 
 OPENGL_GAL::~OPENGL_GAL()
 {
+    GL_CONTEXT_MANAGER::Get().LockCtx( glPrivContext, this );
+
+    --instanceCounter;
+    glFlush();
     gluDeleteTess( tesselator );
     ClearCache();
 
-#ifdef __LINUX__
-    if( IsShownOnScreen() )
-        SetCurrent( *OPENGL_GAL::glContext );
-#else
-    SetCurrent( *OPENGL_GAL::glContext );
-#endif
+    delete compositor;
+    delete cachedManager;
+    delete nonCachedManager;
+    delete overlayManager;
 
-    glFlush();
+    GL_CONTEXT_MANAGER::Get().UnlockCtx( glPrivContext );
 
-    if( --instanceCounter == 0 )
+    // If it was the main context, then it will be deleted
+    // when the last OpenGL GAL instance is destroyed (a few lines below)
+    if( glPrivContext != glMainContext )
+        GL_CONTEXT_MANAGER::Get().DestroyCtx( glPrivContext );
+
+    // Are we destroying the last GAL instance?
+    if( instanceCounter == 0 )
     {
+        GL_CONTEXT_MANAGER::Get().LockCtx( glMainContext, this );
+
         if( isBitmapFontLoaded )
         {
             glDeleteTextures( 1, &fontTexture );
             isBitmapFontLoaded = false;
         }
 
-        delete OPENGL_GAL::glContext;
-        glContext = NULL;
+        delete shader;
+
+        GL_CONTEXT_MANAGER::Get().UnlockCtx( glMainContext );
+        GL_CONTEXT_MANAGER::Get().DestroyCtx( glMainContext );
+        glMainContext = NULL;
     }
+
 }
 
 
@@ -163,8 +196,7 @@ void OPENGL_GAL::BeginDrawing()
     prof_start( &totalRealTime );
 #endif /* __WXDEBUG__ */
 
-    SetCurrent( *glContext );
-    clientDC = new wxClientDC( this );
+    GL_CONTEXT_MANAGER::Get().LockCtx( glPrivContext, this );
 
 #ifdef RETINA_OPENGL_PATCH
     const float scaleFactor = GetBackingScaleFactor();
@@ -183,9 +215,9 @@ void OPENGL_GAL::BeginDrawing()
     if( !isFramebufferInitialized )
     {
         // Prepare rendering target buffers
-        compositor.Initialize();
-        mainBuffer = compositor.CreateBuffer();
-        overlayBuffer = compositor.CreateBuffer();
+        compositor->Initialize();
+        mainBuffer = compositor->CreateBuffer();
+        overlayBuffer = compositor->CreateBuffer();
 
         isFramebufferInitialized = true;
     }
@@ -224,27 +256,27 @@ void OPENGL_GAL::BeginDrawing()
     SetStrokeColor( strokeColor );
 
     // Remove all previously stored items
-    nonCachedManager.Clear();
-    overlayManager.Clear();
+    nonCachedManager->Clear();
+    overlayManager->Clear();
 
-    cachedManager.BeginDrawing();
-    nonCachedManager.BeginDrawing();
-    overlayManager.BeginDrawing();
+    cachedManager->BeginDrawing();
+    nonCachedManager->BeginDrawing();
+    overlayManager->BeginDrawing();
 
     if( !isBitmapFontInitialized )
     {
         // Keep bitmap font texture always bound to the second texturing unit
         const GLint FONT_TEXTURE_UNIT = 2;
 
+        // Either load the font atlas to video memory, or simply bind it to a texture unit
         if( !isBitmapFontLoaded )
         {
             glActiveTexture( GL_TEXTURE0 + FONT_TEXTURE_UNIT );
             glGenTextures( 1, &fontTexture );
             glBindTexture( GL_TEXTURE_2D, fontTexture );
-            glTexImage2D( GL_TEXTURE_2D, 0, GL_RED, bitmap_font.width, bitmap_font.height,
-                          0, GL_RED, GL_UNSIGNED_BYTE, bitmap_font.pixels );
-            glGenerateMipmap( GL_TEXTURE_2D );
-            glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
+            glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB8, bitmap_font.width, bitmap_font.height,
+                          0, GL_RGB, GL_UNSIGNED_BYTE, bitmap_font.pixels );
+            glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
             glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
             checkGlError( "loading bitmap font" );
 
@@ -252,19 +284,25 @@ void OPENGL_GAL::BeginDrawing()
 
             isBitmapFontLoaded = true;
         }
+        else
+        {
+            glActiveTexture( GL_TEXTURE0 + FONT_TEXTURE_UNIT );
+            glBindTexture( GL_TEXTURE_2D, fontTexture );
+            glActiveTexture( GL_TEXTURE0 );
+        }
 
         // Set shader parameter
-        GLint ufm_fontTexture = shader.AddParameter( "fontTexture" );
-        shader.Use();
-        shader.SetParameter( ufm_fontTexture, (int) FONT_TEXTURE_UNIT );
-        shader.Deactivate();
+        GLint ufm_fontTexture = shader->AddParameter( "fontTexture" );
+        shader->Use();
+        shader->SetParameter( ufm_fontTexture, (int) FONT_TEXTURE_UNIT );
+        shader->Deactivate();
         checkGlError( "setting bitmap font sampler as shader parameter" );
 
         isBitmapFontInitialized = true;
     }
 
     // Unbind buffers - set compositor for direct drawing
-    compositor.SetBuffer( OPENGL_COMPOSITOR::DIRECT_RENDERING );
+    compositor->SetBuffer( OPENGL_COMPOSITOR::DIRECT_RENDERING );
 
 #ifdef __WXDEBUG__
     prof_end( &totalRealTime );
@@ -282,25 +320,24 @@ void OPENGL_GAL::EndDrawing()
 #endif /* __WXDEBUG__ */
 
     // Cached & non-cached containers are rendered to the same buffer
-    compositor.SetBuffer( mainBuffer );
-    nonCachedManager.EndDrawing();
-    cachedManager.EndDrawing();
+    compositor->SetBuffer( mainBuffer );
+    nonCachedManager->EndDrawing();
+    cachedManager->EndDrawing();
 
     // Overlay container is rendered to a different buffer
-    compositor.SetBuffer( overlayBuffer );
-    overlayManager.EndDrawing();
+    compositor->SetBuffer( overlayBuffer );
+    overlayManager->EndDrawing();
 
     // Be sure that the framebuffer is not colorized (happens on specific GPU&drivers combinations)
     glColor4d( 1.0, 1.0, 1.0, 1.0 );
 
     // Draw the remaining contents, blit the rendering targets to the screen, swap the buffers
-    compositor.DrawBuffer( mainBuffer );
-    compositor.DrawBuffer( overlayBuffer );
+    compositor->DrawBuffer( mainBuffer );
+    compositor->DrawBuffer( overlayBuffer );
     blitCursor();
 
     SwapBuffers();
-
-    delete clientDC;
+    GL_CONTEXT_MANAGER::Get().UnlockCtx( glPrivContext );
 
 #ifdef __WXDEBUG__
     prof_end( &totalRealTime );
@@ -311,14 +348,15 @@ void OPENGL_GAL::EndDrawing()
 
 void OPENGL_GAL::BeginUpdate()
 {
-    SetCurrent( *OPENGL_GAL::glContext );
-    cachedManager.Map();
+    GL_CONTEXT_MANAGER::Get().LockCtx( glPrivContext, this );
+    cachedManager->Map();
 }
 
 
 void OPENGL_GAL::EndUpdate()
 {
-    cachedManager.Unmap();
+    cachedManager->Unmap();
+    GL_CONTEXT_MANAGER::Get().UnlockCtx( glPrivContext );
 }
 
 
@@ -551,7 +589,7 @@ void OPENGL_GAL::DrawRectangle( const VECTOR2D& aStartPoint, const VECTOR2D& aEn
 
 void OPENGL_GAL::DrawPolyline( const std::deque<VECTOR2D>& aPointList )
 {
-    if( aPointList.empty() )
+    if( aPointList.size() < 2 )
         return;
 
     currentManager->Color( strokeColor.r, strokeColor.g, strokeColor.b, strokeColor.a );
@@ -579,6 +617,9 @@ void OPENGL_GAL::DrawPolyline( const std::deque<VECTOR2D>& aPointList )
 
 void OPENGL_GAL::DrawPolyline( const VECTOR2D aPointList[], int aListSize )
 {
+    if( aListSize < 2 )
+        return;
+
     currentManager->Color( strokeColor.r, strokeColor.g, strokeColor.b, strokeColor.a );
 
     // Start from the second point
@@ -611,7 +652,7 @@ void OPENGL_GAL::DrawPolygon( const std::deque<VECTOR2D>& aPointList )
     gluTessBeginPolygon( tesselator, &params );
     gluTessBeginContour( tesselator );
 
-    boost::shared_array<GLdouble> points( new GLdouble[3 * aPointList.size()] );
+    std::unique_ptr<GLdouble[]> points( new GLdouble[ 3 * aPointList.size() ] );
     int v = 0;
 
     for( std::deque<VECTOR2D>::const_iterator it = aPointList.begin(); it != aPointList.end(); ++it )
@@ -644,7 +685,7 @@ void OPENGL_GAL::DrawPolygon( const VECTOR2D aPointList[], int aListSize )
     gluTessBeginPolygon( tesselator, &params );
     gluTessBeginContour( tesselator );
 
-    boost::shared_array<GLdouble> points( new GLdouble[3 * aListSize] );
+    std::unique_ptr<GLdouble[]> points( new GLdouble[3 * aListSize] );
     int v = 0;
     const VECTOR2D* ptr = aPointList;
 
@@ -767,9 +808,9 @@ void OPENGL_GAL::BitmapText( const wxString& aText, const VECTOR2D& aPosition,
      * v2    v3
      */
 
-    for( unsigned int i = 0; i < aText.length(); ++i )
+    for( unsigned int ii = 0; ii < aText.length(); ++ii )
     {
-        const unsigned int c = aText[i];
+        const unsigned int c = aText[ii];
 
         wxASSERT_MSG( c < bitmap_chars_count, wxT( "Missing character in bitmap font atlas." ) );
 
@@ -798,7 +839,7 @@ void OPENGL_GAL::BitmapText( const wxString& aText, const VECTOR2D& aPosition,
             }
 
             // Draw tilda characters if there are any remaining
-            for( int i = 0; i < tildas / 2; ++i )
+            for( int jj = 0; jj < tildas / 2; ++jj )
                 overbarLength += drawBitmapChar( '~' );
 
             tildas = 0;
@@ -828,7 +869,7 @@ void OPENGL_GAL::DrawGrid()
         return;
 
     SetTarget( TARGET_NONCACHED );
-    compositor.SetBuffer( mainBuffer );
+    compositor->SetBuffer( mainBuffer );
 
     // Draw the grid
     // For the drawing the start points, end points and increments have
@@ -927,7 +968,7 @@ void OPENGL_GAL::ResizeScreen( int aWidth, int aHeight )
 #endif
 
     // Resize framebuffers
-    compositor.Resize( aWidth * scaleFactor, aHeight * scaleFactor );
+    compositor->Resize( aWidth * scaleFactor, aHeight * scaleFactor );
     isFramebufferInitialized = false;
 
     wxGLCanvas::SetSize( aWidth, aHeight );
@@ -954,7 +995,7 @@ void OPENGL_GAL::Flush()
 void OPENGL_GAL::ClearScreen( const COLOR4D& aColor )
 {
     // Clear screen
-    compositor.SetBuffer( OPENGL_COMPOSITOR::DIRECT_RENDERING );
+    compositor->SetBuffer( OPENGL_COMPOSITOR::DIRECT_RENDERING );
     glClearColor( aColor.r, aColor.g, aColor.b, aColor.a );
     glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
 }
@@ -1012,7 +1053,7 @@ int OPENGL_GAL::BeginGroup()
 {
     isGrouping = true;
 
-    boost::shared_ptr<VERTEX_ITEM> newItem( new VERTEX_ITEM( cachedManager ) );
+    std::shared_ptr<VERTEX_ITEM> newItem = std::make_shared<VERTEX_ITEM>( *cachedManager );
     int groupNumber = getNewGroupNumber();
     groups.insert( std::make_pair( groupNumber, newItem ) );
 
@@ -1022,26 +1063,26 @@ int OPENGL_GAL::BeginGroup()
 
 void OPENGL_GAL::EndGroup()
 {
-    cachedManager.FinishItem();
+    cachedManager->FinishItem();
     isGrouping = false;
 }
 
 
 void OPENGL_GAL::DrawGroup( int aGroupNumber )
 {
-    cachedManager.DrawItem( *groups[aGroupNumber] );
+    cachedManager->DrawItem( *groups[aGroupNumber] );
 }
 
 
 void OPENGL_GAL::ChangeGroupColor( int aGroupNumber, const COLOR4D& aNewColor )
 {
-    cachedManager.ChangeItemColor( *groups[aGroupNumber], aNewColor );
+    cachedManager->ChangeItemColor( *groups[aGroupNumber], aNewColor );
 }
 
 
 void OPENGL_GAL::ChangeGroupDepth( int aGroupNumber, int aDepth )
 {
-    cachedManager.ChangeItemDepth( *groups[aGroupNumber], aDepth );
+    cachedManager->ChangeItemDepth( *groups[aGroupNumber], aDepth );
 }
 
 
@@ -1055,7 +1096,7 @@ void OPENGL_GAL::DeleteGroup( int aGroupNumber )
 void OPENGL_GAL::ClearCache()
 {
     groups.clear();
-    cachedManager.Clear();
+    cachedManager->Clear();
 }
 
 
@@ -1077,15 +1118,15 @@ void OPENGL_GAL::SetTarget( RENDER_TARGET aTarget )
     {
     default:
     case TARGET_CACHED:
-        currentManager = &cachedManager;
+        currentManager = cachedManager;
         break;
 
     case TARGET_NONCACHED:
-        currentManager = &nonCachedManager;
+        currentManager = nonCachedManager;
         break;
 
     case TARGET_OVERLAY:
-        currentManager = &overlayManager;
+        currentManager = overlayManager;
         break;
     }
 
@@ -1102,7 +1143,7 @@ RENDER_TARGET OPENGL_GAL::GetTarget() const
 void OPENGL_GAL::ClearTarget( RENDER_TARGET aTarget )
 {
     // Save the current state
-    unsigned int oldTarget = compositor.GetBuffer();
+    unsigned int oldTarget = compositor->GetBuffer();
 
     switch( aTarget )
     {
@@ -1110,18 +1151,18 @@ void OPENGL_GAL::ClearTarget( RENDER_TARGET aTarget )
     default:
     case TARGET_CACHED:
     case TARGET_NONCACHED:
-        compositor.SetBuffer( mainBuffer );
+        compositor->SetBuffer( mainBuffer );
         break;
 
     case TARGET_OVERLAY:
-        compositor.SetBuffer( overlayBuffer );
+        compositor->SetBuffer( overlayBuffer );
         break;
     }
 
-    compositor.ClearBuffer();
+    compositor->ClearBuffer();
 
     // Restore the previous state
-    compositor.SetBuffer( oldTarget );
+    compositor->SetBuffer( oldTarget );
 }
 
 
@@ -1274,82 +1315,74 @@ int OPENGL_GAL::drawBitmapChar( unsigned long aChar )
     const float TEX_Y = bitmap_font.height;
 
     const bitmap_glyph& GLYPH = bitmap_chars[aChar];
-    const float X = GLYPH.x;
-    const float Y = GLYPH.y;
+    const float X = GLYPH.atlas_x;
+    const float Y = GLYPH.atlas_y;
     const float XOFF = GLYPH.x_off;
-    const float YOFF = GLYPH.y_off;
-    const float W = GLYPH.width;
-    const float H = GLYPH.height;
+    const float YOFF = -GLYPH.miny + GLYPH.atlas_shift;
+    const float W = GLYPH.atlas_w;
+    const float H = GLYPH.atlas_h;
+    const float B = bitmap_font.char_border;
 
-    Translate( VECTOR2D( XOFF / 2, 0 ) );
+    Translate( VECTOR2D( XOFF, 0 ) );
 
     currentManager->Reserve( 6 );
 
-    currentManager->Shader( SHADER_FONT, X / TEX_X, Y / TEX_Y );
-    currentManager->Vertex( 0,  YOFF, 0 );             // v0
-
-    currentManager->Shader( SHADER_FONT, ( X + W ) / TEX_X, Y / TEX_Y );
-    currentManager->Vertex( W,  YOFF, 0 );             // v1
-
     currentManager->Shader( SHADER_FONT, X / TEX_X, ( Y + H ) / TEX_Y );
-    currentManager->Vertex( 0,  YOFF + H, 0 );         // v2
-
-
-    currentManager->Shader( SHADER_FONT, ( X + W ) / TEX_X, Y / TEX_Y );
-    currentManager->Vertex( W,  YOFF, 0 );              // v1
-
-    currentManager->Shader( SHADER_FONT, X / TEX_X, ( Y + H ) / TEX_Y );
-    currentManager->Vertex( 0,  YOFF + H, 0 );          // v2
+    currentManager->Vertex( -B,     YOFF - B, 0 );             // v0
 
     currentManager->Shader( SHADER_FONT, ( X + W ) / TEX_X, ( Y + H ) / TEX_Y );
-    currentManager->Vertex( W,  YOFF + H, 0 );          // v3
+    currentManager->Vertex( W + B,  YOFF - B, 0 );             // v1
 
-    Translate( VECTOR2D( W + XOFF / 2, 0 ) );
+    currentManager->Shader( SHADER_FONT, X / TEX_X, Y / TEX_Y );
+    currentManager->Vertex( -B,     YOFF + H + B, 0 );         // v2
 
-    return GLYPH.width + GLYPH.x_off;
+
+    currentManager->Shader( SHADER_FONT, ( X + W ) / TEX_X, ( Y + H ) / TEX_Y );
+    currentManager->Vertex( W + B,  YOFF - B, 0 );              // v1
+
+    currentManager->Shader( SHADER_FONT, X / TEX_X, Y / TEX_Y );
+    currentManager->Vertex( -B,     YOFF + H + B, 0 );          // v2
+
+    currentManager->Shader( SHADER_FONT, ( X + W ) / TEX_X, Y / TEX_Y );
+    currentManager->Vertex( W + B,  YOFF + H + B, 0 );          // v3
+
+    Translate( VECTOR2D( -XOFF + GLYPH.advance, 0 ) );
+
+    return GLYPH.advance;
 }
 
 
 void OPENGL_GAL::drawBitmapOverbar( double aLength, double aHeight )
 {
-    const float TEX_X = bitmap_font.width;
-    const float TEX_Y = bitmap_font.height;
-
-    // Margin is to shave off the blurry part of the character
-    const int MARGIN = 2;
-
-    // To draw an overbar, simply stretch an underscore character (_)
-    const bitmap_glyph& GLYPH = bitmap_chars['_'];
-    const float X = GLYPH.x + MARGIN;
-    const float Y = GLYPH.y + MARGIN;
-    const float W = GLYPH.width - 2 * MARGIN;
-    const float H = GLYPH.height - 2 * MARGIN;
-
-    assert( W > 0 && H > 0 );
+    // To draw an overbar, simply draw an overbar
+    const bitmap_glyph& GLYPH = bitmap_chars[(unsigned char) '_'];
+    const float H = GLYPH.maxy - GLYPH.miny;
 
     Save();
-    Translate( VECTOR2D( -aLength, -aHeight ) );
+
+    Translate( VECTOR2D( -aLength, -aHeight - GLYPH.miny ) );
 
     currentManager->Reserve( 6 );
+    currentManager->Color( strokeColor.r, strokeColor.g, strokeColor.b, 1 );
 
-    currentManager->Shader( SHADER_FONT, X / TEX_X, Y / TEX_Y );
+    currentManager->Shader( 0 );
     currentManager->Vertex( 0, 0, 0 );                      // v0
 
-    currentManager->Shader( SHADER_FONT, ( X + W ) / TEX_X, Y / TEX_Y );
-    currentManager->Vertex( aLength, 0 , 0 );                // v1
+    //currentManager->Shader( 0 );
+    currentManager->Vertex( aLength, 0, 0 );                // v1
 
-    currentManager->Shader( SHADER_FONT, X / TEX_X, ( Y + H ) / TEX_Y );
-    currentManager->Vertex( 0, H + 2 * MARGIN, 0 );          // v2
+    //currentManager->Shader( 0 );
+    currentManager->Vertex( 0, H, 0 );          // v2
 
 
-    currentManager->Shader( SHADER_FONT, ( X + W ) / TEX_X, Y / TEX_Y );
-    currentManager->Vertex( aLength, 0 , 0 );                // v1
+    //currentManager->Shader( 0 );
+    currentManager->Vertex( aLength, 0, 0 );                // v1
 
-    currentManager->Shader( SHADER_FONT, X / TEX_X, ( Y + H ) / TEX_Y );
-    currentManager->Vertex( 0, H + 2 * MARGIN, 0 );         // v2
+    //currentManager->Shader( 0 );
+    currentManager->Vertex( 0, H, 0 );         // v2
 
-    currentManager->Shader( SHADER_FONT, ( X + W ) / TEX_X, ( Y + H ) / TEX_Y );
-    currentManager->Vertex( aLength, H + 2 * MARGIN, 0 );    // v3
+    //currentManager->Shader( 0 );
+    currentManager->Vertex( aLength, H, 0 );    // v3
 
     Restore();
 }
@@ -1358,7 +1391,7 @@ void OPENGL_GAL::drawBitmapOverbar( double aLength, double aHeight )
 std::pair<VECTOR2D, int> OPENGL_GAL::computeBitmapTextSize( const wxString& aText ) const
 {
     VECTOR2D textSize( 0, 0 );
-    int commonOffset = std::numeric_limits<int>::max();
+    float commonOffset = std::numeric_limits<float>::max();
     bool wasTilda = false;
 
     for( unsigned int i = 0; i < aText.length(); ++i )
@@ -1381,9 +1414,9 @@ std::pair<VECTOR2D, int> OPENGL_GAL::computeBitmapTextSize( const wxString& aTex
         }
 
         const bitmap_glyph& GLYPH = bitmap_chars[aText[i]];
-        textSize.x += ( GLYPH.x_off + GLYPH.width );
-        textSize.y = std::max( (unsigned int)( textSize.y ), GLYPH.height + GLYPH.y_off );
-        commonOffset = std::min( GLYPH.y_off, commonOffset );
+        textSize.x  += GLYPH.advance;
+        textSize.y   = std::max<float>( textSize.y, GLYPH.atlas_shift + GLYPH.atlas_h - GLYPH.miny );
+        commonOffset = std::min<float>( GLYPH.atlas_shift - GLYPH.miny, commonOffset );
     }
 
     textSize.y -= commonOffset;
@@ -1411,7 +1444,7 @@ void OPENGL_GAL::blitCursor()
     if( !isCursorEnabled )
         return;
 
-    compositor.SetBuffer( OPENGL_COMPOSITOR::DIRECT_RENDERING );
+    compositor->SetBuffer( OPENGL_COMPOSITOR::DIRECT_RENDERING );
 
     VECTOR2D cursorBegin  = cursorPosition - cursorSize / ( 2 * worldScale );
     VECTOR2D cursorEnd    = cursorPosition + cursorSize / ( 2 * worldScale );
@@ -1455,7 +1488,7 @@ bool OPENGL_GAL::runTest()
     {
         wxDialog dlgtest( GetParent(), -1, wxT( "opengl test" ), wxPoint( 50, 50 ),
                         wxDLG_UNIT( GetParent(), wxSize( 50, 50 ) ) );
-        OPENGL_TEST* test = new OPENGL_TEST( &dlgtest, this );
+        OPENGL_TEST* test = new OPENGL_TEST( &dlgtest, this, glPrivContext );
 
         dlgtest.Raise();         // on Linux, on some windows managers (Unity for instance) this is needed to actually show the dialog
         dlgtest.ShowModal();
@@ -1472,10 +1505,10 @@ bool OPENGL_GAL::runTest()
 }
 
 
-OPENGL_GAL::OPENGL_TEST::OPENGL_TEST( wxDialog* aParent, OPENGL_GAL* aGal ) :
+OPENGL_GAL::OPENGL_TEST::OPENGL_TEST( wxDialog* aParent, OPENGL_GAL* aGal, wxGLContext* aContext ) :
     wxGLCanvas( aParent, wxID_ANY, glAttributes, wxDefaultPosition,
                 wxDefaultSize, 0, wxT( "GLCanvas" ) ),
-    m_parent( aParent ), m_gal( aGal ), m_tested( false ), m_result( false )
+    m_parent( aParent ), m_gal( aGal ), m_context( aContext ), m_tested( false ), m_result( false )
 {
     m_timeoutTimer.SetOwner( this );
     Connect( wxEVT_PAINT, wxPaintEventHandler( OPENGL_GAL::OPENGL_TEST::Render ) );
@@ -1496,59 +1529,38 @@ void OPENGL_GAL::OPENGL_TEST::Render( wxPaintEvent& WXUNUSED( aEvent ) )
 
         // One test is enough - close the testing dialog when the test is finished
         Disconnect( wxEVT_PAINT, wxPaintEventHandler( OPENGL_GAL::OPENGL_TEST::Render ) );
-        CallAfter( boost::bind( &wxDialog::EndModal, m_parent, wxID_NONE ) );
+        CallAfter( std::bind( &wxDialog::EndModal, m_parent, wxID_NONE ) );
 
-        SetCurrent( *OPENGL_GAL::glContext );
+        GL_CONTEXT_MANAGER::Get().LockCtx( m_context, this );
         GLenum err = glewInit();
 
         if( GLEW_OK != err )
-        {
             error( (const char*) glewGetErrorString( err ) );
-            return;
-        }
 
         // Check the OpenGL version (minimum 2.1 is required)
-        if( !GLEW_VERSION_2_1 )
-        {
+        else if( !GLEW_VERSION_2_1 )
             error( "OpenGL 2.1 or higher is required!" );
-            return;
-        }
 
         // Framebuffers have to be supported
-        if( !GLEW_EXT_framebuffer_object )
-        {
+        else if( !GLEW_EXT_framebuffer_object )
             error( "Framebuffer objects are not supported!" );
-            return;
-        }
 
         // Vertex buffer has to be supported
-        if( !GLEW_ARB_vertex_buffer_object )
-        {
+        else if( !GLEW_ARB_vertex_buffer_object )
             error( "Vertex buffer objects are not supported!" );
-            return;
-        }
 
         // Prepare shaders
-        if( !m_gal->shader.LoadBuiltinShader( 0, SHADER_TYPE_VERTEX ) )
-        {
+        else if( !m_gal->shader->IsLinked() && !m_gal->shader->LoadBuiltinShader( 0, SHADER_TYPE_VERTEX ) )
             error( "Cannot compile vertex shader!" );
-            return;
-        }
 
-        if( !m_gal->shader.LoadBuiltinShader( 1, SHADER_TYPE_FRAGMENT ) )
-        {
+        else if( !m_gal->shader->IsLinked() && !m_gal->shader->LoadBuiltinShader( 1, SHADER_TYPE_FRAGMENT ) )
             error( "Cannot compile fragment shader!" );
-            return;
-        }
 
-        if( !m_gal->shader.Link() )
-        {
+        else if( !m_gal->shader->IsLinked() && !m_gal->shader->Link() )
             error( "Cannot link the shaders!" );
-            return;
-        }
 
+        // Check if video card supports textures big enough to fit font atlas
         int maxTextureSize;
-
         glGetIntegerv( GL_MAX_TEXTURE_SIZE, &maxTextureSize );
 
         if( maxTextureSize < (int) bitmap_font.width || maxTextureSize < (int) bitmap_font.height )
@@ -1558,6 +1570,7 @@ void OPENGL_GAL::OPENGL_TEST::Render( wxPaintEvent& WXUNUSED( aEvent ) )
             error( "Requested texture size is not supported" );
         }
 
+        GL_CONTEXT_MANAGER::Get().UnlockCtx( m_context );
         m_tested = true;
     }
 }
@@ -1596,8 +1609,8 @@ void CALLBACK VertexCallback( GLvoid* aVertexPtr, void* aData )
     OPENGL_GAL::TessParams* param = static_cast<OPENGL_GAL::TessParams*>( aData );
     VERTEX_MANAGER* vboManager = param->vboManager;
 
-    if( vboManager )
-        vboManager->Vertex( vertex[0], vertex[1], vertex[2] );
+    assert( vboManager );
+    vboManager->Vertex( vertex[0], vertex[1], vertex[2] );
 }
 
 

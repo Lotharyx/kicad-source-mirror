@@ -684,7 +684,7 @@ void PCB::Parse( wxStatusBar* aStatusBar, wxXmlDocument* aXmlDoc, wxString aActu
 
         if( aNode )
         {
-            m_defaultMeasurementUnit = aNode->GetNodeContent();
+            m_defaultMeasurementUnit = aNode->GetNodeContent().Lower();
             m_defaultMeasurementUnit.Trim( true );
             m_defaultMeasurementUnit.Trim( false );
         }
@@ -925,7 +925,7 @@ void PCB::AddToBoard()
     {
         net = m_pcbNetlist[i];
 
-        m_board->AppendNet( new NETINFO_ITEM( m_board, net->m_name, net->m_netCode ) );
+        m_board->Add( new NETINFO_ITEM( m_board, net->m_name, net->m_netCode ) );
     }
 
     for( i = 0; i < (int) m_pcbComponents.GetCount(); i++ )

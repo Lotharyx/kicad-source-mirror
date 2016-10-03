@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2015 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2015-2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -131,18 +131,9 @@ void LIB_VIEW_FRAME::DisplayLibInfos()
     {
         PART_LIB* lib = libs->FindLibrary( m_libraryName );
 
-        wxString     msg = _( "Library Browser" );
-
-        msg += wxT( " [" );
-
-        if( lib )
-            msg += lib->GetFullFileName();
-        else
-            msg += _( "no library selected" );
-
-        msg += wxT( "]" );
-
-        SetTitle( msg );
+        wxString title = wxString::Format( L"Library Browser \u2014 %s",
+            lib ? lib->GetFullFileName() : "no library selected" );
+        SetTitle( title );
     }
 }
 
@@ -192,7 +183,7 @@ void LIB_VIEW_FRAME::SelectAndViewLibraryPart( int option )
                 return;
             }
 
-            if( lib->FindEntry( m_entryName ) )
+            if( lib->FindAlias( m_entryName ) )
             {
                 if( option == NEXT_PART )
                     ViewOneLibraryContent( lib, NEXT_PART );
@@ -243,7 +234,7 @@ void LIB_VIEW_FRAME::ViewOneLibraryContent( PART_LIB* Lib, int Flag )
     m_unit    = 1;
     m_convert = 1;
 
-    entry = Lib->FindEntry( CmpName );
+    entry = Lib->FindAlias( CmpName );
     m_entryName = CmpName;
     DisplayLibInfos();
     Zoom_Automatique( false );

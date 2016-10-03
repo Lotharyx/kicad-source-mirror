@@ -49,11 +49,20 @@ public:
     ~DialogEditModuleText() {};
 
 protected:
-    bool TransferDataToWindow();
-    bool TransferDataFromWindow();
+    bool TransferDataToWindow() override;
+    bool TransferDataFromWindow() override;
 
 private:
-    void ModuleOrientEvent( wxCommandEvent& event );
+    void ModuleOrientEvent( wxCommandEvent& event ) override;
+
+    void OnInitDlg( wxInitDialogEvent& event ) override
+    {
+        // Call the default wxDialog handler of a wxInitDialogEvent
+        TransferDataToWindow();
+
+        // Now all widgets have the size fixed, call FinishDialogSettings
+        FinishDialogSettings();
+    }
 };
 
 #endif /* DIALOG_EDIT_MODULE_TEXT_H */

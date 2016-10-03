@@ -39,7 +39,7 @@
 #include <base_units.h>
 #include <msgpanel.h>
 
-#include <3d_viewer.h>
+#include <3d_viewer/eda_3d_viewer.h>                                            // To include VIEWER3D_FRAMENAME
 
 #include <pcbnew.h>
 #include <fp_lib_table.h>
@@ -107,7 +107,7 @@ PCB_BASE_FRAME::PCB_BASE_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrame
 
     m_auxiliaryToolBar    = NULL;
 
-    m_zoomLevelCoeff      = 110.0 * IU_PER_DECIMILS;  // Adjusted to roughly displays zoom level = 1
+    m_zoomLevelCoeff      = 11.0 * IU_PER_MILS;  // Adjusted to roughly displays zoom level = 1
                                         // when the screen shows a 1:1 image
                                         // obviously depends on the monitor,
                                         // but this is an acceptable value
@@ -121,10 +121,10 @@ PCB_BASE_FRAME::~PCB_BASE_FRAME()
 }
 
 
-EDA_3D_FRAME* PCB_BASE_FRAME::Get3DViewerFrame()
+EDA_3D_VIEWER* PCB_BASE_FRAME::Get3DViewerFrame()
 {
     // return the 3D viewer frame, when exists, or NULL
-    return dynamic_cast<EDA_3D_FRAME*>
+    return dynamic_cast<EDA_3D_VIEWER*>
         ( wxWindow::FindWindowByName( VIEWER3D_FRAMENAME ) );
 }
 
@@ -156,7 +156,7 @@ FP_LIB_TABLE* PROJECT::PcbFootprintLibs()
         }
         catch( const IO_ERROR& ioe )
         {
-            DisplayError( NULL, ioe.errorText );
+            DisplayError( NULL, ioe.What() );
         }
     }
 

@@ -41,8 +41,7 @@
 #include <class_board.h>
 #include <class_module.h>
 #include <polygon_test_point_inside.h>
-#include <convert_from_iu.h>
-#include <boost/foreach.hpp>
+#include <convert_to_biu.h>
 #include <convert_basic_shapes_to_polygon.h>
 
 
@@ -53,9 +52,9 @@ D_PAD::D_PAD( MODULE* parent ) :
     BOARD_CONNECTED_ITEM( parent, PCB_PAD_T )
 {
     m_NumPadName          = 0;
-    m_Size.x = m_Size.y   = DMils2iu( 600 ); // Default pad size 60 mils.
-    m_Drill.x = m_Drill.y = DMils2iu( 300 ); // Default drill size 30 mils.
-    m_Orient              = 0;               // Pad rotation in 1/10 degrees.
+    m_Size.x = m_Size.y   = Mils2iu( 60 );  // Default pad size 60 mils.
+    m_Drill.x = m_Drill.y = Mils2iu( 30 );  // Default drill size 30 mils.
+    m_Orient              = 0;              // Pad rotation in 1/10 degrees.
     m_LengthPadToDie      = 0;
 
     if( m_Parent  &&  m_Parent->Type() == PCB_MODULE_T )
@@ -88,7 +87,7 @@ D_PAD::D_PAD( MODULE* parent ) :
 
 LSET D_PAD::StandardMask()
 {
-    static LSET saved = LSET::AllCuMask() | LSET( 3, F_SilkS, B_Mask, F_Mask );
+    static LSET saved = LSET::AllCuMask() | LSET( 2, B_Mask, F_Mask );
     return saved;
 }
 
@@ -109,7 +108,7 @@ LSET D_PAD::ConnSMDMask()
 
 LSET D_PAD::UnplatedHoleMask()
 {
-    static LSET saved = LSET::AllCuMask() | LSET( 3, F_SilkS, B_Mask, F_Mask );
+    static LSET saved = LSET::AllCuMask() | LSET( 2, B_Mask, F_Mask );
     return saved;
 }
 
@@ -413,13 +412,6 @@ void D_PAD::SetPadName( const wxString& name )
 }
 
 
-bool D_PAD::IncrementItemReference()
-{
-    // Take the next available pad number
-    return IncrementPadName( true, true );
-}
-
-
 bool D_PAD::IncrementPadName( bool aSkipUnconnectable, bool aFillSequenceGaps )
 {
     bool skip = aSkipUnconnectable && ( GetAttribute() == PAD_ATTRIB_HOLE_NOT_PLATED );
@@ -428,41 +420,6 @@ bool D_PAD::IncrementPadName( bool aSkipUnconnectable, bool aFillSequenceGaps )
         SetPadName( GetParent()->GetNextPadName( aFillSequenceGaps ) );
 
     return !skip;
-}
-
-
-void D_PAD::Copy( D_PAD* source )
-{
-    if( source == NULL )
-        return;
-
-    m_Pos = source->m_Pos;
-    m_layerMask = source->m_layerMask;
-
-    m_NumPadName = source->m_NumPadName;
-    m_netinfo = source->m_netinfo;
-    m_Drill = source->m_Drill;
-    m_drillShape = source->m_drillShape;
-    m_Offset     = source->m_Offset;
-    m_Size = source->m_Size;
-    m_DeltaSize = source->m_DeltaSize;
-    m_Pos0     = source->m_Pos0;
-    m_boundingRadius    = source->m_boundingRadius;
-    m_padShape = source->m_padShape;
-    m_Attribute = source->m_Attribute;
-    m_Orient   = source->m_Orient;
-    m_LengthPadToDie = source->m_LengthPadToDie;
-    m_LocalClearance = source->m_LocalClearance;
-    m_LocalSolderMaskMargin  = source->m_LocalSolderMaskMargin;
-    m_LocalSolderPasteMargin = source->m_LocalSolderPasteMargin;
-    m_LocalSolderPasteMarginRatio = source->m_LocalSolderPasteMarginRatio;
-    m_ZoneConnection = source->m_ZoneConnection;
-    m_ThermalWidth = source->m_ThermalWidth;
-    m_ThermalGap = source->m_ThermalGap;
-    m_padRoundRectRadiusScale = source->m_padRoundRectRadiusScale;
-
-    SetSubRatsnest( 0 );
-    SetSubNet( 0 );
 }
 
 
@@ -983,7 +940,7 @@ void D_PAD::ViewGetLayers( int aLayers[], int& aCount ) const
     static const LAYER_ID layers_mech[] = { F_Mask, B_Mask, F_Paste, B_Paste,
         F_Adhes, B_Adhes, F_SilkS, B_SilkS, Dwgs_User, Eco1_User, Eco2_User };
 
-    BOOST_FOREACH( LAYER_ID each_layer, layers_mech )
+    for( LAYER_ID each_layer : layers_mech )
     {
         if( IsOnLayer( each_layer ) )
             aLayers[aCount++] = each_layer;

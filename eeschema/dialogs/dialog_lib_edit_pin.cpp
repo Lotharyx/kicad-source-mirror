@@ -50,8 +50,6 @@ DIALOG_LIB_EDIT_PIN::DIALOG_LIB_EDIT_PIN( EDA_DRAW_FRAME* parent, LIB_PIN* aPin 
     m_textPadName->MoveAfterInTabOrder(m_textPinName);
     m_sdbSizerButtonsOK->SetDefault();
 
-    GetSizer()->SetSizeHints( this );
-
     // On some windows manager (Unity, XFCE), this dialog is
     // not always raised, depending on this dialog is run.
     // Force it to be raised
@@ -67,6 +65,11 @@ DIALOG_LIB_EDIT_PIN::~DIALOG_LIB_EDIT_PIN()
 void DIALOG_LIB_EDIT_PIN::OnInitDialog( wxInitDialogEvent& event )
 {
     m_textPinName->SetFocus();
+
+    FixOSXCancelButtonIssue();
+
+    // Now all widgets have the size fixed, call FinishDialogSettings
+    FinishDialogSettings();
 }
 
 /*
@@ -98,10 +101,12 @@ void DIALOG_LIB_EDIT_PIN::OnPaintShowPanel( wxPaintEvent& event )
     wxPoint offset = -bBox.Centre();
 
     GRResetPenAndBrush( &dc );
-    bool drawpinTexts = true;   // this is a dummy param. We use its reference
-                                // as non null value for m_dummyPin->Draw
+
+    // This is a flag for m_dummyPin->Draw
+    uintptr_t flags = uintptr_t( PIN_DRAW_TEXTS | PIN_DRAW_DANGLING );
+
     m_dummyPin->Draw( NULL, &dc, offset, UNSPECIFIED_COLOR, GR_COPY,
-                      &drawpinTexts, DefaultTransform );
+                      (void*)flags, DefaultTransform );
 
     m_dummyPin->SetParent(NULL);
 

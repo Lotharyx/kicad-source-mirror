@@ -61,7 +61,7 @@ S3D_PLUGIN_MANAGER::S3D_PLUGIN_MANAGER()
 
         while( sM != eM )
         {
-            wxLogTrace( MASK_3D_PLUGINMGR, "   + '%s' [%s]\n", sM->first.ToUTF8(),
+            wxLogTrace( MASK_3D_PLUGINMGR, "   + '%s' [%s]\n", sM->first.GetData(),
                   sM->second->GetKicadPluginName() );
             ++sM;
         }
@@ -82,7 +82,7 @@ S3D_PLUGIN_MANAGER::S3D_PLUGIN_MANAGER()
 
         while( sFF != eFF )
         {
-            wxLogTrace( MASK_3D_PLUGINMGR, " + '%s'\n", (*sFF).ToUTF8() );
+            wxLogTrace( MASK_3D_PLUGINMGR, " + '%s'\n", (*sFF).GetData() );
             ++sFF;
         }
     }
@@ -133,7 +133,8 @@ void S3D_PLUGIN_MANAGER::loadPlugins( void )
     #endif
 
     #ifndef _WIN32  // suppress 'kicad' subdir since it is redundant on MSWin
-    fn.Assign( wxStandardPaths::Get().GetPluginsDir() );
+    fn.Assign( wxStandardPaths::Get().GetPluginsDir(), "" );
+    fn.RemoveLastDir();
     fn.AppendDir( wxT( "kicad" ) );
     #else
         fn.Assign( wxStandardPaths::Get().GetExecutablePath() );
@@ -148,8 +149,13 @@ void S3D_PLUGIN_MANAGER::loadPlugins( void )
     checkPluginPath( wxT( "/opt/kicad/lib/kicad/plugins/3d" ), searchpaths );
 
     // note: GetUserDataDir() gives '.pcbnew' rather than '.kicad' since it uses the exe name;
-    fn.Assign( wxStandardPaths::Get().GetUserDataDir() );
+    fn.Assign( wxStandardPaths::Get().GetUserDataDir(), "" );
+    fn.RemoveLastDir();
+    #ifdef _WIN32
+    fn.AppendDir( wxT( "kicad" ) );
+    #else
     fn.AppendDir( wxT( ".kicad" ) );
+    #endif
     fn.AppendDir( wxT( "plugins" ) );
     fn.AppendDir( wxT( "3d" ) );
     checkPluginPath( fn.GetPathWithSep(), searchpaths );
@@ -285,7 +291,7 @@ void S3D_PLUGIN_MANAGER::listPlugins( const wxString& aPath,
     // Per definition a loadable "xxx.bundle" is similar to an "xxx.app" app
     // bundle being a folder with some special content in it. We obviously don't
     // want to have that here for our loadable module, so just use ".so".
-    nameFilter.Append( wxT( ".so" ) );
+    nameFilter.Append( ".so" );
 #endif
 
     wxString lp = wd.GetNameWithSep();
@@ -316,7 +322,13 @@ void S3D_PLUGIN_MANAGER::checkPluginName( const wxString& aPath,
     if( aPath.empty() || !wxFileName::FileExists( aPath ) )
         return;
 
-    wxFileName path( aPath );
+    wxFileName path;
+
+    if( aPath.StartsWith( "${" ) || aPath.StartsWith( "$(" ) )
+        path.Assign( ExpandEnvVarSubstitutions( aPath ) );
+    else
+        path.Assign( aPath );
+
     path.Normalize();
 
     // determine if the path is already in the list
@@ -336,7 +348,7 @@ void S3D_PLUGIN_MANAGER::checkPluginName( const wxString& aPath,
 
     #ifdef DEBUG
     wxLogTrace( MASK_3D_PLUGINMGR, " * [INFO] found 3D plugin '%s'\n",
-        wxpath.ToUTF8() );
+        wxpath.GetData() );
     #endif
 
     return;
@@ -352,10 +364,16 @@ void S3D_PLUGIN_MANAGER::checkPluginPath( const wxString& aPath,
 
     #ifdef DEBUG
     wxLogTrace( MASK_3D_PLUGINMGR, " * [INFO] checking for 3D plugins in '%s'\n",
-        aPath.ToUTF8() );
+        aPath.GetData() );
     #endif
 
-    wxFileName path( wxFileName::DirName( aPath ) );
+    wxFileName path;
+
+    if( aPath.StartsWith( "${" ) || aPath.StartsWith( "$(" ) )
+        path.Assign( ExpandEnvVarSubstitutions( aPath ), "" );
+    else
+        path.Assign( aPath, "" );
+
     path.Normalize();
 
     if( !wxFileName::DirExists( path.GetFullPath() ) )

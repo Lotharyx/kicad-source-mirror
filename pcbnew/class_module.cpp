@@ -42,7 +42,6 @@
 #include <richio.h>
 #include <filter_reader.h>
 #include <macros.h>
-#include <3d_struct.h>
 #include <msgpanel.h>
 
 #include <class_board.h>
@@ -51,7 +50,7 @@
 
 
 MODULE::MODULE( BOARD* parent ) :
-    BOARD_ITEM( (BOARD_ITEM*) parent, PCB_MODULE_T ),
+    BOARD_ITEM_CONTAINER( (BOARD_ITEM*) parent, PCB_MODULE_T ),
     m_initial_comments( 0 )
 {
     m_Attributs    = MOD_DEFAULT;
@@ -75,17 +74,15 @@ MODULE::MODULE( BOARD* parent ) :
     m_Reference = new TEXTE_MODULE( this, TEXTE_MODULE::TEXT_is_REFERENCE );
     m_Value = new TEXTE_MODULE( this, TEXTE_MODULE::TEXT_is_VALUE );
 
-    // Reserve one void 3D entry, to avoid problems with void list
-    m_3D_Drawings.PushBack( new S3D_MASTER( this ) );
+    m_3D_Drawings.clear();
 }
 
 
 MODULE::MODULE( const MODULE& aModule ) :
-    BOARD_ITEM( aModule )
+    BOARD_ITEM_CONTAINER( aModule )
 {
     m_Pos = aModule.m_Pos;
     m_fpid = aModule.m_fpid;
-    m_Layer  = aModule.m_Layer;
     m_Attributs = aModule.m_Attributs;
     m_ModuleStatus = aModule.m_ModuleStatus;
     m_Orient = aModule.m_Orient;
@@ -107,53 +104,33 @@ MODULE::MODULE( const MODULE& aModule ) :
     // Copy reference and value.
     m_Reference = new TEXTE_MODULE( *aModule.m_Reference );
     m_Reference->SetParent( this );
-
     m_Value = new TEXTE_MODULE( *aModule.m_Value );
     m_Value->SetParent( this );
 
     // Copy auxiliary data: Pads
     for( D_PAD* pad = aModule.m_Pads;  pad;  pad = pad->Next() )
     {
-        D_PAD* newpad = new D_PAD( *pad );
-        assert( newpad->GetNet() == pad->GetNet() );
-        newpad->SetParent( this );
-        m_Pads.PushBack( newpad );
+        Add( new D_PAD( *pad ) );
     }
 
     // Copy auxiliary data: Drawings
     for( BOARD_ITEM* item = aModule.m_Drawings;  item;  item = item->Next() )
     {
-        BOARD_ITEM* newItem;
-
         switch( item->Type() )
         {
         case PCB_MODULE_TEXT_T:
         case PCB_MODULE_EDGE_T:
-            newItem = static_cast<BOARD_ITEM*>( item->Clone() );
-            newItem->SetParent( this );
-            m_Drawings.PushBack( newItem );
+            Add( static_cast<BOARD_ITEM*>( item->Clone() ) );
             break;
 
         default:
-            wxLogMessage( wxT( "MODULE::Copy() Internal Err:  unknown type" ) );
+            wxLogMessage( wxT( "Class MODULE copy constructor internal error: unknown type" ) );
             break;
         }
     }
 
     // Copy auxiliary data: 3D_Drawings info
-    for( S3D_MASTER* item = aModule.m_3D_Drawings;  item;  item = item->Next() )
-    {
-        if( item->GetShape3DName().IsEmpty() )           // do not copy empty shapes.
-            continue;
-
-        S3D_MASTER* t3d = new S3D_MASTER( this );
-        t3d->Copy( item );
-        m_3D_Drawings.PushBack( t3d );
-    }
-
-    // Ensure there is at least one item in m_3D_Drawings.
-    if( m_3D_Drawings.GetCount() == 0 )
-        m_3D_Drawings.PushBack( new S3D_MASTER( this ) ); // push a void item
+    m_3D_Drawings = aModule.m_3D_Drawings;
 
     m_Doc     = aModule.m_Doc;
     m_KeyWord = aModule.m_KeyWord;
@@ -175,13 +152,76 @@ MODULE::~MODULE()
     delete m_initial_comments;
 }
 
-    /**
-     * Function ClearAllNets
-     * Clear (i.e. force the ORPHANED dummy net info) the net info which
-     * depends on a given board for all pads of the footprint.
-     * This is needed when a footprint is copied between the fp editor and
-     * the board editor for instance, because net info become fully broken
-     */
+
+MODULE& MODULE::operator=( const MODULE& aOther )
+{
+    BOARD_ITEM::operator=( aOther );
+
+    m_Pos           = aOther.m_Pos;
+    m_fpid          = aOther.m_fpid;
+    m_Attributs     = aOther.m_Attributs;
+    m_ModuleStatus  = aOther.m_ModuleStatus;
+    m_Orient        = aOther.m_Orient;
+    m_BoundaryBox   = aOther.m_BoundaryBox;
+    m_CntRot90      = aOther.m_CntRot90;
+    m_CntRot180     = aOther.m_CntRot180;
+    m_LastEditTime  = aOther.m_LastEditTime;
+    m_Link          = aOther.m_Link;
+    m_Path          = aOther.m_Path; //is this correct behavior?
+
+    m_LocalClearance                = aOther.m_LocalClearance;
+    m_LocalSolderMaskMargin         = aOther.m_LocalSolderMaskMargin;
+    m_LocalSolderPasteMargin        = aOther.m_LocalSolderPasteMargin;
+    m_LocalSolderPasteMarginRatio   = aOther.m_LocalSolderPasteMarginRatio;
+    m_ZoneConnection                = aOther.m_ZoneConnection;
+    m_ThermalWidth                  = aOther.m_ThermalWidth;
+    m_ThermalGap                    = aOther.m_ThermalGap;
+
+    // Copy reference and value
+    *m_Reference = *aOther.m_Reference;
+    m_Reference->SetParent( this );
+    *m_Value = *aOther.m_Value;
+    m_Value->SetParent( this );
+
+    // Copy auxiliary data: Pads
+    m_Pads.DeleteAll();
+
+    for( D_PAD* pad = aOther.m_Pads;  pad;  pad = pad->Next() )
+    {
+        Add( new D_PAD( *pad ) );
+    }
+
+    // Copy auxiliary data: Drawings
+    m_Drawings.DeleteAll();
+
+    for( BOARD_ITEM* item = aOther.m_Drawings;  item;  item = item->Next() )
+    {
+        switch( item->Type() )
+        {
+        case PCB_MODULE_TEXT_T:
+        case PCB_MODULE_EDGE_T:
+            Add( static_cast<BOARD_ITEM*>( item->Clone() ) );
+            break;
+
+        default:
+            wxLogMessage( wxT( "MODULE::operator=() internal error: unknown type" ) );
+            break;
+        }
+    }
+
+    // Copy auxiliary data: 3D_Drawings info
+    m_3D_Drawings.clear();
+    m_3D_Drawings = aOther.m_3D_Drawings;
+    m_Doc         = aOther.m_Doc;
+    m_KeyWord     = aOther.m_KeyWord;
+
+    // Ensure auxiliary data is up to date
+    CalculateBoundingBox();
+
+    return *this;
+}
+
+
 void MODULE::ClearAllNets()
 {
     // Force the ORPHANED dummy net info for all pads.
@@ -191,10 +231,6 @@ void MODULE::ClearAllNets()
 }
 
 
-/* Draw the anchor cross (vertical)
- * Must be done after the pads, because drawing the hole will erase overwrite
- * every thing already drawn.
- */
 void MODULE::DrawAncre( EDA_DRAW_PANEL* panel, wxDC* DC, const wxPoint& offset,
                         int dim_ancre, GR_DRAWMODE draw_mode )
 {
@@ -209,108 +245,7 @@ void MODULE::DrawAncre( EDA_DRAW_PANEL* panel, wxDC* DC, const wxPoint& offset,
 }
 
 
-void MODULE::Copy( MODULE* aModule )
-{
-    m_Pos           = aModule->m_Pos;
-    m_Layer         = aModule->m_Layer;
-    m_fpid          = aModule->m_fpid;
-    m_Attributs     = aModule->m_Attributs;
-    m_ModuleStatus  = aModule->m_ModuleStatus;
-    m_Orient        = aModule->m_Orient;
-    m_BoundaryBox   = aModule->m_BoundaryBox;
-    m_CntRot90      = aModule->m_CntRot90;
-    m_CntRot180     = aModule->m_CntRot180;
-    m_LastEditTime  = aModule->m_LastEditTime;
-    m_Link          = aModule->m_Link;
-    m_Path          = aModule->m_Path; //is this correct behavior?
-    SetTimeStamp( GetNewTimeStamp() );
-
-    m_LocalClearance                = aModule->m_LocalClearance;
-    m_LocalSolderMaskMargin         = aModule->m_LocalSolderMaskMargin;
-    m_LocalSolderPasteMargin        = aModule->m_LocalSolderPasteMargin;
-    m_LocalSolderPasteMarginRatio   = aModule->m_LocalSolderPasteMarginRatio;
-    m_ZoneConnection                = aModule->m_ZoneConnection;
-    m_ThermalWidth                  = aModule->m_ThermalWidth;
-    m_ThermalGap                    = aModule->m_ThermalGap;
-
-    // Copy reference and value.
-    m_Reference->Copy( aModule->m_Reference );
-    m_Value->Copy( aModule->m_Value );
-
-    // Copy auxiliary data: Pads
-    m_Pads.DeleteAll();
-
-    for( D_PAD* pad = aModule->m_Pads;  pad;  pad = pad->Next() )
-    {
-        D_PAD* newpad = new D_PAD( this );
-        newpad->Copy( pad );
-        m_Pads.PushBack( newpad );
-    }
-
-    // Copy auxiliary data: Drawings
-    m_Drawings.DeleteAll();
-
-    for( BOARD_ITEM* item = aModule->m_Drawings;  item;  item = item->Next() )
-    {
-        switch( item->Type() )
-        {
-        case PCB_MODULE_TEXT_T:
-        {
-            TEXTE_MODULE* textm = new TEXTE_MODULE( this );
-            textm->Copy( static_cast<TEXTE_MODULE*>( item ) );
-            m_Drawings.PushBack( textm );
-            break;
-        }
-
-        case PCB_MODULE_EDGE_T:
-        {
-            EDGE_MODULE * edge;
-            edge = new EDGE_MODULE( this );
-            edge->Copy( (EDGE_MODULE*) item );
-            m_Drawings.PushBack( edge );
-            break;
-        }
-
-        default:
-            wxLogMessage( wxT( "MODULE::Copy() Internal Err:  unknown type" ) );
-            break;
-        }
-    }
-
-    // Copy auxiliary data: 3D_Drawings info
-    m_3D_Drawings.DeleteAll();
-
-    // Ensure there is one (or more) item in m_3D_Drawings
-    m_3D_Drawings.PushBack( new S3D_MASTER( this ) ); // push a void item
-
-    for( S3D_MASTER* item = aModule->m_3D_Drawings;  item;  item = item->Next() )
-    {
-        if( item->GetShape3DName().IsEmpty() )           // do not copy empty shapes.
-            continue;
-
-        S3D_MASTER* t3d = m_3D_Drawings;
-
-        if( t3d && t3d->GetShape3DName().IsEmpty() )    // The first entry can
-        {                                               // exist, but is empty : use it.
-            t3d->Copy( item );
-        }
-        else
-        {
-            t3d = new S3D_MASTER( this );
-            t3d->Copy( item );
-            m_3D_Drawings.PushBack( t3d );
-        }
-    }
-
-    m_Doc     = aModule->m_Doc;
-    m_KeyWord = aModule->m_KeyWord;
-
-    // Ensure auxiliary data is up to date
-    CalculateBoundingBox();
-}
-
-
-void MODULE::Add( BOARD_ITEM* aBoardItem, bool doAppend )
+void MODULE::Add( BOARD_ITEM* aBoardItem, ADD_MODE aMode )
 {
     switch( aBoardItem->Type() )
     {
@@ -321,14 +256,14 @@ void MODULE::Add( BOARD_ITEM* aBoardItem, bool doAppend )
         // no break
 
     case PCB_MODULE_EDGE_T:
-        if( doAppend )
+        if( aMode == ADD_APPEND )
             m_Drawings.PushBack( aBoardItem );
         else
             m_Drawings.PushFront( aBoardItem );
         break;
 
     case PCB_PAD_T:
-        if( doAppend )
+        if( aMode == ADD_APPEND )
             m_Pads.PushBack( static_cast<D_PAD*>( aBoardItem ) );
         else
             m_Pads.PushFront( static_cast<D_PAD*>( aBoardItem ) );
@@ -346,10 +281,32 @@ void MODULE::Add( BOARD_ITEM* aBoardItem, bool doAppend )
     }
 
     aBoardItem->SetParent( this );
+    SetLastEditTime();
+
+    // Update relative coordinates, it can be done only after there is a parent object assigned
+    switch( aBoardItem->Type() )
+    {
+    case PCB_MODULE_TEXT_T:
+        static_cast<TEXTE_MODULE*>( aBoardItem )->SetLocalCoord();
+        break;
+
+    case PCB_MODULE_EDGE_T:
+        static_cast<EDGE_MODULE*>( aBoardItem )->SetLocalCoord();
+        break;
+
+    case PCB_PAD_T:
+        static_cast<D_PAD*>( aBoardItem )->SetLocalCoord();
+        break;
+
+    default:
+        // Huh? It should have been filtered out by the previous switch
+        assert(false);
+        break;
+    }
 }
 
 
-BOARD_ITEM* MODULE::Remove( BOARD_ITEM* aBoardItem )
+void MODULE::Remove( BOARD_ITEM* aBoardItem )
 {
     switch( aBoardItem->Type() )
     {
@@ -360,10 +317,12 @@ BOARD_ITEM* MODULE::Remove( BOARD_ITEM* aBoardItem )
         // no break
 
     case PCB_MODULE_EDGE_T:
-        return m_Drawings.Remove( aBoardItem );
+        m_Drawings.Remove( aBoardItem );
+        break;
 
     case PCB_PAD_T:
-        return m_Pads.Remove( static_cast<D_PAD*>( aBoardItem ) );
+        m_Pads.Remove( static_cast<D_PAD*>( aBoardItem ) );
+        break;
 
     default:
     {
@@ -373,8 +332,6 @@ BOARD_ITEM* MODULE::Remove( BOARD_ITEM* aBoardItem )
         wxFAIL_MSG( msg );
     }
     }
-
-    return NULL;
 }
 
 
@@ -552,9 +509,6 @@ const EDA_RECT MODULE::GetBoundingBox() const
 }
 
 
-/* Virtual function, from EDA_ITEM.
- * display module info on MsgPanel
- */
 void MODULE::GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList )
 {
     int      nbpad;
@@ -628,16 +582,12 @@ void MODULE::GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList )
     aList.push_back( MSG_PANEL_ITEM( _( "Attributes" ), msg, BROWN ) );
     aList.push_back( MSG_PANEL_ITEM( _( "Footprint" ), FROM_UTF8( m_fpid.Format().c_str() ), BLUE ) );
 
-    msg = _( "No 3D shape" );
+    if( m_3D_Drawings.empty() )
+        msg = _( "No 3D shape" );
+    else
+        msg = m_3D_Drawings.front().m_Filename;
+
     // Search the first active 3D shape in list
-    for( S3D_MASTER* struct3D = m_3D_Drawings; struct3D; struct3D = struct3D->Next() )
-    {
-        if( !struct3D->GetShape3DName().IsEmpty() )
-        {
-            msg = struct3D->GetShape3DName();
-            break;
-        }
-    }
 
     aList.push_back( MSG_PANEL_ITEM( _( "3D-Shape" ), msg, RED ) );
 
@@ -753,16 +703,20 @@ unsigned MODULE::GetUniquePadCount( INCLUDE_NPTH_T aIncludeNPTH ) const
 }
 
 
-void MODULE::Add3DModel( S3D_MASTER* a3DModel )
+void MODULE::Add3DModel( S3D_INFO* a3DModel )
 {
-    a3DModel->SetParent( this );
-    m_3D_Drawings.PushBack( a3DModel );
+    if( NULL == a3DModel )
+        return;
+
+    if( !a3DModel->m_Filename.empty() )
+        m_3D_Drawings.push_back( *a3DModel );
+
+    delete a3DModel;
 }
 
 
 // see class_module.h
-SEARCH_RESULT MODULE::Visit( INSPECTOR* inspector, const void* testData,
-                             const KICAD_T scanTypes[] )
+SEARCH_RESULT MODULE::Visit( INSPECTOR inspector, void* testData, const KICAD_T scanTypes[] )
 {
     KICAD_T        stype;
     SEARCH_RESULT  result = SEARCH_CONTINUE;
@@ -780,7 +734,7 @@ SEARCH_RESULT MODULE::Visit( INSPECTOR* inspector, const void* testData,
         switch( stype )
         {
         case PCB_MODULE_T:
-            result = inspector->Inspect( this, testData );  // inspect me
+            result = inspector( this, testData );  // inspect me
             ++p;
             break;
 
@@ -790,12 +744,12 @@ SEARCH_RESULT MODULE::Visit( INSPECTOR* inspector, const void* testData,
             break;
 
         case PCB_MODULE_TEXT_T:
-            result = inspector->Inspect( m_Reference, testData );
+            result = inspector( m_Reference, testData );
 
             if( result == SEARCH_QUIT )
                 break;
 
-            result = inspector->Inspect( m_Value, testData );
+            result = inspector( m_Value, testData );
 
             if( result == SEARCH_QUIT )
                 break;
@@ -853,7 +807,7 @@ EDA_ITEM* MODULE::Clone() const
 }
 
 
-void MODULE::RunOnChildren( boost::function<void (BOARD_ITEM*)> aFunction )
+void MODULE::RunOnChildren( std::function<void (BOARD_ITEM*)> aFunction )
 {
     try
     {
@@ -866,7 +820,7 @@ void MODULE::RunOnChildren( boost::function<void (BOARD_ITEM*)> aFunction )
         aFunction( static_cast<BOARD_ITEM*>( m_Reference ) );
         aFunction( static_cast<BOARD_ITEM*>( m_Value ) );
     }
-    catch( boost::bad_function_call& e )
+    catch( std::bad_function_call& e )
     {
         DisplayError( NULL, wxT( "Error running MODULE::RunOnChildren" ) );
     }
@@ -919,9 +873,14 @@ void MODULE::ViewGetLayers( int aLayers[], int& aCount ) const
 
 unsigned int MODULE::ViewGetLOD( int aLayer ) const
 {
-    // Currently there is only one layer, so there is nothing to check
-//    if( aLayer == ITEM_GAL_LAYER( ANCHOR_VISIBLE ) )
+    int layer = ( m_Layer == F_Cu ) ? MOD_FR_VISIBLE :
+                ( m_Layer == B_Cu ) ? MOD_BK_VISIBLE : ANCHOR_VISIBLE;
+
+    // Currently it is only for anchor layer
+    if( m_view->IsLayerVisible( ITEM_GAL_LAYER( layer ) ) )
         return 30;
+
+    return std::numeric_limits<unsigned int>::max();
 }
 
 
@@ -933,11 +892,6 @@ const BOX2I MODULE::ViewBBox() const
 }
 
 
-/* Test for validity of the name in a library of the footprint
- * ( no spaces, dir separators ... )
- * return true if the given name is valid
- * static function
- */
 bool MODULE::IsLibNameValid( const wxString & aName )
 {
     const wxChar * invalids = StringLibNameInvalidChars( false );
@@ -949,13 +903,6 @@ bool MODULE::IsLibNameValid( const wxString & aName )
 }
 
 
-/* Test for validity of the name of a footprint to be used in a footprint library
- * ( no spaces, dir separators ... )
- * param bool aUserReadable = false to get the list of invalid chars
- *        true to get a readable form (i.e ' ' = 'space' '\t'= 'tab')
- * return a constant string giving the list of invalid chars in lib name
- * static function
- */
 const wxChar* MODULE::StringLibNameInvalidChars( bool aUserReadable )
 {
     static const wxChar invalidChars[] = wxT("%$\t \"\\/");
@@ -1163,18 +1110,22 @@ void MODULE::SetOrientation( double newangle )
     CalculateBoundingBox();
 }
 
-BOARD_ITEM* MODULE::DuplicateAndAddItem( const BOARD_ITEM* aItem,
-                                         bool aIncrementPadNumbers )
+BOARD_ITEM* MODULE::Duplicate( const BOARD_ITEM* aItem,
+                               bool aIncrementPadNumbers,
+                               bool aAddToModule )
 {
     BOARD_ITEM* new_item = NULL;
+    D_PAD* new_pad = NULL;
 
     switch( aItem->Type() )
     {
     case PCB_PAD_T:
     {
-        D_PAD* new_pad = new D_PAD( *static_cast<const D_PAD*>( aItem ) );
+        new_pad = new D_PAD( *static_cast<const D_PAD*>( aItem ) );
 
-        Pads().PushBack( new_pad );
+        if( aAddToModule )
+            Pads().PushBack( new_pad );
+
         new_item = new_pad;
         break;
     }
@@ -1189,7 +1140,9 @@ BOARD_ITEM* MODULE::DuplicateAndAddItem( const BOARD_ITEM* aItem,
         {
             TEXTE_MODULE* new_text = new TEXTE_MODULE( *old_text );
 
-            GraphicalItems().PushBack( new_text );
+            if( aAddToModule )
+                GraphicalItems().PushBack( new_text );
+
             new_item = new_text;
         }
         break;
@@ -1200,7 +1153,9 @@ BOARD_ITEM* MODULE::DuplicateAndAddItem( const BOARD_ITEM* aItem,
         EDGE_MODULE* new_edge = new EDGE_MODULE(
                 *static_cast<const EDGE_MODULE*>(aItem) );
 
-        GraphicalItems().PushBack( new_edge );
+        if( aAddToModule )
+            GraphicalItems().PushBack( new_edge );
+
         new_item = new_edge;
         break;
     }
@@ -1216,9 +1171,9 @@ BOARD_ITEM* MODULE::DuplicateAndAddItem( const BOARD_ITEM* aItem,
         break;
     }
 
-    if( aIncrementPadNumbers && new_item )
+    if( aIncrementPadNumbers && new_pad )
     {
-        new_item->IncrementItemReference();
+        new_pad->IncrementPadName( true, true );
     }
 
     return new_item;
@@ -1261,35 +1216,6 @@ wxString MODULE::GetReferencePrefix() const
     prefix = prefix.Mid( 0, strIndex );
 
     return prefix;
-}
-
-
-bool MODULE::IncrementItemReference()
-{
-    // Take the next available module number
-    return IncrementReference( true );
-}
-
-
-bool MODULE::IncrementReference( bool aFillSequenceGaps )
-{
-    BOARD* board = GetBoard();
-
-    if( !board )
-        return false;
-
-    bool success = false;
-    const wxString prefix = GetReferencePrefix();
-    const wxString newReference = board->GetNextModuleReferenceWithPrefix(
-            prefix, aFillSequenceGaps );
-
-    if( !newReference.IsEmpty() )
-    {
-        SetReference( newReference );
-        success = true;
-    }
-
-    return success;
 }
 
 
