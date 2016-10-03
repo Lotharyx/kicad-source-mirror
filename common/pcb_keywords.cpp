@@ -45,6 +45,8 @@ const KEYWORD PCB_LEXER::keywords[] = {
     TOKDEF( date ),
     TOKDEF( descr ),
     TOKDEF( die_length ),
+    TOKDEF( diff_pair_gap ),
+    TOKDEF( diff_pair_width ),
     TOKDEF( dimension ),
     TOKDEF( drawings ),
     TOKDEF( drill ),

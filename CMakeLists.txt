@@ -88,12 +88,10 @@ if ( KICAD_SCRIPTING_MODULES AND NOT KICAD_SCRIPTING )
 endif()
 
 option( BUILD_GITHUB_PLUGIN "Build the GITHUB_PLUGIN for pcbnew." ON )
-<<<<<<< HEAD
+
 option( BUILD_MYODBC_PLUGIN "Build the MYODBC_PLUGIN for pcbnew." ON )
-=======
 
 option( KICAD_SPICE "Build Kicad with internal Spice simulator." OFF )
->>>>>>> upstream/master
 
 # This can be set to a custom name to brag about a particular branch in the "About" dialog:
 set( KICAD_REPO_NAME "unknown" CACHE STRING "Name of the tree from which this build came." )

@@ -256,7 +256,7 @@ bool ODBC_LIB::Load( wxString& aErrorMsg ) {
                     {
                         // Check for duplicate entry names and warn the user about
                         // the potential conflict.
-                        if( FindEntry( part->GetName() ) != NULL )
+                        if( FindPart( part->GetName() ) != NULL )
                         {
                             wxString msg = duplicate_name_msg;
                             

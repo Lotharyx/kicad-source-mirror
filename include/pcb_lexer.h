@@ -71,6 +71,8 @@ namespace PCB_KEYS_T
         T_date,
         T_descr,
         T_die_length,
+        T_diff_pair_gap,
+        T_diff_pair_width,
         T_dimension,
         T_drawings,
         T_drill,

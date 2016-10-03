@@ -40,6 +40,7 @@ const KEYWORD PCB_PLOT_PARAMS_LEXER::keywords[] = {
     TOKDEF( subtractmaskfromsilk ),
     TOKDEF( true ),
     TOKDEF( useauxorigin ),
+    TOKDEF( usegerberadvancedattributes ),
     TOKDEF( usegerberattributes ),
     TOKDEF( usegerberextensions ),
     TOKDEF( viasonmask )

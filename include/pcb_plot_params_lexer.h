@@ -66,6 +66,7 @@ namespace PCBPLOTPARAMS_T
         T_subtractmaskfromsilk,
         T_true,
         T_useauxorigin,
+        T_usegerberadvancedattributes,
         T_usegerberattributes,
         T_usegerberextensions,
         T_viasonmask

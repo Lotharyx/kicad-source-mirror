@@ -711,8 +711,7 @@ bool PART_LIB::SaveHeader( OUTPUTFORMATTER& aFormatter )
 
 PART_LIB* PART_LIB::LoadLibrary( const wxString& aFileName ) throw( IO_ERROR, boost::bad_pointer )
 {
-<<<<<<< HEAD
-    std::auto_ptr<PART_LIB> lib( 0 );
+    std::unique_ptr<PART_LIB> lib( nullptr );
     { // Scope for the FILE_LINE_READER about to be used
         // Read the first line of the file to see what kind of library it is
         // because the library manager doesn't remember the extensions (so we can't
@@ -728,11 +727,6 @@ PART_LIB* PART_LIB::LoadLibrary( const wxString& aFileName ) throw( IO_ERROR, bo
             lib.reset( new PART_LIB( LIBRARY_TYPE_EESCHEMA, aFileName ) );
     }
     wxBusyCursor ShowWait;
-=======
-    std::unique_ptr<PART_LIB> lib( new PART_LIB( LIBRARY_TYPE_EESCHEMA, aFileName ) );
-
-    wxBusyCursor ShowWait;  // Do we want UI elements in PART_LIB?
->>>>>>> upstream/master
 
     wxString errorMsg;
 

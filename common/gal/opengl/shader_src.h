@@ -7,7 +7,7 @@ const unsigned int shaders_number = 2;
 const char* shaders_src[] = 
 {
 
-// /home/brian/git/kicad-source-mirror/common/gal/opengl/shader.vert
+// /vault/home/brian/git/kicad-source-mirror/common/gal/opengl/shader.vert
 "#version 120\n"
 "const float SHADER_LINE=1.0;\n"
 "const float SHADER_FILLED_CIRCLE=2.0;\n"
@@ -59,8 +59,11 @@ const char* shaders_src[] =
 "gl_FrontColor=gl_Color;\n"
 "}\n"
 ,
-// /home/brian/git/kicad-source-mirror/common/gal/opengl/shader.frag
+// /vault/home/brian/git/kicad-source-mirror/common/gal/opengl/shader.frag
 "#version 120\n"
+"const int FONT_TEXTURE_WIDTH=1024;\n"
+"const int FONT_TEXTURE_HEIGHT=1024;\n"
+"#define USE_MSDF\n"
 "const float SHADER_LINE=1.0;\n"
 "const float SHADER_FILLED_CIRCLE=2.0;\n"
 "const float SHADER_STROKED_CIRCLE=3.0;\n"
@@ -86,6 +89,12 @@ const char* shaders_src[] =
 "else\n"
 "discard;\n"
 "}\n"
+"#ifdef USE_MSDF\n"
+"float median(vec3 v)\n"
+"{\n"
+"return max(min(v.r,v.g),min(max(v.r,v.g),v.b));\n"
+"}\n"
+"#endif\n"
 "void main()\n"
 "{\n"
 "if(shaderParams[0]==SHADER_FILLED_CIRCLE)\n"
@@ -98,11 +107,15 @@ const char* shaders_src[] =
 "}\n"
 "else if(shaderParams[0]==SHADER_FONT)\n"
 "{\n"
-"vec4 texel=texture2D(fontTexture,vec2(shaderParams[1],shaderParams[2]));\n"
-"if(texel.r<0.01)\n"
-"discard;\n"
-"else\n"
-"gl_FragColor=vec4(gl_Color.r,gl_Color.g,gl_Color.b,texel.r);\n"
+"vec2 tex=shaderParams.yz;\n"
+"float derivative=length(dFdx(tex))*FONT_TEXTURE_WIDTH/8;\n"
+"#ifdef USE_MSDF\n"
+"float dist=median(texture2D(fontTexture,tex).rgb);\n"
+"#else\n"
+"float dist=texture2D(fontTexture,tex).r;\n"
+"#endif\n"
+"float alpha=smoothstep(0.5 - derivative,0.5+derivative,dist);\n"
+"gl_FragColor=vec4(gl_Color.rgb,alpha);\n"
 "}\n"
 "else\n"
 "{\n"
