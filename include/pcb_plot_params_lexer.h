@@ -77,7 +77,7 @@ namespace PCBPLOTPARAMS_T
  * Class PCB_PLOT_PARAMS_LEXER
  * is an automatically generated class using the TokenList2DnsLexer.cmake
  * technology, based on keywords provided by file:
- *    /home/brian/git/kicad-source-mirror/common/pcb_plot_params.keywords
+ *    /vault/home/brian/git/kicad-source-mirror/common/pcb_plot_params.keywords
  */
 class PCB_PLOT_PARAMS_LEXER : public DSNLEXER
 {

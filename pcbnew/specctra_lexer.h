@@ -435,7 +435,7 @@ namespace DSN
  * Class SPECCTRA_LEXER
  * is an automatically generated class using the TokenList2DnsLexer.cmake
  * technology, based on keywords provided by file:
- *    /home/brian/git/kicad-source-mirror/pcbnew/specctra.keywords
+ *    /vault/home/brian/git/kicad-source-mirror/pcbnew/specctra.keywords
  */
 class SPECCTRA_LEXER : public DSNLEXER
 {

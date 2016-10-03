@@ -54,7 +54,7 @@ namespace FP_LIB_TABLE_T
  * Class FP_LIB_TABLE_LEXER
  * is an automatically generated class using the TokenList2DnsLexer.cmake
  * technology, based on keywords provided by file:
- *    /home/brian/git/kicad-source-mirror/common/fp_lib_table.keywords
+ *    /vault/home/brian/git/kicad-source-mirror/common/fp_lib_table.keywords
  */
 class FP_LIB_TABLE_LEXER : public DSNLEXER
 {

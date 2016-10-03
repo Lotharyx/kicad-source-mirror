@@ -52,7 +52,7 @@ namespace TFIELD_T
  * Class TEMPLATE_FIELDNAMES_LEXER
  * is an automatically generated class using the TokenList2DnsLexer.cmake
  * technology, based on keywords provided by file:
- *    /home/brian/git/kicad-source-mirror/eeschema/template_fieldnames.keywords
+ *    /vault/home/brian/git/kicad-source-mirror/eeschema/template_fieldnames.keywords
  */
 class TEMPLATE_FIELDNAMES_LEXER : public DSNLEXER
 {

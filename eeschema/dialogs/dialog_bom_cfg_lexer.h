@@ -51,7 +51,7 @@ namespace T_BOMCFG_T
  * Class DIALOG_BOM_CFG_LEXER
  * is an automatically generated class using the TokenList2DnsLexer.cmake
  * technology, based on keywords provided by file:
- *    /home/brian/git/kicad-source-mirror/eeschema/dialogs/dialog_bom_cfg.keywords
+ *    /vault/home/brian/git/kicad-source-mirror/eeschema/dialogs/dialog_bom_cfg.keywords
  */
 class DIALOG_BOM_CFG_LEXER : public DSNLEXER
 {

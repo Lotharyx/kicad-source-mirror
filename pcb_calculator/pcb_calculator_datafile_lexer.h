@@ -52,7 +52,7 @@ namespace PCBCALC_DATA_T
  * Class PCB_CALCULATOR_DATAFILE_LEXER
  * is an automatically generated class using the TokenList2DnsLexer.cmake
  * technology, based on keywords provided by file:
- *    /home/brian/git/kicad-source-mirror/pcb_calculator/pcb_calculator_datafile.keywords
+ *    /vault/home/brian/git/kicad-source-mirror/pcb_calculator/pcb_calculator_datafile.keywords
  */
 class PCB_CALCULATOR_DATAFILE_LEXER : public DSNLEXER
 {
