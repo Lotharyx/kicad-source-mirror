@@ -432,6 +432,14 @@ bool LIB_EDIT_FRAME::SaveActiveLibrary( bool newFile )
             return false;
         }
     }
+    catch( IO_ERROR ioe )
+    {
+        docFileName.MakeAbsolute();
+        msg.Printf( _( "Failed to create component document library file <%s>\n\nError: %s" ),
+                    GetChars( docFileName.GetFullPath() ), ioe.What() );
+        DisplayError( this, msg );
+        return false;
+    }
     catch( ... /* IO_ERROR ioe */ )
     {
         docFileName.MakeAbsolute();

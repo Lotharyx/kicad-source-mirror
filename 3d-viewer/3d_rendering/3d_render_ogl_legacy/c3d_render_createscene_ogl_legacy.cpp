@@ -27,6 +27,12 @@
  * @brief
  */
 
+#define GLM_FORCE_RADIANS
+#include <glm/glm.hpp>
+#include <glm/ext.hpp>
+
+
+
 #include "c3d_render_ogl_legacy.h"
 #include "ogl_legacy_utils.h"
 #include <class_board.h>

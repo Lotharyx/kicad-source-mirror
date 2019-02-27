@@ -110,6 +110,10 @@ set( CMAKE_POSITION_INDEPENDENT_CODE ON )
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Global setting: __GXX_ABI_VERSION=1002, GLM_ENABLE_EXPERIMENTAL
+add_definitions(-D__GXX_ABI_VERSION=1002 -DGLM_ENABLE_EXPERIMENTAL)
+
+
 
 # CMP0063: CMake < 3.3 does not handle hidden visibility for static libraries,
 # and 3.3 is backwards compatible when the minimum version is smaller than 3.3.
