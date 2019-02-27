@@ -1,25 +1,32 @@
+# .cpp files are compiled with extra ${WSHADOW_FLAGS}
+if( COMPILER_SUPPORTS_WSHADOW )
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${WSHADOW_FLAGS}")
+endif()
+
 add_definitions( -DKICAD )
 
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
+    ../pcbnew
+    ../eeschema
     ${INC_AFTER}
     )
 
 
 set( KICAD_SRCS
-    class_treeprojectfiles.cpp
-    class_treeproject_item.cpp
     commandframe.cpp
     dialogs/dialog_template_selector_base.cpp
     dialogs/dialog_template_selector.cpp
     files-io.cpp
+    import_project.cpp
     kicad.cpp
     mainframe.cpp
     menubar.cpp
-    preferences.cpp
     prjconfig.cpp
     project_template.cpp
     tree_project_frame.cpp
+    treeprojectfiles.cpp
+    treeproject_item.cpp
     )
 
 if( MINGW )
@@ -64,15 +71,12 @@ if( APPLE )
         )
     target_link_libraries( kicad
         common
-        bitmaps
-        polygon
         ${wxWidgets_LIBRARIES}
         )
 else()
     target_link_libraries( kicad
         common
-        bitmaps
-        polygon
+        gal
         ${wxWidgets_LIBRARIES}
         ${GDI_PLUS_LIBRARIES}
         )

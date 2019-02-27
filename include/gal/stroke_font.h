@@ -30,6 +30,8 @@
 #define STROKE_FONT_H_
 
 #include <deque>
+#include <algorithm>
+
 #include <utf8.h>
 
 #include <eda_text.h>
@@ -70,7 +72,7 @@ public:
      *
      * @param aText is the text to be drawn.
      * @param aPosition is the text position in world coordinates.
-     * @param aRotationAngle is the text rotation angle.
+     * @param aRotationAngle is the text rotation angle in radians.
      */
     void Draw( const UTF8& aText, const VECTOR2D& aPosition, double aRotationAngle );
 
@@ -85,38 +87,29 @@ public:
     }
 
     /**
-     * Compute the boundary limits of aText (the bbox of all shapes).
-     * The overbar is not taken in account, by ~ are skipped.
-     * @return a VECTOR2D giving the h size of line, and the V glyph size
-     * and ( if aTopLimit or aBottomLimit not NULL ) the top and bottom
-     * limits of the text.
-     */
-    VECTOR2D ComputeStringBoundaryLimits( const UTF8& aText, VECTOR2D aGlyphSize,
-                                          double aGlyphThickness,
-                                          double* aTopLimit = NULL, double* aBottomLimit = NULL ) const;
-
-    /**
-     * @brief Compute the X and Y size of a given text. The text is expected to be
-     * a only one line text.
+     * Compute the boundary limits of aText (the bounding box of all shapes).
+     * The overbar and alignment are not taken in account, '~' characters are skipped.
      *
-     * @param aText is the text string (one line).
-     * @return the text size.
+     * @return a VECTOR2D giving the width and height of text.
      */
-    VECTOR2D ComputeTextLineSize( const UTF8& aText ) const;
+    VECTOR2D ComputeStringBoundaryLimits( const UTF8& aText, const VECTOR2D& aGlyphSize,
+                                          double aGlyphThickness ) const;
 
     /**
      * Compute the vertical position of an overbar, sometimes used in texts.
      * This is the distance between the text base line and the overbar.
+     * @param aGlyphHeight is the height (vertical size) of the text.
+     * @param aGlyphThickness is the thickness of the lines used to draw the text.
      * @return the relative position of the overbar axis.
      */
     double ComputeOverbarVerticalPosition( double aGlyphHeight, double aGlyphThickness ) const;
 
     /**
-     * @brief Compute the X and Y size of a given text. The text is expected to be
-     * a only one line text.
+     * @brief Compute the distance (interline) between 2 lines of text (for multiline texts).
      *
-     * @param aText is the text string (one line).
-     * @return the text size.
+     * @param aGlyphHeight is the height (vertical size) of the text.
+     * @param aGlyphThickness is the thickness of the lines used to draw the text.
+     * @return the interline.
      */
     static double GetInterline( double aGlyphHeight, double aGlyphThickness );
 

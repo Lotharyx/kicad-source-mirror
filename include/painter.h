@@ -31,8 +31,8 @@
 #include <set>
 
 #include <gal/color4d.h>
-#include <colors.h>
 #include <worksheet_shape_builder.h>
+#include <layers_id_colors_and_visibility.h>
 #include <memory>
 
 class EDA_ITEM;
@@ -71,6 +71,7 @@ public:
      * Sets the specified layer as active - it means that it can be drawn in a specific mode
      * (eg. highlighted, so it differs from other layers).
      * @param aLayerId is a layer number that should be displayed in a specific mode.
+     * @param aEnabled is the new layer state ( true = active or false = not active).
      */
     inline void SetActiveLayer( int aLayerId, bool aEnabled = true )
     {
@@ -177,34 +178,75 @@ public:
         return m_worksheetLineWidth;
     }
 
-    /**
-     * Function TranslateColor
-     * Returns the color responding to the one of EDA_COLOR_T enum values.
-     * @param aColor equivalent.
-     */
-    inline const COLOR4D& TranslateColor( EDA_COLOR_T aColor )
+    inline bool GetShowPageLimits() const
     {
-        return m_legacyColorMap[aColor];
+        return m_showPageLimits;
+    }
+
+    inline void SetShowPageLimits( bool aDraw )
+    {
+        m_showPageLimits = aDraw;
     }
 
     /**
      * Function GetBackgroundColor
      * Returns current background color settings.
-     * @return Background color.
      */
-    inline const COLOR4D& GetBackgroundColor() const
+    virtual const COLOR4D& GetBackgroundColor() = 0;
+
+    /**
+     * Sets the background color.
+     */
+    virtual void SetBackgroundColor( const COLOR4D& aColor ) = 0;
+
+    /**
+     * Function GetGridColor
+     * Returns current grid color settings.
+     */
+    virtual const COLOR4D& GetGridColor() = 0;
+
+    /**
+     * Function GetCursorColor
+     * Returns current cursor color settings.
+     */
+    virtual const COLOR4D& GetCursorColor() = 0;
+
+    /**
+     * Function GetLayerColor
+     * Returns the color used to draw a layer.
+     * @param aLayer is the layer number.
+     */
+    inline const COLOR4D& GetLayerColor( int aLayer ) const
     {
-        return m_backgroundColor;
+        return m_layerColors[aLayer];
     }
 
     /**
-     * Function SetBackgroundColor
-     * Sets new color for background.
-     * @param aColor is the new background color.
+     * Function SetLayerColor
+     * Changes the color used to draw a layer.
+     * @param aLayer is the layer number.
+     * @param aColor is the new color.
      */
-    inline void SetBackgroundColor( const COLOR4D& aColor )
+    inline void SetLayerColor( int aLayer, const COLOR4D& aColor )
     {
-        m_backgroundColor = aColor;
+        m_layerColors[aLayer] = aColor;
+
+        update();       // recompute other shades of the color
+    }
+
+    virtual bool IsBackgroundDark() const
+    {
+        return false;
+    }
+
+    /**
+     * Set line width used for drawing outlines.
+     *
+     * @param aWidth is the new width.
+     */
+    void SetOutlineWidth( float aWidth )
+    {
+        m_outlineWidth = aWidth;
     }
 
 protected:
@@ -216,6 +258,18 @@ protected:
     virtual void update();
 
     std::set<unsigned int> m_activeLayers; ///< Stores active layers number
+
+    ///> Colors for all layers (normal)
+    COLOR4D m_layerColors[LAYER_ID_COUNT];
+
+    ///> Colors for all layers (highlighted)
+    COLOR4D m_layerColorsHi[LAYER_ID_COUNT];
+
+    ///> Colors for all layers (selected)
+    COLOR4D m_layerColorsSel[LAYER_ID_COUNT];
+
+    ///> Colors for all layers (darkened)
+    COLOR4D m_layerColorsDark[LAYER_ID_COUNT];
 
     /// Parameters for display modes
     bool    m_hiContrastEnabled;    ///< High contrast display mode on/off
@@ -233,10 +287,9 @@ protected:
     float   m_outlineWidth;         ///< Line width used when drawing outlines
     float   m_worksheetLineWidth;   ///< Line width used when drawing worksheet
 
-    COLOR4D m_backgroundColor;      ///< The background color
+    bool    m_showPageLimits;
 
-    /// Map of colors that were usually used for display
-    std::map<EDA_COLOR_T, COLOR4D> m_legacyColorMap;
+    COLOR4D m_backgroundColor;      ///< The background color
 };
 
 
@@ -255,7 +308,7 @@ protected:
 class PAINTER
 {
 public:
-    /*
+    /**
      * Constructor PAINTER( GAL* )
      * initializes this object for painting on any of the polymorphic
      * GRAPHICS_ABSTRACTION_LAYER* derivatives.

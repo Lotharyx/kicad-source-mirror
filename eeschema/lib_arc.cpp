@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2004-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2017 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2004-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,13 +29,12 @@
 #include <fctsys.h>
 #include <gr_basic.h>
 #include <macros.h>
-#include <class_drawpanel.h>
-#include <plot_common.h>
+#include <sch_draw_panel.h>
+#include <plotter.h>
 #include <trigo.h>
-#include <wxstruct.h>
-#include <richio.h>
 #include <base_units.h>
 #include <msgpanel.h>
+#include <bitmaps.h>
 
 #include <general.h>
 #include <lib_arc.h>
@@ -92,85 +91,11 @@ LIB_ARC::LIB_ARC( LIB_PART*      aParent ) : LIB_ITEM( LIB_ARC_T, aParent )
     m_Width         = 0;
     m_Fill          = NO_FILL;
     m_isFillable    = true;
-    m_typeName      = _( "Arc" );
     m_editState     = 0;
     m_lastEditState = 0;
     m_editCenterDistance = 0.0;
     m_editSelectPoint = ARC_STATUS_START;
     m_editDirection = 0;
-}
-
-
-bool LIB_ARC::Save( OUTPUTFORMATTER& aFormatter )
-{
-    int x1 = m_t1;
-
-    if( x1 > 1800 )
-        x1 -= 3600;
-
-    int x2 = m_t2;
-
-    if( x2 > 1800 )
-        x2 -= 3600;
-
-    aFormatter.Print( 0, "A %d %d %d %d %d %d %d %d %c %d %d %d %d\n",
-                      m_Pos.x, m_Pos.y, m_Radius, x1, x2, m_Unit, m_Convert, m_Width,
-                      fill_tab[m_Fill], m_ArcStart.x, m_ArcStart.y, m_ArcEnd.x,
-                      m_ArcEnd.y );
-
-    return true;
-}
-
-
-bool LIB_ARC::Load( LINE_READER& aLineReader, wxString& aErrorMsg )
-{
-    int startx, starty, endx, endy, cnt;
-    char tmp[256] = "";
-    char* line = (char*) aLineReader;
-
-    cnt = sscanf( line + 2, "%d %d %d %d %d %d %d %d %255s %d %d %d %d",
-                  &m_Pos.x, &m_Pos.y, &m_Radius, &m_t1, &m_t2, &m_Unit,
-                  &m_Convert, &m_Width, tmp, &startx, &starty, &endx, &endy );
-    if( cnt < 8 )
-    {
-        aErrorMsg.Printf( _( "Arc only had %d parameters of the required 8" ), cnt );
-        return false;
-    }
-
-    if( tmp[0] == 'F' )
-        m_Fill = FILLED_SHAPE;
-
-    if( tmp[0] == 'f' )
-        m_Fill = FILLED_WITH_BG_BODYCOLOR;
-
-    NORMALIZE_ANGLE_POS( m_t1 );
-    NORMALIZE_ANGLE_POS( m_t2 );
-
-    // Actual Coordinates of arc ends are read from file
-    if( cnt >= 13 )
-    {
-        m_ArcStart.x = startx;
-        m_ArcStart.y = starty;
-        m_ArcEnd.x   = endx;
-        m_ArcEnd.y   = endy;
-    }
-    else
-    {
-        // Actual Coordinates of arc ends are not read from file
-        // (old library), calculate them
-        m_ArcStart.x = m_Radius;
-        m_ArcStart.y = 0;
-        m_ArcEnd.x   = m_Radius;
-        m_ArcEnd.y   = 0;
-        RotatePoint( &m_ArcStart.x, &m_ArcStart.y, -m_t1 );
-        m_ArcStart.x += m_Pos.x;
-        m_ArcStart.y += m_Pos.y;
-        RotatePoint( &m_ArcEnd.x, &m_ArcEnd.y, -m_t2 );
-        m_ArcEnd.x += m_Pos.x;
-        m_ArcEnd.y += m_Pos.y;
-    }
-
-    return true;
 }
 
 
@@ -373,7 +298,7 @@ void LIB_ARC::Plot( PLOTTER* aPlotter, const wxPoint& aOffset, bool aFill,
     if( aFill && m_Fill == FILLED_WITH_BG_BODYCOLOR )
     {
         aPlotter->SetColor( GetLayerColor( LAYER_DEVICE_BACKGROUND ) );
-        aPlotter->Arc( pos, -t2, -t1, m_Radius, FILLED_SHAPE, 0 );
+        aPlotter->Arc( pos, -t2, -t1, m_Radius, FILLED_WITH_BG_BODYCOLOR, 0 );
     }
 
     bool already_filled = m_Fill == FILLED_WITH_BG_BODYCOLOR;
@@ -384,11 +309,17 @@ void LIB_ARC::Plot( PLOTTER* aPlotter, const wxPoint& aOffset, bool aFill,
 
 int LIB_ARC::GetPenSize() const
 {
-    return ( m_Width == 0 ) ? GetDefaultLineThickness() : m_Width;
+    if( m_Width > 0 )
+        return m_Width;
+
+    if( m_Width == 0 )
+       return GetDefaultLineThickness();
+
+    return -1;   // a value to use a minimal pen size
 }
 
 
-void LIB_ARC::drawEditGraphics( EDA_RECT* aClipBox, wxDC* aDC, EDA_COLOR_T aColor )
+void LIB_ARC::drawEditGraphics( EDA_RECT* aClipBox, wxDC* aDC, COLOR4D aColor )
 {
     // The edit indicators only get drawn when a new arc is being drawn.
     if( !IsNew() )
@@ -409,7 +340,7 @@ void LIB_ARC::drawEditGraphics( EDA_RECT* aClipBox, wxDC* aDC, EDA_COLOR_T aColo
 
 
 void LIB_ARC::drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                           EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
+                           COLOR4D aColor, GR_DRAWMODE aDrawMode, void* aData,
                            const TRANSFORM& aTransform )
 {
     // Don't draw the arc until the end point is selected.  Only the edit indicators
@@ -418,9 +349,9 @@ void LIB_ARC::drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOf
         return;
 
     wxPoint pos1, pos2, posc;
-    EDA_COLOR_T color = GetLayerColor( LAYER_DEVICE );
+    COLOR4D color = GetLayerColor( LAYER_DEVICE );
 
-    if( aColor < 0 )       // Used normal color or selected color
+    if( aColor == COLOR4D::UNSPECIFIED )       // Used normal color or selected color
     {
         if( IsSelected() )
             color = GetItemSelectedColor();
@@ -447,7 +378,7 @@ void LIB_ARC::drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOf
 
     FILL_T fill = aData ? NO_FILL : m_Fill;
 
-    if( aColor >= 0 )
+    if( aColor != COLOR4D::UNSPECIFIED )
         fill = NO_FILL;
 
     EDA_RECT* const clipbox  = aPanel? aPanel->GetClipBox() : NULL;
@@ -553,14 +484,14 @@ start(%d, %d), end(%d, %d), radius %d" ),
 }
 
 
-void LIB_ARC::GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList )
+void LIB_ARC::GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList )
 {
     wxString msg;
     EDA_RECT bBox = GetBoundingBox();
 
-    LIB_ITEM::GetMsgPanelInfo( aList );
+    LIB_ITEM::GetMsgPanelInfo( aUnits, aList );
 
-    msg = StringFromValue( g_UserUnit, m_Width, true );
+    msg = MessageTextFromValue( aUnits, m_Width, true );
 
     aList.push_back( MSG_PANEL_ITEM( _( "Line Width" ), msg, BLUE ) );
 
@@ -571,12 +502,18 @@ void LIB_ARC::GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList )
 }
 
 
-wxString LIB_ARC::GetSelectMenuText() const
+wxString LIB_ARC::GetSelectMenuText( EDA_UNITS_T aUnits ) const
 {
     return wxString::Format( _( "Arc center (%s, %s), radius %s" ),
-                             GetChars( CoordinateToString( m_Pos.x ) ),
-                             GetChars( CoordinateToString( m_Pos.y ) ),
-                             GetChars( CoordinateToString( m_Radius ) ) );
+                             MessageTextFromValue( aUnits, m_Pos.x ),
+                             MessageTextFromValue( aUnits, m_Pos.y ),
+                             MessageTextFromValue( aUnits, m_Radius ) );
+}
+
+
+BITMAP_DEF LIB_ARC::GetMenuImage() const
+{
+    return add_arc_xpm;
 }
 
 
@@ -594,7 +531,6 @@ void LIB_ARC::BeginEdit( STATUS_FLAGS aEditMode, const wxPoint aPosition )
     {
         m_initialPos = m_Pos;
         m_initialCursorPos = aPosition;
-        SetEraseLastDrawItem();
     }
     else
     {
@@ -625,7 +561,6 @@ void LIB_ARC::BeginEdit( STATUS_FLAGS aEditMode, const wxPoint aPosition )
         }
 
         m_editState = 0;
-        SetEraseLastDrawItem();
     }
 
     m_Flags = aEditMode;
@@ -643,7 +578,6 @@ bool LIB_ARC::ContinueEdit( const wxPoint aPosition )
         {
             m_ArcEnd = aPosition;
             m_editState = 2;
-            SetEraseLastDrawItem( false );
             return true;              // Need third position to calculate center point.
         }
     }
@@ -657,14 +591,13 @@ void LIB_ARC::EndEdit( const wxPoint& aPosition, bool aAbort )
     wxCHECK_RET( ( m_Flags & ( IS_NEW | IS_MOVED | IS_RESIZED ) ) != 0,
                    wxT( "Bad call to EndEdit().  LIB_ARC is not being edited." ) );
 
-    SetEraseLastDrawItem( false );
     m_lastEditState = 0;
     m_editState = 0;
     m_Flags = 0;
 }
 
 
-void LIB_ARC::calcEdit( const wxPoint& aPosition )
+void LIB_ARC::CalcEdit( const wxPoint& aPosition )
 {
     if( m_Flags == IS_RESIZED )
     {
@@ -738,7 +671,7 @@ void LIB_ARC::calcEdit( const wxPoint& aPosition )
         }
 
         m_Pos = newCenterPoint;
-        calcRadiusAngles();
+        CalcRadiusAngles();
     }
     else if( m_Flags == IS_NEW )
     {
@@ -774,9 +707,8 @@ void LIB_ARC::calcEdit( const wxPoint& aPosition )
         cY += m_ArcStart.y;
         m_Pos.x = cX;
         m_Pos.y = cY;
-        calcRadiusAngles();
+        CalcRadiusAngles();
 
-        SetEraseLastDrawItem();
     }
     else if( m_Flags == IS_MOVED )
     {
@@ -785,7 +717,7 @@ void LIB_ARC::calcEdit( const wxPoint& aPosition )
 }
 
 
-void LIB_ARC::calcRadiusAngles()
+void LIB_ARC::CalcRadiusAngles()
 {
     wxPoint centerStartVector = twoPointVector( m_Pos, m_ArcStart );
     wxPoint centerEndVector   = twoPointVector( m_Pos, m_ArcEnd );

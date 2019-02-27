@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1992-2013 jp.charras at wanadoo.fr
  * Copyright (C) 2013 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 1992-2015 KiCad Developers
+ * Copyright (C) 1992-2018 KiCad Developers
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,7 +28,12 @@
 
 #include <netlist_exporter.h>
 
+#include <project.h>
 #include <xnode.h>      // also nests: <wx/xml/xml.h>
+
+#include <sch_edit_frame.h>
+
+class SYMBOL_LIB_TABLE;
 
 #define GENERIC_INTERMEDIATE_NETLIST_EXT wxT( "xml" )
 
@@ -53,11 +58,16 @@ enum GNL_T
  */
 class NETLIST_EXPORTER_GENERIC : public NETLIST_EXPORTER
 {
+private:
+    std::set< wxString >  m_libraries;    ///< Set of library nicknames.
+
+    SYMBOL_LIB_TABLE*     m_libTable;
+
 public:
-    NETLIST_EXPORTER_GENERIC( NETLIST_OBJECT_LIST* aMasterList, PART_LIBS* aLibs ) :
-        NETLIST_EXPORTER( aMasterList, aLibs )
-    {
-    }
+    NETLIST_EXPORTER_GENERIC( SCH_EDIT_FRAME* aFrame, NETLIST_OBJECT_LIST* aMasterList ) :
+        NETLIST_EXPORTER( aMasterList ),
+        m_libTable( aFrame->Prj().SchSymbolLibTable() )
+    {}
 
     /**
      * Function WriteNetlist
@@ -123,6 +133,8 @@ protected:
      * @return XNODE* - the library nodes
      */
     XNODE* makeLibraries();
+
+    void addComponentFields(  XNODE* xcomp, SCH_COMPONENT* comp, SCH_SHEET_PATH* aSheet );
 };
 
 #endif

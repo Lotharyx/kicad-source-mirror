@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2016 CERN
+ * Copyright 2016-2017 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
@@ -29,7 +29,7 @@
 #include <set>
 #include <vector>
 
-#include <class_undoredo_container.h>
+#include <undo_redo_container.h>
 
 class EDA_ITEM;
 
@@ -107,7 +107,20 @@ public:
 
     ///> Creates an undo entry for an item that has been already modified. Requires a copy done
     ///> before the modification.
-    COMMIT& Modified( EDA_ITEM* aItem, EDA_ITEM* aCopy );
+    COMMIT& Modified( EDA_ITEM* aItem, EDA_ITEM* aCopy )
+    {
+        return createModified( aItem, aCopy );
+    }
+
+    template<class Range>
+    COMMIT& StageItems( const Range& aRange, CHANGE_TYPE aChangeType )
+    {
+        for( const auto& item : aRange )
+            Stage( item, aChangeType );
+
+        return *this;
+    }
+
 
     ///> Adds a change of the item aItem of type aChangeType to the change list.
     COMMIT& Stage( EDA_ITEM* aItem, CHANGE_TYPE aChangeType );
@@ -117,7 +130,8 @@ public:
     COMMIT& Stage( const PICKED_ITEMS_LIST& aItems, UNDO_REDO_T aModFlag = UR_UNSPECIFIED );
 
     ///> Executes the changes.
-    virtual void Push( const wxString& aMessage ) = 0;
+    virtual void Push( const wxString& aMessage = wxT( "A commit" ),
+                       bool aCreateUndoEntry = true, bool aSetDirtyBit = true ) = 0;
 
     ///> Revertes the commit by restoring the modifed items state.
     virtual void Revert() = 0;
@@ -126,6 +140,9 @@ public:
     {
         return m_changes.empty();
     }
+
+    ///> Returns status of an item.
+    int GetStatus( EDA_ITEM* aItem );
 
 protected:
     struct COMMIT_LINE
@@ -147,7 +164,15 @@ protected:
         m_changes.clear();
     }
 
+    COMMIT& createModified( EDA_ITEM* aItem, EDA_ITEM* aCopy, int aExtraFlags = 0 );
+
     virtual void makeEntry( EDA_ITEM* aItem, CHANGE_TYPE aType, EDA_ITEM* aCopy = NULL );
+
+    /**
+     * Searches for an entry describing change for a particular item
+     * @return null if there is no related entry.
+     */
+    COMMIT_LINE* findEntry( EDA_ITEM* aItem );
 
     virtual EDA_ITEM* parentObject( EDA_ITEM* aItem ) const = 0;
 

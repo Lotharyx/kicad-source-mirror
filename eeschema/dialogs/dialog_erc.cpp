@@ -2,8 +2,8 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2012-2016 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2012 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,21 +29,25 @@
  */
 
 #include <fctsys.h>
-#include <class_drawpanel.h>
+#include <sch_draw_panel.h>
 #include <kicad_string.h>
 #include <gestfich.h>
 #include <pgm_base.h>
-#include <class_sch_screen.h>
-#include <schframe.h>
+#include <sch_screen.h>
+#include <sch_edit_frame.h>
 #include <invoke_sch_dialog.h>
 #include <project.h>
 #include <kiface_i.h>
-
+#include <bitmaps.h>
+#include <reporter.h>
+#include <wildcards_and_files_ext.h>
+#include <sch_view.h>
 #include <netlist.h>
-#include <class_netlist_object.h>
+#include <netlist_object.h>
 #include <sch_marker.h>
 #include <sch_sheet.h>
 #include <lib_pin.h>
+#include <sch_component.h>
 
 #include <dialog_erc.h>
 #include <erc.h>
@@ -75,9 +79,21 @@ DIALOG_ERC::DIALOG_ERC( SCH_EDIT_FRAME* parent ) :
 {
     m_parent = parent;
     m_lastMarkerFound = NULL;
+
+    wxFont infoFont = wxSystemSettings::GetFont( wxSYS_DEFAULT_GUI_FONT );
+    infoFont.SetSymbolicSize( wxFONTSIZE_SMALL );
+    m_textMarkers->SetFont( infoFont );
+    m_titleMessages->SetFont( infoFont );
+
     Init();
 
-    FixOSXCancelButtonIssue();
+    // We use a sdbSizer to get platform-dependent ordering of the action buttons, but
+    // that requires us to correct the button labels here.
+    m_sdbSizer1OK->SetLabel( _( "Run" ) );
+    m_sdbSizer1Cancel->SetLabel( _( "Close" ) );
+    m_sdbSizer1->Layout();
+
+    m_sdbSizer1OK->SetDefault();
 
     // Now all widgets have the size fixed, call FinishDialogSettings
     FinishDialogSettings();
@@ -112,9 +128,6 @@ void DIALOG_ERC::Init()
 
     // Init Panel Matrix
     ReBuildMatrixPanel();
-
-    // Set the run ERC button as the default button.
-    m_buttonERC->SetDefault();
 }
 
 
@@ -153,9 +166,7 @@ void DIALOG_ERC::OnEraseDrcMarkersClick( wxCommandEvent& event )
 }
 
 
-
-/* event handler for Close button
-*/
+// This is a modeless dialog so we have to handle these ourselves.
 void DIALOG_ERC::OnButtonCloseClick( wxCommandEvent& event )
 {
     Close();
@@ -181,11 +192,17 @@ void DIALOG_ERC::OnErcCmpClick( wxCommandEvent& event )
 
     m_MessagesList->Clear();
     wxSafeYield();      // m_MarkersList must be redraw
-    wxArrayString messageList;
-    TestErc( &messageList );
 
-    for( unsigned ii = 0; ii < messageList.GetCount(); ii++ )
-        m_MessagesList->AppendText( messageList[ii] );
+    WX_TEXT_CTRL_REPORTER reporter( m_MessagesList );
+    TestErc( reporter );
+}
+
+
+void DIALOG_ERC::RedrawDrawPanel()
+{
+    WINDOW_THAWER thawer( m_parent );
+
+    m_parent->GetCanvas()->Refresh();
 }
 
 
@@ -244,8 +261,9 @@ void DIALOG_ERC::OnLeftClickMarkersList( wxHtmlLinkEvent& event )
     }
 
     m_lastMarkerFound = marker;
+    m_parent->FocusOnLocation( marker->m_Pos, false, true );
     m_parent->SetCrossHairPosition( marker->m_Pos );
-    m_parent->RedrawScreen( marker->m_Pos, false);
+    RedrawDrawPanel();
 }
 
 
@@ -256,8 +274,9 @@ void DIALOG_ERC::OnLeftDblClickMarkersList( wxMouseEvent& event )
     // (NULL if not found)
     if( m_lastMarkerFound )
     {
+        m_parent->FocusOnLocation( m_lastMarkerFound->m_Pos, false, true );
         m_parent->SetCrossHairPosition( m_lastMarkerFound->m_Pos );
-        m_parent->RedrawScreen( m_lastMarkerFound->m_Pos, true );
+        RedrawDrawPanel();
         // prevent a mouse left button release event in
         // coming from the ERC dialog double click
         // ( the button is released after closing this dialog and will generate
@@ -294,15 +313,26 @@ void DIALOG_ERC::ReBuildMatrixPanel()
 
     if( m_initialized == false )
     {
+        std::vector<wxStaticText*> labels;
+
         // Print row labels
         for( int ii = 0; ii < PINTYPE_COUNT; ii++ )
         {
             int y = pos.y + (ii * bitmap_size.y);
             text = new wxStaticText( m_matrixPanel, -1, CommentERC_H[ii],
                                      wxPoint( 5, y + ( bitmap_size.y / 2) - (text_height / 2) ) );
+            labels.push_back( text );
 
             int x = text->GetRect().GetRight();
             pos.x = std::max( pos.x, x );
+        }
+
+        // Right-align
+        for( int ii = 0; ii < PINTYPE_COUNT; ii++ )
+        {
+            wxPoint labelPos = labels[ ii ]->GetPosition();
+            labelPos.x = pos.x - labels[ ii ]->GetRect().GetWidth();
+            labels[ ii ]->SetPosition( labelPos );
         }
 
         pos.x += 5;
@@ -398,7 +428,7 @@ void DIALOG_ERC::DisplayERC_MarkersList()
         }
     }
 
-    m_MarkersList->DisplayList();
+    m_MarkersList->DisplayList( GetUserUnits() );
 }
 
 
@@ -449,7 +479,7 @@ void DIALOG_ERC::ChangeErrorLevel( wxCommandEvent& event )
 }
 
 
-void DIALOG_ERC::TestErc( wxArrayString* aMessagesList )
+void DIALOG_ERC::TestErc( REPORTER& aReporter )
 {
     wxFileName fn;
 
@@ -459,16 +489,12 @@ void DIALOG_ERC::TestErc( wxArrayString* aMessagesList )
 
     // Build the whole sheet list in hierarchy (sheet, not screen)
     SCH_SHEET_LIST sheets( g_RootSheet );
-    sheets.AnnotatePowerSymbols( Prj().SchLibs() );
+    sheets.AnnotatePowerSymbols();
 
-    if( m_parent->CheckAnnotate( aMessagesList, false ) )
+    if( m_parent->CheckAnnotate( aReporter, false ) )
     {
-        if( aMessagesList )
-        {
-            wxString msg = _( "Annotation required!" );
-            msg += wxT( "\n" );
-            aMessagesList->Add( msg );
-        }
+        if( aReporter.HasMessage() )
+            aReporter.ReportTail( _( "Annotation required!" ), REPORTER::RPT_ERROR );
 
         return;
     }
@@ -478,19 +504,14 @@ void DIALOG_ERC::TestErc( wxArrayString* aMessagesList )
     // Erase all previous DRC markers.
     screens.DeleteAllMarkers( MARKER_BASE::MARKER_ERC );
 
-    for( SCH_SCREEN* screen = screens.GetFirst(); screen != NULL; screen = screens.GetNext() )
-    {
-        /* Ff wire list has changed, delete Undo Redo list to avoid pointers on deleted
-         * data problems.
-         */
-        if( screen->SchematicCleanUp() )
-            screen->ClearUndoRedoList();
-    }
-
     /* Test duplicate sheet names inside a given sheet, one cannot have sheets with
      * duplicate names (file names can be duplicated).
      */
     TestDuplicateSheetNames( true );
+
+    /* Test is all units of each multiunit component have the same footprint assigned.
+     */
+    TestMultiunitFootprints( sheets );
 
     std::unique_ptr<NETLIST_OBJECT_LIST> objectsConnectedList( m_parent->BuildNetListBase() );
 
@@ -500,6 +521,12 @@ void DIALOG_ERC::TestErc( wxArrayString* aMessagesList )
     unsigned lastItemIdx;
     unsigned nextItemIdx = lastItemIdx = 0;
     int MinConn    = NOC;
+
+    /* Check that a pin appears in only one net.  This check is necessary
+     * because multi-unit components that have shared pins can be wired to
+     * different nets.
+     */
+    std::unordered_map<wxString, wxString> pin_to_net_map;
 
     /* The netlist generated by SCH_EDIT_FRAME::BuildNetListBase is sorted
      * by net number, which means we can group netlist items into ranges
@@ -565,10 +592,37 @@ void DIALOG_ERC::TestErc( wxArrayString* aMessagesList )
             break;
 
         case NET_PIN:
+        {
+            // Check if this pin has appeared before on a different net
+            if( item->m_Link )
+            {
+                auto ref = item->GetComponentParent()->GetRef( &item->m_SheetPath );
+                wxString pin_name = ref + "_" + item->m_PinNum;
+
+                if( pin_to_net_map.count( pin_name ) == 0 )
+                {
+                    pin_to_net_map[pin_name] = item->GetNetName();
+                }
+                else if( pin_to_net_map[pin_name] != item->GetNetName() )
+                {
+                    SCH_MARKER* marker = new SCH_MARKER();
+
+                    marker->SetTimeStamp( GetNewTimeStamp() );
+                    marker->SetData( ERCE_DIFFERENT_UNIT_NET, item->m_Start,
+                        wxString::Format( _( "Pin %s on %s is connected to both %s and %s" ),
+                        item->m_PinNum, ref, pin_to_net_map[pin_name], item->GetNetName() ),
+                        item->m_Start );
+                    marker->SetMarkerType( MARKER_BASE::MARKER_ERC );
+                    marker->SetErrorLevel( MARKER_BASE::MARKER_SEVERITY_ERROR );
+
+                    item->m_SheetPath.LastScreen()->Append( marker );
+                }
+            }
 
             // Look for ERC problems between pins:
             TestOthersItems( objectsConnectedList.get(), itemIdx, nextItemIdx, &MinConn );
             break;
+        }
         }
 
         lastItemIdx = itemIdx;
@@ -585,13 +639,19 @@ void DIALOG_ERC::TestErc( wxArrayString* aMessagesList )
     // Display diags:
     DisplayERC_MarkersList();
 
-    // Display new markers:
+    // Display new markers from the current screen:
+    KIGFX::VIEW* view = m_parent->GetCanvas()->GetView();
+
+    for( auto item = m_parent->GetScreen()->GetDrawItems(); item; item = item->Next() )
+    {
+        if( item->Type() == SCH_MARKER_T )
+            view->Add( item );
+    }
+
     m_parent->GetCanvas()->Refresh();
 
     // Display message
-    wxString msg = _( "Finished" );
-    msg += wxT( "\n" );
-    aMessagesList->Add( msg );
+    aReporter.ReportTail( _( "Finished" ), REPORTER::RPT_INFO );
 
     if( m_writeErcFile )
     {
@@ -599,13 +659,12 @@ void DIALOG_ERC::TestErc( wxArrayString* aMessagesList )
         fn.SetExt( wxT( "erc" ) );
 
         wxFileDialog dlg( this, _( "ERC File" ), fn.GetPath(), fn.GetFullName(),
-                          _( "Electronic rule check file (.erc)|*.erc" ),
-                          wxFD_SAVE );
+                          ErcFileWildcard(), wxFD_SAVE );
 
         if( dlg.ShowModal() == wxID_CANCEL )
             return;
 
-        if( WriteDiagnosticERC( dlg.GetPath() ) )
+        if( WriteDiagnosticERC( GetUserUnits(), dlg.GetPath() ) )
             ExecuteFile( this, Pgm().GetEditorName(), QuoteFullPath( fn ) );
     }
 }

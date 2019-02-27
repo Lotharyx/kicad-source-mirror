@@ -29,11 +29,10 @@
 
 #include <fctsys.h>
 #include <pgm_base.h>
-#include <class_drawpanel.h>
-#include <class_sch_screen.h>
-#include <schframe.h>
+#include <sch_draw_panel.h>
+#include <sch_edit_frame.h>
 #include <base_units.h>
-#include <libeditframe.h>
+#include <lib_edit_frame.h>
 #include <sch_sheet_path.h>
 #include <project.h>
 #include <reporter.h>
@@ -74,13 +73,13 @@ void DIALOG_PLOT_SCHEMATIC::createSVGFile( bool aPrintAll, bool aPrintFrameRef )
 
             if( !success )
             {
-                msg.Printf( _( "Cannot create file '%s'.\n" ),
+                msg.Printf( _( "Cannot create file \"%s\".\n" ),
                             GetChars( plotFileName.GetFullPath() ) );
                 reporter.Report( msg, REPORTER::RPT_ERROR );
             }
             else
             {
-                msg.Printf( _( "Plot: '%s' OK.\n" ),
+                msg.Printf( _( "Plot: \"%s\" OK.\n" ),
                             GetChars( plotFileName.GetFullPath() ) );
                 reporter.Report( msg, REPORTER::RPT_ACTION );
             }

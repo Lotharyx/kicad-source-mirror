@@ -155,6 +155,7 @@ class DIALOG_SCH_FIND : public DIALOG_SCH_FIND_BASE
 protected:
     // Handlers for DIALOG_SCH_FIND_BASE events.
     void OnClose( wxCloseEvent& aEvent ) override;
+    void OnTextEnter( wxCommandEvent& event ) override;
     void OnUpdateFindUI( wxUpdateUIEvent& aEvent ) override;
     void OnUpdateReplaceUI( wxUpdateUIEvent& aEvent ) override;
     void OnUpdateReplaceAllUI( wxUpdateUIEvent& aEvent ) override;
@@ -167,17 +168,15 @@ protected:
 
     void SendEvent( const wxEventType& aEventType );
 
-    wxFindReplaceData *m_findReplaceData;
+    wxFindReplaceData* m_findReplaceData;
+    wxString*          m_status;
 
     DECLARE_NO_COPY_CLASS( DIALOG_SCH_FIND )
 
 public:
-    DIALOG_SCH_FIND( wxWindow* aParent, wxFindReplaceData* aData,
+    DIALOG_SCH_FIND( wxWindow* aParent, wxFindReplaceData* aData, wxString* aStatus,
                      const wxPoint& aPosition = wxDefaultPosition,
                      const wxSize& aSize = wxDefaultSize, int aStyle = 0 );
-
-    const wxFindReplaceData *GetData() const { return m_findReplaceData; }
-    void SetData(wxFindReplaceData *aData) { m_findReplaceData = aData; }
 
     void SetFindEntries( const wxArrayString& aEntries );
     wxArrayString GetFindEntries() const;

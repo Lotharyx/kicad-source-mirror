@@ -24,15 +24,18 @@
 
 #include <class_board.h>
 #include <class_module.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <tool/tool_manager.h>
-#include <ratsnest_data.h>
 #include <view/view.h>
 #include <board_commit.h>
-
-#include <boost/bind.hpp>
-
 #include <tools/pcb_tool.h>
+#include <tools/pcb_actions.h>
+#include <connectivity/connectivity_data.h>
+
+#include <functional>
+using namespace std::placeholders;
+
+#include "pcb_draw_panel_gal.h"
 
 BOARD_COMMIT::BOARD_COMMIT( PCB_TOOL* aTool )
 {
@@ -41,7 +44,7 @@ BOARD_COMMIT::BOARD_COMMIT( PCB_TOOL* aTool )
 }
 
 
-BOARD_COMMIT::BOARD_COMMIT( PCB_BASE_FRAME* aFrame )
+BOARD_COMMIT::BOARD_COMMIT( EDA_DRAW_FRAME* aFrame )
 {
     m_toolMgr = aFrame->GetToolManager();
     m_editModules = aFrame->IsType( FRAME_PCB_MODULE_EDITOR );
@@ -53,15 +56,16 @@ BOARD_COMMIT::~BOARD_COMMIT()
 }
 
 
-void BOARD_COMMIT::Push( const wxString& aMessage )
+void BOARD_COMMIT::Push( const wxString& aMessage, bool aCreateUndoEntry, bool aSetDirtyBit )
 {
     // Objects potentially interested in changes:
     PICKED_ITEMS_LIST undoList;
-    KIGFX::VIEW* view = m_toolMgr->GetView();
-    BOARD* board = (BOARD*) m_toolMgr->GetModel();
-    PCB_BASE_FRAME* frame = (PCB_BASE_FRAME*) m_toolMgr->GetEditFrame();
-    RN_DATA* ratsnest = board->GetRatsnest();
-    std::set<EDA_ITEM*> savedModules;
+    KIGFX::VIEW*      view = m_toolMgr->GetView();
+    BOARD*            board = (BOARD*) m_toolMgr->GetModel();
+    PCB_BASE_FRAME*   frame = (PCB_BASE_FRAME*) m_toolMgr->GetEditFrame();
+    auto              connectivity = board->GetConnectivity();
+    std::set<EDA_ITEM*>      savedModules;
+    std::vector<BOARD_ITEM*> itemsToDeselect;
 
     if( Empty() )
         return;
@@ -84,17 +88,20 @@ void BOARD_COMMIT::Push( const wxString& aMessage )
             {
                 if( !ent.m_copy )
                 {
-                    assert( changeType != CHT_MODIFY );     // too late to make a copy..
+                    wxASSERT( changeType != CHT_MODIFY );     // too late to make a copy..
                     ent.m_copy = ent.m_item->Clone();
                 }
 
-                assert( ent.m_item->Type() == PCB_MODULE_T );
-                assert( ent.m_copy->Type() == PCB_MODULE_T );
+                wxASSERT( ent.m_item->Type() == PCB_MODULE_T );
+                wxASSERT( ent.m_copy->Type() == PCB_MODULE_T );
 
-                ITEM_PICKER itemWrapper( ent.m_item, UR_CHANGED );
-                itemWrapper.SetLink( ent.m_copy );
-                undoList.PushItem( itemWrapper );
-                frame->SaveCopyInUndoList( undoList, UR_CHANGED );
+                if( aCreateUndoEntry )
+                {
+                    ITEM_PICKER itemWrapper( ent.m_item, UR_CHANGED );
+                    itemWrapper.SetLink( ent.m_copy );
+                    undoList.PushItem( itemWrapper );
+                    frame->SaveCopyInUndoList( undoList, UR_CHANGED );
+                }
 
                 savedModules.insert( ent.m_item );
                 static_cast<MODULE*>( ent.m_item )->SetLastEditTime();
@@ -107,23 +114,21 @@ void BOARD_COMMIT::Push( const wxString& aMessage )
             {
                 if( !m_editModules )
                 {
-                    undoList.PushItem( ITEM_PICKER( boardItem, UR_NEW ) );
+                    if( aCreateUndoEntry )
+                    {
+                        undoList.PushItem( ITEM_PICKER( boardItem, UR_NEW ) );
+                    }
 
                     if( !( changeFlags & CHT_DONE ) )
-                        board->Add( boardItem );
+                        board->Add( boardItem );        // handles connectivity
 
-                    //ratsnest->Add( boardItem );       // TODO currently done by BOARD::Add()
-
-                    if( boardItem->Type() == PCB_MODULE_T )
-                    {
-                        MODULE* mod = static_cast<MODULE*>( boardItem );
-                        mod->RunOnChildren( boost::bind( &KIGFX::VIEW::Add, view, _1 ) );
-                    }
                 }
                 else
                 {
                     // modules inside modules are not supported yet
-                    assert( boardItem->Type() != PCB_MODULE_T );
+                    wxASSERT( boardItem->Type() != PCB_MODULE_T );
+
+                    boardItem->SetParent( board->m_Modules.GetFirst() );
 
                     if( !( changeFlags & CHT_DONE ) )
                         board->m_Modules->Add( boardItem );
@@ -135,10 +140,8 @@ void BOARD_COMMIT::Push( const wxString& aMessage )
 
             case CHT_REMOVE:
             {
-                if( !m_editModules )
-                {
+                if( !m_editModules && aCreateUndoEntry )
                     undoList.PushItem( ITEM_PICKER( boardItem, UR_DELETED ) );
-                }
 
                 switch( boardItem->Type() )
                 {
@@ -146,54 +149,31 @@ void BOARD_COMMIT::Push( const wxString& aMessage )
                 case PCB_PAD_T:
                 case PCB_MODULE_EDGE_T:
                 case PCB_MODULE_TEXT_T:
-                {
-                    // Do not allow footprint text removal when not editing a module
+                    // This level can only handle module items when editing modules
                     if( !m_editModules )
                         break;
-
-                    bool remove = true;
 
                     if( boardItem->Type() == PCB_MODULE_TEXT_T )
                     {
                         TEXTE_MODULE* text = static_cast<TEXTE_MODULE*>( boardItem );
 
-                        switch( text->GetType() )
-                        {
-                            case TEXTE_MODULE::TEXT_is_REFERENCE:
-                                //DisplayError( frame, _( "Cannot delete component reference." ) );
-                                remove = false;
-                                break;
-
-                            case TEXTE_MODULE::TEXT_is_VALUE:
-                                //DisplayError( frame, _( "Cannot delete component value." ) );
-                                remove = false;
-                                break;
-
-                            case TEXTE_MODULE::TEXT_is_DIVERS:    // suppress warnings
-                                break;
-
-                            default:
-                                assert( false );
-                                break;
-                        }
+                        // don't allow deletion of Reference or Value
+                        if( text->GetType() != TEXTE_MODULE::TEXT_is_DIVERS )
+                            break;
                     }
 
-                    if( remove )
+                    view->Remove( boardItem );
+
+                    if( !( changeFlags & CHT_DONE ) )
                     {
-                        view->Remove( boardItem );
-
-                        if( !( changeFlags & CHT_DONE ) )
-                        {
-                            MODULE* module = static_cast<MODULE*>( boardItem->GetParent() );
-                            assert( module && module->Type() == PCB_MODULE_T );
-                            module->Delete( boardItem );
-                        }
-
-                        board->m_Status_Pcb = 0; // it is done in the legacy view (ratsnest perhaps?)
+                        MODULE* module = static_cast<MODULE*>( boardItem->GetParent() );
+                        wxASSERT( module && module->Type() == PCB_MODULE_T );
+                        module->Delete( boardItem );
                     }
+
+                    board->m_Status_Pcb = 0; // it is done in the legacy view (ratsnest perhaps?)
 
                     break;
-                }
 
                 // Board items
                 case PCB_LINE_T:                // a segment not on copper layers
@@ -203,29 +183,30 @@ void BOARD_COMMIT::Push( const wxString& aMessage )
                 case PCB_DIMENSION_T:           // a dimension (graphic item)
                 case PCB_TARGET_T:              // a target (graphic item)
                 case PCB_MARKER_T:              // a marker used to show something
-                case PCB_ZONE_T:                // SEG_ZONE items are now deprecated
+                case PCB_SEGZONE_T:                // SEG_ZONE items are now deprecated
                 case PCB_ZONE_AREA_T:
+                    itemsToDeselect.push_back( boardItem );
+
                     view->Remove( boardItem );
 
                     if( !( changeFlags & CHT_DONE ) )
                         board->Remove( boardItem );
 
-                    //ratsnest->Remove( boardItem );    // currently done by BOARD::Remove()
                     break;
 
                 case PCB_MODULE_T:
                 {
+                    itemsToDeselect.push_back( boardItem );
+
                     // There are no modules inside a module yet
-                    assert( !m_editModules );
+                    wxASSERT( !m_editModules );
 
                     MODULE* module = static_cast<MODULE*>( boardItem );
-                    module->ClearFlags();
-                    module->RunOnChildren( boost::bind( &KIGFX::VIEW::Remove, view, _1 ) );
-
                     view->Remove( module );
+                    module->ClearFlags();
 
                     if( !( changeFlags & CHT_DONE ) )
-                        board->Remove( module );
+                        board->Remove( module );        // handles connectivity
 
                     // Clear flags to indicate, that the ratsnest, list of nets & pads are not valid anymore
                     board->m_Status_Pcb = 0;
@@ -233,38 +214,65 @@ void BOARD_COMMIT::Push( const wxString& aMessage )
                 break;
 
                 default:                        // other types do not need to (or should not) be handled
-                    assert( false );
+                    wxASSERT( false );
                     break;
                 }
+
                 break;
             }
 
             case CHT_MODIFY:
             {
-                if( !m_editModules )
+                if( !m_editModules && aCreateUndoEntry )
                 {
                     ITEM_PICKER itemWrapper( boardItem, UR_CHANGED );
-                    assert( ent.m_copy );
+                    wxASSERT( ent.m_copy );
                     itemWrapper.SetLink( ent.m_copy );
                     undoList.PushItem( itemWrapper );
                 }
 
-                boardItem->ViewUpdate( KIGFX::VIEW_ITEM::ALL );
-                ratsnest->Update( boardItem );
+                if( ent.m_copy )
+                    connectivity->MarkItemNetAsDirty( static_cast<BOARD_ITEM*>( ent.m_copy ) );
+
+                connectivity->Update( boardItem );
+                view->Update( boardItem );
+
+                // if no undo entry is needed, the copy would create a memory leak
+                if( !aCreateUndoEntry )
+                    delete ent.m_copy;
+
                 break;
             }
 
             default:
-                assert( false );
+                wxASSERT( false );
                 break;
         }
     }
 
-    if( !m_editModules )
+    // Removing an item should trigger the unselect action
+    // but only after all items are removed otherwise we can get
+    // flickering depending on the system
+    if( itemsToDeselect.size() > 0 )
+        m_toolMgr->RunAction( PCB_ACTIONS::unselectItems, true, &itemsToDeselect );
+
+    if( !m_editModules && aCreateUndoEntry )
         frame->SaveCopyInUndoList( undoList, UR_UNSPECIFIED );
 
-    ratsnest->Recalculate();
-    frame->OnModify();
+    if( TOOL_MANAGER* toolMgr = frame->GetToolManager() )
+        toolMgr->PostEvent( { TC_MESSAGE, TA_MODEL_CHANGE, AS_GLOBAL } );
+
+    if ( !m_editModules )
+    {
+        auto panel = static_cast<PCB_DRAW_PANEL_GAL*>( frame->GetGalCanvas() );
+        connectivity->RecalculateRatsnest();
+        connectivity->ClearDynamicRatsnest();
+        panel->RedrawRatsnest();
+    }
+
+    if( aSetDirtyBit )
+        frame->OnModify();
+
     frame->UpdateMsgPanel();
 
     clear();
@@ -292,52 +300,48 @@ void BOARD_COMMIT::Revert()
     PICKED_ITEMS_LIST undoList;
     KIGFX::VIEW* view = m_toolMgr->GetView();
     BOARD* board = (BOARD*) m_toolMgr->GetModel();
-    RN_DATA* ratsnest = board->GetRatsnest();
+    auto connectivity = board->GetConnectivity();
 
     for( auto it = m_changes.rbegin(); it != m_changes.rend(); ++it )
     {
         COMMIT_LINE& ent = *it;
         BOARD_ITEM* item = static_cast<BOARD_ITEM*>( ent.m_item );
         BOARD_ITEM* copy = static_cast<BOARD_ITEM*>( ent.m_copy );
+        int changeType = ent.m_type & CHT_TYPE;
+        int changeFlags = ent.m_type & CHT_FLAGS;
 
-        switch( ent.m_type )
+        switch( changeType )
         {
         case CHT_ADD:
-            if( item->Type() == PCB_MODULE_T )
-            {
-                MODULE* oldModule = static_cast<MODULE*>( item );
-                oldModule->RunOnChildren( boost::bind( &KIGFX::VIEW::Remove, view, _1 ) );
-            }
+            if( !( changeFlags & CHT_DONE ) )
+                break;
 
             view->Remove( item );
-            ratsnest->Remove( item );
+            connectivity->Remove( item );
+            board->Remove( item );
             break;
 
         case CHT_REMOVE:
+            if( !( changeFlags & CHT_DONE ) )
+                break;
+
             if( item->Type() == PCB_MODULE_T )
             {
                 MODULE* newModule = static_cast<MODULE*>( item );
-                newModule->RunOnChildren( boost::bind( &EDA_ITEM::ClearFlags, _1, SELECTED ) );
-                newModule->RunOnChildren( boost::bind( &KIGFX::VIEW::Add, view, _1 ) );
+                newModule->RunOnChildren( std::bind( &EDA_ITEM::ClearFlags, _1, SELECTED ) );
             }
 
             view->Add( item );
-            ratsnest->Add( item );
+            connectivity->Add( item );
+            board->Add( item );
             break;
 
         case CHT_MODIFY:
         {
-            if( item->Type() == PCB_MODULE_T )
-            {
-                MODULE* oldModule = static_cast<MODULE*>( item );
-                oldModule->RunOnChildren( boost::bind( &KIGFX::VIEW::Remove, view, _1 ) );
-            }
-
             view->Remove( item );
-            ratsnest->Remove( item );
+            connectivity->Remove( item );
 
             item->SwapData( copy );
-
             item->ClearFlags( SELECTED );
 
             // Update all pads/drawings/texts, as they become invalid
@@ -345,23 +349,23 @@ void BOARD_COMMIT::Revert()
             if( item->Type() == PCB_MODULE_T )
             {
                 MODULE* newModule = static_cast<MODULE*>( item );
-                newModule->RunOnChildren( boost::bind( &EDA_ITEM::ClearFlags, _1, SELECTED ) );
-                newModule->RunOnChildren( boost::bind( &KIGFX::VIEW::Add, view, _1 ) );
+                newModule->RunOnChildren( std::bind( &EDA_ITEM::ClearFlags, _1, SELECTED ) );
             }
 
             view->Add( item );
-            ratsnest->Add( item );
+            connectivity->Add( item );
             delete copy;
             break;
         }
 
         default:
-            assert( false );
+            wxASSERT( false );
             break;
         }
     }
 
-    ratsnest->Recalculate();
+    if ( !m_editModules )
+        connectivity->RecalculateRatsnest();
 
     clear();
 }

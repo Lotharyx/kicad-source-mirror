@@ -30,17 +30,21 @@
 class BOARD_ITEM;
 class PICKED_ITEMS_LIST;
 class PCB_TOOL;
-class PCB_BASE_FRAME;
 class TOOL_MANAGER;
+class EDA_DRAW_FRAME;
+class TOOL_BASE;
 
 class BOARD_COMMIT : public COMMIT
 {
 public:
-    BOARD_COMMIT( PCB_TOOL* aTool );
-    BOARD_COMMIT( PCB_BASE_FRAME* aFrame );
+    BOARD_COMMIT( EDA_DRAW_FRAME* aFrame );
+    BOARD_COMMIT( PCB_TOOL *aTool );
+
     virtual ~BOARD_COMMIT();
 
-    virtual void Push( const wxString& aMessage ) override;
+    virtual void Push( const wxString& aMessage = wxT( "A commit" ),
+                       bool aCreateUndoEntry = true, bool aSetDirtyBit = true ) override;
+
     virtual void Revert() override;
 
 private:

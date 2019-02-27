@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009-2014 Jean-Pierre Charras, jean-pierre.charras@ujf-grenoble.fr
- * Copyright (C) 1992-2012 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2009-2018 Jean-Pierre Charras, jean-pierre.charras@ujf-grenoble.fr
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -32,18 +32,32 @@
 
 
 #include <class_board_item.h>
-#include <class_marker_base.h>
+#include <marker_base.h>
 
+// Coordinates count for the basic shape marker
+#define MARKER_SHAPE_POINT_COUNT 9
 
 class MSG_PANEL_ITEM;
 
 
 class MARKER_PCB : public BOARD_ITEM, public MARKER_BASE
 {
-
 public:
 
     MARKER_PCB( BOARD_ITEM* aParent );
+
+    /**
+     * Constructor
+     * @param aErrorCode The categorizing identifier for an error
+     * @param aMarkerPos The position of the MARKER_PCB on the BOARD
+     * @param aItem The first of two objects
+     * @param aPos The position of the first of two objects
+     * @param bItem The second of the two conflicting objects
+     * @param bPos The position of the second of two objects
+     */
+    MARKER_PCB( EDA_UNITS_T aUnits, int aErrorCode, const wxPoint& aMarkerPos,
+                BOARD_ITEM* aItem, const wxPoint& aPos,
+                BOARD_ITEM* bItem = nullptr, const wxPoint& bPos = wxPoint() );
 
     /**
      * Constructor
@@ -56,19 +70,14 @@ public:
      */
     MARKER_PCB( int aErrorCode, const wxPoint& aMarkerPos,
                 const wxString& aText, const wxPoint& aPos,
-                const wxString& bText, const wxPoint& bPos );
-
-    /**
-     * Constructor
-     * @param aErrorCode The categorizing identifier for an error
-     * @param aMarkerPos The position of the MARKER_PCB on the BOARD
-     * @param aText Text describing the object
-     * @param aPos The position of the object
-     */
-    MARKER_PCB( int aErrorCode, const wxPoint& aMarkerPos,
-                const wxString& aText, const wxPoint& aPos );
+                const wxString& bText = wxEmptyString, const wxPoint& bPos = wxPoint() );
 
     ~MARKER_PCB();
+
+    static inline bool ClassOf( const EDA_ITEM* aItem )
+    {
+        return aItem && PCB_MARKER_T == aItem->Type();
+    }
 
     void Move(const wxPoint& aMoveVector) override
     {
@@ -85,40 +94,27 @@ public:
         DrawMarker( aPanel, aDC, aDrawMode, aOffset );
     }
 
-    const wxPoint& GetPosition() const override { return m_Pos; }
+    const wxPoint GetPosition() const override { return m_Pos; }
     void SetPosition( const wxPoint& aPos ) override { m_Pos = aPos; }
-
-    void SetItem( const BOARD_ITEM* aItem )
-    {
-        m_item = aItem;
-    }
-
-    const BOARD_ITEM* GetItem() const
-    {
-        return m_item;
-    }
 
     bool HitTest( const wxPoint& aPosition ) const override
     {
         return HitTestMarker( aPosition );
     }
 
-    bool IsOnLayer( LAYER_ID aLayer ) const override;
+    bool IsOnLayer( PCB_LAYER_ID aLayer ) const override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
-    wxString GetSelectMenuText() const override;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    BITMAP_DEF GetMenuImage() const override { return  drc_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
-    ///> @copydoc VIEW_ITEM::ViewBBox()
-    virtual const BOX2I ViewBBox() const override
-    {
-        return GetParent()->ViewBBox();
-    }
+    const BOX2I ViewBBox() const override;
 
-    ///> @copydoc VIEW_ITEM::ViewGetLayers()
-    virtual void ViewGetLayers( int aLayers[], int& aCount ) const override;
+    const EDA_RECT GetBoundingBox() const override;
+
+    void ViewGetLayers( int aLayers[], int& aCount ) const override;
 
 #if defined(DEBUG)
     void Show( int nestLevel, std::ostream& os ) const override { ShowDummy( os ); }

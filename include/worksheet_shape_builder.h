@@ -34,7 +34,7 @@
 #include <math/vector2d.h>
 #include <eda_text.h>
 #include <eda_text.h>
-#include <class_bitmap_base.h>
+#include <bitmap_base.h>
 
 class WORKSHEET_DATAITEM;        // Forward declaration
 class TITLE_BLOCK;
@@ -63,13 +63,13 @@ public:
 
 protected:
     WS_DRAW_TYPE    m_type; // wsg_line, wsg_rect, wsg_poly, wsg_text
-    EDA_COLOR_T     m_color;
+    COLOR4D         m_color;
     WORKSHEET_DATAITEM*  m_parent;  // an unique identifier, used as link
                                     // to the parent WORKSHEET_DATAITEM item,
                                     // in page layout editor
 
     WS_DRAW_ITEM_BASE( WORKSHEET_DATAITEM*  aParent,
-                       WS_DRAW_TYPE aType, EDA_COLOR_T aColor )
+                       WS_DRAW_TYPE aType, COLOR4D aColor )
     {
         m_type  = aType;
         m_color = aColor;
@@ -81,7 +81,7 @@ public:
     virtual ~WS_DRAW_ITEM_BASE() {}
 
     // Accessors:
-    EDA_COLOR_T GetColor() const { return m_color; }
+    COLOR4D GetColor() const { return m_color; }
     WS_DRAW_TYPE GetType() const { return m_type; };
 
     WORKSHEET_DATAITEM* GetParent() const { return m_parent; }
@@ -91,13 +91,13 @@ public:
     virtual void DrawWsItem( EDA_RECT* aClipBox, wxDC* aDC)
     {
         wxPoint offset( 0, 0 );
-        DrawWsItem( aClipBox, aDC, offset, UNSPECIFIED_DRAWMODE, UNSPECIFIED_COLOR );
+        DrawWsItem( aClipBox, aDC, offset, UNSPECIFIED_DRAWMODE, COLOR4D::UNSPECIFIED );
     }
 
     /// More advanced version of DrawWsItem. This is what must be
     /// defined in the derived type.
     virtual void DrawWsItem( EDA_RECT* aClipBox, wxDC* aDC, const wxPoint& aOffset,
-            GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR ) = 0;
+            GR_DRAWMODE aDrawMode, COLOR4D aColor = COLOR4D::UNSPECIFIED ) = 0;
 
     /**
      * Abstract function: should exist for derived items
@@ -119,7 +119,7 @@ public:
      * (texts or polygons)
      * the maxi dist is WORKSHEET_DATAITEM::GetMarkerSizeUi()/2
      */
-    virtual bool HitTestStartPoint( const wxPoint& aPosition) = 0;
+    virtual bool HitTestStartPoint( wxDC *aDC, const wxPoint& aPosition ) = 0;
 
     /**
      * return true if the point aPosition is near the ending point of this item
@@ -127,7 +127,7 @@ public:
      * 2 points
      * the maxi dist is WORKSHEET_DATAITEM::GetMarkerSizeUi()/2
      */
-    virtual bool HitTestEndPoint( const wxPoint& aPosition)
+    virtual bool HitTestEndPoint( wxDC *aDC, const wxPoint& aPosition)
     {
         return false;
     }
@@ -143,7 +143,7 @@ class WS_DRAW_ITEM_LINE : public WS_DRAW_ITEM_BASE
 public:
     WS_DRAW_ITEM_LINE( WORKSHEET_DATAITEM* aParent,
                        wxPoint aStart, wxPoint aEnd,
-                       int aPenWidth, EDA_COLOR_T aColor ) :
+                       int aPenWidth, COLOR4D aColor ) :
         WS_DRAW_ITEM_BASE( aParent, wsg_line, aColor )
     {
         m_start     = aStart;
@@ -159,7 +159,7 @@ public:
     /** The function to draw a WS_DRAW_ITEM_LINE
      */
     virtual void DrawWsItem( EDA_RECT* aClipBox, wxDC* aDC, const wxPoint& aOffset,
-            GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR ) override;
+            GR_DRAWMODE aDrawMode, COLOR4D aColor = COLOR4D::UNSPECIFIED ) override;
 
     /**
      * Virtual function
@@ -176,14 +176,14 @@ public:
     /**
      * return true if the point aPosition is on the starting point of this item.
      */
-    virtual bool HitTestStartPoint( const wxPoint& aPosition) override;
+    virtual bool HitTestStartPoint( wxDC *aDC, const wxPoint& aPosition ) override;
 
     /**
      * return true if the point aPosition is on the ending point of this item
      * This is avirtual function which should be overriden for items defien by
      * 2 points
      */
-    virtual bool HitTestEndPoint( const wxPoint& aPosition) override;
+    virtual bool HitTestEndPoint( wxDC *aDC, const wxPoint& aPosition ) override;
 };
 
 // This class draws a polygon
@@ -200,7 +200,7 @@ public:
 
 public:
     WS_DRAW_ITEM_POLYGON( WORKSHEET_DATAITEM* aParent, wxPoint aPos,
-                          bool aFill, int aPenWidth, EDA_COLOR_T aColor ) :
+                          bool aFill, int aPenWidth, COLOR4D aColor ) :
         WS_DRAW_ITEM_BASE( aParent, wsg_poly, aColor )
     {
         m_penWidth = aPenWidth;
@@ -211,12 +211,12 @@ public:
     // Accessors:
     int GetPenWidth() const { return m_penWidth; }
     bool IsFilled() const { return m_fill; }
-    const wxPoint& GetPosition() const { return m_pos; }
+    const wxPoint GetPosition() const { return m_pos; }
 
     /** The function to draw a WS_DRAW_ITEM_POLYGON
      */
     virtual void DrawWsItem( EDA_RECT* aClipBox, wxDC* aDC, const wxPoint& aOffset,
-            GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR ) override;
+            GR_DRAWMODE aDrawMode, COLOR4D aColor = COLOR4D::UNSPECIFIED ) override;
 
     /**
      * Virtual function
@@ -233,7 +233,7 @@ public:
     /**
      * return true if the point aPosition is on the starting point of this item.
      */
-    virtual bool HitTestStartPoint( const wxPoint& aPosition) override;
+    virtual bool HitTestStartPoint( wxDC *aDC, const wxPoint& aPosition ) override;
 };
 
 // This class draws a not filled rectangle with thick segment
@@ -242,7 +242,7 @@ class WS_DRAW_ITEM_RECT : public WS_DRAW_ITEM_LINE
 public:
     WS_DRAW_ITEM_RECT( WORKSHEET_DATAITEM* aParent,
                        wxPoint aStart, wxPoint aEnd,
-                       int aPenWidth, EDA_COLOR_T aColor ) :
+                       int aPenWidth, COLOR4D aColor ) :
         WS_DRAW_ITEM_LINE( aParent, aStart, aEnd, aPenWidth, aColor )
     {
         m_type = wsg_rect;
@@ -251,7 +251,7 @@ public:
     /** The function to draw a WS_DRAW_ITEM_RECT
      */
     virtual void DrawWsItem( EDA_RECT* aClipBox, wxDC* aDC, const wxPoint& aOffset,
-            GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR ) override;
+            GR_DRAWMODE aDrawMode, COLOR4D aColor = COLOR4D::UNSPECIFIED ) override;
 
     /**
      * Virtual function
@@ -268,14 +268,14 @@ public:
     /**
      * return true if the point aPosition is on the starting point of this item.
      */
-    virtual bool HitTestStartPoint( const wxPoint& aPosition) override;
+    virtual bool HitTestStartPoint( wxDC *aDC, const wxPoint& aPosition ) override;
 
     /**
      * return true if the point aPosition is on the ending point of this item
      * This is avirtual function which should be overriden for items defien by
      * 2 points
      */
-    virtual bool HitTestEndPoint( const wxPoint& aPosition) override;
+    virtual bool HitTestEndPoint( wxDC *aDC, const wxPoint& aPosition ) override;
 };
 
 // This class draws a graphic text.
@@ -286,16 +286,21 @@ class WS_DRAW_ITEM_TEXT : public WS_DRAW_ITEM_BASE, public EDA_TEXT
 public:
     WS_DRAW_ITEM_TEXT( WORKSHEET_DATAITEM* aParent,
                        wxString& aText, wxPoint aPos, wxSize aSize,
-                       int aPenWidth, EDA_COLOR_T aColor,
+                       int aPenWidth, COLOR4D aColor,
                        bool aItalic = false, bool aBold = false );
 
     /** The function to draw a WS_DRAW_ITEM_TEXT
      */
     virtual void DrawWsItem( EDA_RECT* aClipBox, wxDC* aDC, const wxPoint& aOffset,
-            GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR ) override;
+            GR_DRAWMODE aDrawMode, COLOR4D aColor = COLOR4D::UNSPECIFIED ) override;
 
     // Accessors:
     int GetPenWidth() { return GetThickness(); }
+
+    void SetTextAngle( double aAngle )
+    {
+        EDA_TEXT::SetTextAngle( NormalizeAngle360Min( aAngle ) );
+    }
 
     /**
      * Virtual function
@@ -312,7 +317,7 @@ public:
     /**
      * return true if the point aPosition is on the starting point of this item.
      */
-    virtual bool HitTestStartPoint( const wxPoint& aPosition) override;
+    virtual bool HitTestStartPoint( wxDC *aDC, const wxPoint& aPosition ) override;
 };
 
 // This class draws a bitmap.
@@ -322,13 +327,13 @@ class WS_DRAW_ITEM_BITMAP : public WS_DRAW_ITEM_BASE
 
 public:
     WS_DRAW_ITEM_BITMAP( WORKSHEET_DATAITEM* aParent, wxPoint aPos )
-        :WS_DRAW_ITEM_BASE( aParent, wsg_bitmap, UNSPECIFIED_COLOR )
+        :WS_DRAW_ITEM_BASE( aParent, wsg_bitmap, COLOR4D::UNSPECIFIED )
     {
         m_pos = aPos;
     }
 
     WS_DRAW_ITEM_BITMAP()
-        :WS_DRAW_ITEM_BASE( NULL, wsg_bitmap, UNSPECIFIED_COLOR )
+        :WS_DRAW_ITEM_BASE( NULL, wsg_bitmap, COLOR4D::UNSPECIFIED )
     {
     }
 
@@ -337,7 +342,7 @@ public:
     /** The function to draw a WS_DRAW_ITEM_BITMAP
      */
     virtual void DrawWsItem( EDA_RECT* aClipBox, wxDC* aDC, const wxPoint& aOffset,
-            GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR ) override;
+            GR_DRAWMODE aDrawMode, COLOR4D aColor = COLOR4D::UNSPECIFIED ) override;
 
     /**
      * Virtual function
@@ -354,9 +359,9 @@ public:
     /**
      * return true if the point aPosition is on the reference point of this item.
      */
-    virtual bool HitTestStartPoint( const wxPoint& aPosition) override;
+    virtual bool HitTestStartPoint( wxDC *aDC, const wxPoint& aPosition ) override;
 
-    const wxPoint& GetPosition() { return m_pos; }
+    const wxPoint GetPosition() const { return m_pos; }
 };
 
 /*
@@ -383,7 +388,7 @@ protected:
     const TITLE_BLOCK* m_titleBlock;    // for basic inscriptions
     const wxString* m_paperFormat;      // for basic inscriptions
     wxString        m_fileName;         // for basic inscriptions
-    const wxString* m_sheetFullName;    // for basic inscriptions
+    wxString        m_sheetFullName;    // for basic inscriptions
     const wxString* m_sheetLayer;       // for basic inscriptions
 
 
@@ -395,10 +400,9 @@ public:
         m_penSize = 1;
         m_sheetNumber = 1;
         m_sheetCount = 1;
-        m_sheetLayer = 0;
-        m_titleBlock = NULL;
-        m_paperFormat = NULL;
-        m_sheetFullName = NULL;
+        m_sheetLayer = nullptr;
+        m_titleBlock = nullptr;
+        m_paperFormat = nullptr;
     }
 
     ~WS_DRAW_ITEM_LIST()
@@ -411,7 +415,7 @@ public:
      * Set the filename to draw/plot
      * @param aFileName = the text to display by the "filename" format
      */
-    void SetFileName( const wxString & aFileName )
+    void SetFileName( const wxString& aFileName )
     {
         m_fileName = aFileName;
     }
@@ -420,16 +424,16 @@ public:
      * Set the sheet name to draw/plot
      * @param aSheetName = the text to draw/plot by the "sheetname" format
      */
-    void SetSheetName( const wxString & aSheetName )
+    void SetSheetName( const wxString& aSheetName )
     {
-        m_sheetFullName = &aSheetName;
+        m_sheetFullName = aSheetName;
     }
 
     /**
      * Set the sheet layer to draw/plot
      * @param aSheetLayer = the text to draw/plot by the "sheetlayer" format
      */
-    void SetSheetLayer( const wxString & aSheetLayer )
+    void SetSheetLayer( const wxString& aSheetLayer )
     {
         m_sheetLayer = &aSheetLayer;
     }
@@ -552,7 +556,7 @@ public:
      */
     void BuildWorkSheetGraphicList( const PAGE_INFO& aPageInfo,
                                     const TITLE_BLOCK& aTitleBlock,
-                                    EDA_COLOR_T aColor, EDA_COLOR_T aAltColor );
+                                    COLOR4D aColor, COLOR4D aAltColor );
     /**
      * Function BuildFullText
      * returns the full text corresponding to the aTextbase,
@@ -588,7 +592,7 @@ public:
      * @param aList = the list of items found
      * @param aPosition the position (in user units) to locate items
      */
-    void Locate(std::vector <WS_DRAW_ITEM_BASE*>& aList, const wxPoint& aPosition);
+    void Locate(wxDC* aDC, std::vector <WS_DRAW_ITEM_BASE*>& aList, const wxPoint& aPosition);
 };
 
 
@@ -713,6 +717,21 @@ public:
     void SetDefaultLayout();
 
     /**
+     * Fills the list with an empty layout shape
+     */
+    void SetEmptyLayout();
+
+    /**
+     * Returns a string containing the empty layout shape
+     */
+    static wxString EmptyLayout();
+
+    /**
+     * Returns a string containing the empty layout shape
+     */
+    static wxString DefaultLayout();
+
+    /**
      * Populates the list with a custom layout, or
      * the default layout, if no custom layout available
      * @param aFullFileName = the custom page layout description file.
@@ -727,10 +746,12 @@ public:
     /**
      * Populates the list from a S expr description stored in a string
      * @param aPageLayout = the S expr string
-     * @param Append Do not delete old layout if true and append \a aPageLayout
+     * @param aAppend Do not delete old layout if true and append \a aPageLayout
      *               the existing one.
+       @param aSource is the layout source description.
      */
-    void SetPageLayout( const char* aPageLayout, bool Append = false );
+    void SetPageLayout( const char* aPageLayout, bool aAppend = false,
+            const wxString& aSource = wxT( "Sexpr_string" )  );
 
     /**
      * @return a short filename  from a full filename:

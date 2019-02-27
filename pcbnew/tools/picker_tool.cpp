@@ -23,14 +23,18 @@
  */
 
 #include "picker_tool.h"
-#include "common_actions.h"
-
-#include <wxPcbStruct.h>
+#include "pcb_actions.h"
+#include "grid_helper.h"
 #include <view/view_controls.h>
 #include <tool/tool_manager.h>
+#include "tool_event_utils.h"
+#include "selection_tool.h"
+
+TOOL_ACTION PCB_ACTIONS::pickerTool( "pcbnew.Picker", AS_GLOBAL, 0, "", "", NULL, AF_ACTIVATE );
+
 
 PICKER_TOOL::PICKER_TOOL()
-    : TOOL_INTERACTIVE( "pcbnew.Picker" )
+    : PCB_TOOL( "pcbnew.Picker" )
 {
     reset();
 }
@@ -39,19 +43,24 @@ PICKER_TOOL::PICKER_TOOL()
 int PICKER_TOOL::Main( const TOOL_EVENT& aEvent )
 {
     KIGFX::VIEW_CONTROLS* controls = getViewControls();
-
-    assert( !m_picking );
-    m_picking = true;
-    m_picked = boost::none;
+    GRID_HELPER grid( frame() );
+    int finalize_state = WAIT_CANCEL;
 
     setControls();
 
     while( OPT_TOOL_EVENT evt = Wait() )
     {
+        grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
+        grid.SetUseGrid( !evt->Modifier( MD_ALT ) );
+        controls->SetSnapping( !evt->Modifier( MD_ALT ) );
+        VECTOR2I cursorPos = grid.BestSnapAnchor( controls->GetMousePosition(), nullptr );
+        controls->ForceCursorPosition(true, cursorPos );
+
         if( evt->IsClick( BUT_LEFT ) )
         {
             bool getNext = false;
-            m_picked = controls->GetCursorPosition();
+
+            m_picked = cursorPos;
 
             if( m_clickHandler )
             {
@@ -62,33 +71,73 @@ int PICKER_TOOL::Main( const TOOL_EVENT& aEvent )
                 catch( std::exception& e )
                 {
                     std::cerr << "PICKER_TOOL click handler error: " << e.what() << std::endl;
+                    finalize_state = EXCEPTION_CANCEL;
                     break;
                 }
             }
 
             if( !getNext )
+            {
+                finalize_state = CLICK_CANCEL;
                 break;
+            }
             else
                 setControls();
         }
 
-        else if( evt->IsCancel() || evt->IsActivate() )
+        else if( TOOL_EVT_UTILS::IsCancelInteractive( *evt ) )
+        {
+            if( m_cancelHandler )
+            {
+                try
+                {
+                    (*m_cancelHandler)();
+                }
+                catch( std::exception& e )
+                {
+                    std::cerr << "PICKER_TOOL cancel handler error: " << e.what() << std::endl;
+                }
+            }
+
+            // Activating a new tool may have alternate finalization from canceling the current tool
+            if( evt->IsActivate() )
+                finalize_state = END_ACTIVATE;
+            else
+                finalize_state = EVT_CANCEL;
+
             break;
+        }
+
+        else if( evt->IsClick( BUT_RIGHT ) )
+            m_menu.ShowContextMenu();
 
         else
             m_toolMgr->PassEvent();
     }
 
+    if( m_finalizeHandler )
+    {
+        try
+        {
+            (*m_finalizeHandler)( finalize_state );
+        }
+        catch( std::exception& e )
+        {
+            std::cerr << "PICKER_TOOL finalize handler error: " << e.what() << std::endl;
+        }
+    }
+
     reset();
-    getEditFrame<PCB_BASE_FRAME>()->SetToolID( ID_NO_TOOL_SELECTED, wxCURSOR_DEFAULT, wxEmptyString );
+    controls->ForceCursorPosition( false );
+    getEditFrame<PCB_BASE_FRAME>()->SetNoToolSelected();
 
     return 0;
 }
 
 
-void PICKER_TOOL::SetTransitions()
+void PICKER_TOOL::setTransitions()
 {
-    Go( &PICKER_TOOL::Main, COMMON_ACTIONS::pickerTool.MakeEvent() );
+    Go( &PICKER_TOOL::Main, PCB_ACTIONS::pickerTool.MakeEvent() );
 }
 
 
@@ -98,9 +147,12 @@ void PICKER_TOOL::reset()
     m_cursorVisible = true;
     m_cursorCapture = false;
     m_autoPanning = false;
+    m_layerMask = LSET::AllLayersMask();
 
-    m_picking = false;
-    m_clickHandler = boost::none;
+    m_picked = NULLOPT;
+    m_clickHandler = NULLOPT;
+    m_cancelHandler = NULLOPT;
+    m_finalizeHandler = NULLOPT;
 }
 
 
@@ -108,8 +160,10 @@ void PICKER_TOOL::setControls()
 {
     KIGFX::VIEW_CONTROLS* controls = getViewControls();
 
+    // Ensure that the view controls do not handle our snapping as we use the GRID_HELPER
+    controls->SetSnapping( false );
+
     controls->ShowCursor( m_cursorVisible );
-    controls->SetSnapping( m_cursorSnapping );
     controls->CaptureCursor( m_cursorCapture );
     controls->SetAutoPan( m_autoPanning );
 }

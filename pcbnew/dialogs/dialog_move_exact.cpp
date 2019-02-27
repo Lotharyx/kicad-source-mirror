@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2014 John Beard, john.j.beard@gmail.com
- * Copyright (C) 1992-2014 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -22,55 +22,90 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <wxPcbStruct.h>
-#include <base_units.h>
-#include <macros.h>
+#include <dialogs/dialog_move_exact.h>
 
-#include <module_editor_frame.h>
+#include <widgets/tab_traversal.h>
 
-#include "dialog_move_exact.h"
+#include <pcb_edit_frame.h>
 
 // initialise statics
 DIALOG_MOVE_EXACT::MOVE_EXACT_OPTIONS DIALOG_MOVE_EXACT::m_options;
 
 
-DIALOG_MOVE_EXACT::DIALOG_MOVE_EXACT( PCB_BASE_FRAME* aParent,
-                                      wxPoint& translation, double& rotation ):
+DIALOG_MOVE_EXACT::DIALOG_MOVE_EXACT( PCB_BASE_FRAME *aParent, wxPoint& aTranslate,
+                                      double& aRotate, ROTATION_ANCHOR& aAnchor ) :
     DIALOG_MOVE_EXACT_BASE( aParent ),
-    m_translation( translation ),
-    m_rotation( rotation )
+    m_translation( aTranslate ),
+    m_rotation( aRotate ),
+    m_rotationAnchor( aAnchor ),
+    m_moveX( aParent, m_xLabel, m_xEntry, m_xUnit ),
+    m_moveY( aParent, m_yLabel, m_yEntry, m_yUnit ),
+    m_rotate( aParent, m_rotLabel, m_rotEntry, m_rotUnit )
 {
-    // set the unit labels
-    m_xUnit->SetLabelText( GetAbbreviatedUnitsLabel( g_UserUnit ) );
-    m_yUnit->SetLabelText( GetAbbreviatedUnitsLabel( g_UserUnit ) );
-
     // tabbing goes through the entries in sequence
-    m_yEntry->MoveAfterInTabOrder( m_xEntry );
-    m_rotEntry->MoveAfterInTabOrder( m_yEntry );
+    KIUI::SetControlsTabOrder( {
+            m_xEntry,
+            m_yEntry,
+            m_rotEntry,
+            m_anchorOptions,
+    } );
+
+    updateDialogControls( m_options.polarCoords );
+
+    m_menuIDs.push_back( aAnchor );
+    m_menuIDs.push_back( ROTATE_AROUND_USER_ORIGIN );
+
+    if( aParent->IsType( FRAME_PCB ) )
+        m_menuIDs.push_back( ROTATE_AROUND_AUX_ORIGIN );
+
+    buildRotationAnchorMenu();
 
     // and set up the entries according to the saved options
     m_polarCoords->SetValue( m_options.polarCoords );
-    m_xEntry->SetValue( wxString::FromDouble( m_options.entry1 ) );
-    m_yEntry->SetValue( wxString::FromDouble( m_options.entry2 ) );
-    m_rotEntry->SetValue( wxString::FromDouble( m_options.entryRotation ) );
-    updateDlgTexts( m_polarCoords->IsChecked() );
+    m_moveX.SetValue( m_options.entry1 );
+    m_moveY.SetValue( m_options.entry2 );
+
+    m_rotate.SetUnits( DEGREES );
+    m_rotate.SetValue( m_options.entryRotation );
+    m_anchorOptions->SetSelection( std::min( m_options.entryAnchorSelection, m_menuIDs.size() ) );
 
     m_stdButtonsOK->SetDefault();
 
-    GetSizer()->SetSizeHints( this );
-    Layout();
+    FinishDialogSettings();
 }
 
 
-DIALOG_MOVE_EXACT::~DIALOG_MOVE_EXACT()
+void DIALOG_MOVE_EXACT::buildRotationAnchorMenu()
 {
+    wxArrayString menuItems;
+
+    for( auto anchorID : m_menuIDs )
+    {
+        switch( anchorID )
+        {
+        case ROTATE_AROUND_ITEM_ANCHOR:
+            menuItems.push_back( _( "Rotate around item anchor" ) );
+            break;
+        case ROTATE_AROUND_SEL_CENTER:
+            menuItems.push_back( _( "Rotate around selection center" ) );
+            break;
+        case ROTATE_AROUND_USER_ORIGIN:
+            menuItems.push_back( _( "Rotate around local coordinates origin" ) );
+            break;
+        case ROTATE_AROUND_AUX_ORIGIN:
+            menuItems.push_back( _( "Rotate around drill/place origin" ) );
+            break;
+        }
+    }
+
+    m_anchorOptions->Set( menuItems );
 }
 
 
 void DIALOG_MOVE_EXACT::ToPolarDeg( double x, double y, double& r, double& q )
 {
     // convert to polar coordinates
-    r = hypot ( x, y );
+    r = hypot( x, y );
 
     q = ( r != 0) ? RAD2DEG( atan2( y, x ) ) : 0;
 }
@@ -80,8 +115,8 @@ bool DIALOG_MOVE_EXACT::GetTranslationInIU ( wxPoint& val, bool polar )
 {
     if( polar )
     {
-        const int r = ValueFromTextCtrl( *m_xEntry );
-        const double q = DoubleValueFromString( DEGREES, m_yEntry->GetValue() );
+        const int r = m_moveX.GetValue();
+        const double q = m_moveY.GetValue();
 
         val.x = r * cos( DEG2RAD( q / 10.0 ) );
         val.y = r * sin( DEG2RAD( q / 10.0 ) );
@@ -89,8 +124,8 @@ bool DIALOG_MOVE_EXACT::GetTranslationInIU ( wxPoint& val, bool polar )
     else
     {
         // direct read
-        val.x = ValueFromTextCtrl( *m_xEntry );
-        val.y = ValueFromTextCtrl( *m_yEntry );
+        val.x = m_moveX.GetValue();
+        val.y = m_moveY.GetValue();
     }
 
     // no validation to do here, but in future, you could return false here
@@ -101,11 +136,13 @@ bool DIALOG_MOVE_EXACT::GetTranslationInIU ( wxPoint& val, bool polar )
 void DIALOG_MOVE_EXACT::OnPolarChanged( wxCommandEvent& event )
 {
     bool newPolar = m_polarCoords->IsChecked();
-    updateDlgTexts( newPolar );
     wxPoint val;
 
     // get the value as previously stored
     GetTranslationInIU( val, !newPolar );
+
+    // now switch the controls to the new representations
+    updateDialogControls( newPolar );
 
     if( newPolar )
     {
@@ -113,8 +150,8 @@ void DIALOG_MOVE_EXACT::OnPolarChanged( wxCommandEvent& event )
         double r, q;
         ToPolarDeg( val.x, val.y, r, q );
 
-        PutValueInLocalUnits( *m_xEntry, KiROUND( r / 10.0) * 10 );
-        m_yEntry->SetValue( wxString::FromDouble( q ) );
+        m_moveX.SetValue( KiROUND( r / 10.0) * 10 );
+        m_moveY.SetValue( q * 10 );
     }
     else
     {
@@ -122,72 +159,73 @@ void DIALOG_MOVE_EXACT::OnPolarChanged( wxCommandEvent& event )
         // note - round off the last decimal place (10nm) to prevent
         // (some) rounding causing errors when round-tripping
         // you can never eliminate entirely, however
-        PutValueInLocalUnits( *m_xEntry, KiROUND( val.x / 10.0 ) * 10 );
-        PutValueInLocalUnits( *m_yEntry, KiROUND( val.y / 10.0 ) * 10 );
+        m_moveX.SetValue( KiROUND( val.x / 10.0 ) * 10 );
+        m_moveY.SetValue( KiROUND( val.y / 10.0 ) * 10 );
     }
-    Layout();
+
 }
 
 
-void DIALOG_MOVE_EXACT::updateDlgTexts( bool aPolar )
+void DIALOG_MOVE_EXACT::updateDialogControls( bool aPolar )
 {
     if( aPolar )
     {
-        m_xLabel->SetLabelText( _( "Distance:" ) );     // Polar radius
-        m_yLabel->SetLabelText( _( "Angle:" ) );        // Polar theta or angle
-
-        m_yUnit->SetLabelText( GetAbbreviatedUnitsLabel( DEGREES ) );
+        m_moveX.SetLabel( _( "Distance:" ) );     // Polar radius
+        m_moveY.SetLabel( _( "Angle:" ) );        // Polar theta or angle
+        m_moveY.SetUnits( DEGREES );
     }
     else
     {
-        m_xLabel->SetLabelText( _( "Move vector X:" ) );
-        m_yLabel->SetLabelText( _( "Move vector Y:" ) );
-
-        m_yUnit->SetLabelText( GetAbbreviatedUnitsLabel( g_UserUnit ) );
+        m_moveX.SetLabel( _( "Move X:" ) );
+        m_moveY.SetLabel( _( "Move Y:" ) );
+        m_moveY.SetUnits( GetUserUnits() );
     }
+
+    Layout();
 }
 
 
 void DIALOG_MOVE_EXACT::OnClear( wxCommandEvent& event )
 {
     wxObject* obj = event.GetEventObject();
-    wxTextCtrl* entry = NULL;
 
     if( obj == m_clearX )
     {
-        entry = m_xEntry;
+        m_moveX.SetValue( 0 );
     }
     else if( obj == m_clearY )
     {
-        entry = m_yEntry;
+        m_moveY.SetValue( 0 );
     }
     else if( obj == m_clearRot )
     {
-        entry = m_rotEntry;
+        m_rotate.SetValue( 0 );
     }
 
-    if( entry )
-        entry->SetValue( "0" );
+    // Keep m_stdButtonsOK focused to allow enter key actiavte the OK button
+    m_stdButtonsOK->SetFocus();
 }
 
 
-void DIALOG_MOVE_EXACT::OnOkClick( wxCommandEvent& event )
+bool DIALOG_MOVE_EXACT::TransferDataFromWindow()
 {
-    m_rotation = DoubleValueFromString( DEGREES, m_rotEntry->GetValue() );
-
     // for the output, we only deliver a Cartesian vector
     bool ok = GetTranslationInIU( m_translation, m_polarCoords->IsChecked() );
+    m_rotation = m_rotate.GetValue();
+    m_rotationAnchor = m_menuIDs[ m_anchorOptions->GetSelection() ];
 
     if( ok )
     {
         // save the settings
         m_options.polarCoords = m_polarCoords->GetValue();
-        m_options.entry1 = DoubleValueFromString( UNSCALED_UNITS, m_xEntry->GetValue() );
-        m_options.entry2 = DoubleValueFromString( UNSCALED_UNITS, m_yEntry->GetValue() );
-        m_options.entryRotation = DoubleValueFromString( UNSCALED_UNITS, m_rotEntry->GetValue() );
-
-        event.Skip();
+        m_options.entry1 = m_moveX.GetValue();
+        m_options.entry2 = m_moveY.GetValue();
+        m_options.entryRotation = m_rotate.GetValue();
+        m_options.entryAnchorSelection = (size_t) std::max( m_anchorOptions->GetSelection(), 0 );
+        return true;
     }
+
+    return false;
 }
 
 

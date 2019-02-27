@@ -24,7 +24,6 @@
 #include <fctsys.h>
 #include <pgm_base.h>
 #include <kiface_i.h>
-#include <wxstruct.h>
 #include <confirm.h>
 #include <gestfich.h>
 
@@ -35,7 +34,6 @@
 #include <pcb_calculator.h>
 
 #include <bitmaps.h>
-#include <colors_selection.h>
 #include <build_version.h>
 
 // Pcb_calculator data file extension:

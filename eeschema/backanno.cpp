@@ -2,8 +2,8 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2008-2016 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2004-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2008 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 2004-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -33,7 +33,7 @@
 #include <kicad_string.h>
 #include <gestfich.h>
 #include <kiface_i.h>
-#include <schframe.h>
+#include <sch_edit_frame.h>
 #include <build_version.h>
 #include <wildcards_and_files_ext.h>
 
@@ -49,14 +49,13 @@
 
 
 void SCH_EDIT_FRAME::backAnnotateFootprints( const std::string& aChangedSetOfReferences )
-    throw( IO_ERROR, boost::bad_pointer )
 {
     // Build a flat list of components in schematic:
     SCH_REFERENCE_LIST  refs;
     SCH_SHEET_LIST      sheets( g_RootSheet );
     bool                isChanged = false;
 
-    sheets.GetComponents( Prj().SchLibs(), refs, false );
+    sheets.GetComponents( refs, false );
 
     DSNLEXER    lexer( aChangedSetOfReferences, FROM_UTF8( __func__ ) );
     PTREE       doc;
@@ -90,8 +89,6 @@ void SCH_EDIT_FRAME::backAnnotateFootprints( const std::string& aChangedSetOfRef
             else
                 footprint.Empty();
 
-            // DBG( printf( "%s: ref:%s  fpid:%s\n", __func__, TO_UTF8( reference ), TO_UTF8( footprint ) ); )
-
             // Search the component in the flat list
             for( unsigned ii = 0;  ii < refs.GetCount();  ++ii )
             {
@@ -109,7 +106,6 @@ void SCH_EDIT_FRAME::backAnnotateFootprints( const std::string& aChangedSetOfRef
                         fpfield->SetVisible( false );
                     }
 
-                    // DBG( printf("%s: ref:%s  fpid:%s\n", __func__, TO_UTF8( refs[ii].GetRef() ), TO_UTF8( footprint ) );)
                     if( oldfp != footprint )
                         isChanged = true;
 
@@ -125,7 +121,11 @@ void SCH_EDIT_FRAME::backAnnotateFootprints( const std::string& aChangedSetOfRef
     }
 
     if( isChanged )
+    {
+        SyncView();
+        GetCanvas()->Refresh();
         OnModify();
+    }
 }
 
 
@@ -137,7 +137,7 @@ bool SCH_EDIT_FRAME::ProcessCmpToFootprintLinkFile( const wxString& aFullFilenam
     SCH_REFERENCE_LIST  referencesList;
     SCH_SHEET_LIST      sheetList( g_RootSheet );
 
-    sheetList.GetComponents( Prj().SchLibs(), referencesList, false );
+    sheetList.GetComponents( referencesList, false );
 
     FILE* cmpFile = wxFopen( aFullFilename, wxT( "rt" ) );
 
@@ -222,9 +222,9 @@ bool SCH_EDIT_FRAME::LoadCmpToFootprintLinkFile()
 {
     wxString path = wxPathOnly( Prj().GetProjectFullName() );
 
-    wxFileDialog dlg( this, _( "Load Component Footprint Link File" ),
+    wxFileDialog dlg( this, _( "Load Symbol Footprint Link File" ),
                       path, wxEmptyString,
-                      ComponentFileExtensionWildcard,
+                      ComponentFileWildcard(),
                       wxFD_OPEN | wxFD_FILE_MUST_EXIST );
 
     if( dlg.ShowModal() == wxID_CANCEL )
@@ -249,13 +249,15 @@ bool SCH_EDIT_FRAME::LoadCmpToFootprintLinkFile()
 
     if( !ProcessCmpToFootprintLinkFile( filename, forceVisibility, visibilityState ) )
     {
-        wxString msg = wxString::Format( _( "Failed to open component-footprint link file '%s'" ),
+        wxString msg = wxString::Format( _( "Failed to open component-footprint link file \"%s\"" ),
                                          filename.GetData() );
 
         DisplayError( this, msg );
         return false;
     }
 
+    SyncView();
+    GetCanvas()->Refresh();
     OnModify();
     return true;
 }

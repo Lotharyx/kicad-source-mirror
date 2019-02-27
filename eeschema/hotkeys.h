@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2007 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2014 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2014-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -42,20 +42,21 @@ enum hotkey_id_commnand {
     HK_REPEAT_LAST,
     HK_LIBEDIT_MOVE_GRAPHIC_ITEM,
     HK_MOVEBLOCK_TO_DRAGBLOCK,
-    HK_SAVE_BLOCK,
     HK_LIBEDIT_CREATE_PIN,
+    HK_LIBEDIT_VIEW_DOC,
     HK_DELETE_PIN,
     HK_ROTATE,
     HK_EDIT,
     HK_EDIT_COMPONENT_VALUE,
     HK_EDIT_COMPONENT_REFERENCE,
     HK_EDIT_COMPONENT_FOOTPRINT,
+    HK_SHOW_COMPONENT_DATASHEET,
     HK_EDIT_COMPONENT_WITH_LIBEDIT,
     HK_MIRROR_X,
     HK_MIRROR_Y,
     HK_ORIENT_NORMAL_COMPONENT,
     HK_MOVE_COMPONENT_OR_ITEM,
-    HK_COPY_COMPONENT_OR_LABEL,
+    HK_DUPLICATE_ITEM,
     HK_DRAG,
     HK_ADD_NEW_COMPONENT,
     HK_ADD_NEW_POWER,
@@ -72,15 +73,15 @@ enum hotkey_id_commnand {
     HK_ADD_GRAPHIC_TEXT,
     HK_ADD_GRAPHIC_POLYLINE,
     HK_ADD_NOCONN_FLAG,
-    HK_SAVE_LIB,
-    HK_SAVE_SCH,
-    HK_LOAD_SCH,
     HK_LEFT_CLICK,
     HK_LEFT_DCLICK,
     HK_LEAVE_SHEET,
     HK_DELETE_NODE,
     HK_AUTOPLACE_FIELDS,
-    HK_UPDATE_PCB_FROM_SCH
+    HK_UPDATE_PCB_FROM_SCH,
+    HK_SELECT_ITEMS_ON_PCB,
+    HK_CANVAS_OPENGL,
+    HK_CANVAS_CAIRO,
 };
 
 // List of hotkey descriptors for Eeschema

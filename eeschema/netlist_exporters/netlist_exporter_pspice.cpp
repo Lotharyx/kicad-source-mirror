@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1992-2013 jp.charras at wanadoo.fr
  * Copyright (C) 2013 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.TXT for contributors.
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.TXT for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -31,13 +31,31 @@
 #include <map>
 #include <search_stack.h>
 
-#include <schframe.h>
+#include <sch_edit_frame.h>
 #include <netlist.h>
 #include <sch_reference_list.h>
-#include <class_netlist_object.h>
+#include <env_paths.h>
 
 #include <wx/tokenzr.h>
 #include <wx/regex.h>
+
+
+wxString NETLIST_EXPORTER_PSPICE::GetSpiceDevice( const wxString& aComponent ) const
+{
+    const auto& spiceItems = GetSpiceItems();
+
+    auto it = std::find_if( spiceItems.begin(), spiceItems.end(), [&]( const SPICE_ITEM& item ) {
+        return item.m_refName == aComponent;
+    } );
+
+    if( it == spiceItems.end() )
+        return wxEmptyString;
+
+    // Prefix the device type if plain reference would result in a different device type
+    return it->m_primitive != it->m_refName[0] ?
+        wxString( it->m_primitive + it->m_refName ) : it->m_refName;
+}
+
 
 bool NETLIST_EXPORTER_PSPICE::WriteNetlist( const wxString& aOutFileName, unsigned aNetlistOptions )
 {
@@ -62,20 +80,23 @@ bool NETLIST_EXPORTER_PSPICE::Format( OUTPUTFORMATTER* aFormatter, unsigned aCtl
     // Netlist options
     const bool useNetcodeAsNetName = false;//aCtl & NET_USE_NETCODES_AS_NETNAMES;
 
+    // default title
+    m_title = "KiCad schematic";
+
     if( !ProcessNetlist( aCtl ) )
         return false;
 
-    aFormatter->Print( 0, ".title KiCad schematic\n" );
+    aFormatter->Print( 0, ".title %s\n", (const char*) m_title.c_str() );
 
     // Write .include directives
-    for( auto lib : m_libraries )
+    for( const auto& lib : m_libraries )
     {
         wxString full_path;
 
-        if( ( aCtl & NET_ADJUST_INCLUDE_PATHS ) && m_paths )
+        if( ( aCtl & NET_ADJUST_INCLUDE_PATHS ) )
         {
             // Look for the library in known search locations
-            full_path = m_paths->FindValidPath( lib );
+            full_path = ResolveFile( lib, &Pgm().GetLocalEnvVariables(), m_project );
 
             if( full_path.IsEmpty() )
             {
@@ -83,44 +104,34 @@ bool NETLIST_EXPORTER_PSPICE::Format( OUTPUTFORMATTER* aFormatter, unsigned aCtl
                 full_path = lib;
             }
         }
+        else
+            full_path = lib;    // just use the unaltered path
 
         aFormatter->Print( 0, ".include \"%s\"\n", (const char*) full_path.c_str() );
     }
 
+    unsigned int NC_counter = 1;
+
     for( const auto& item : m_spiceItems )
     {
-        aFormatter->Print( 0, "%c%s ", item.m_primitive, (const char*) item.m_refName.c_str() );
+        if( !item.m_enabled )
+            continue;
 
-        // Pins to node mapping
-        int activePinIndex = 0;
+        wxString device = GetSpiceDevice( item.m_refName );
+        aFormatter->Print( 0, "%s ", (const char*) device.c_str() );
 
-        for( unsigned ii = 0; ii < item.m_pins.size(); ii++ )
+        size_t pspiceNodes = item.m_pinSequence.empty() ? item.m_pins.size() : item.m_pinSequence.size();
+
+        for( size_t ii = 0; ii < pspiceNodes; ii++ )
         {
-            // Case of Alt Sequence definition with Unused/Invalid Node index:
+            // Use the custom order if defined, otherwise use the standard pin order as defined in the compon
+            size_t activePinIndex = item.m_pinSequence.empty() ? ii : item.m_pinSequence[ii];
             // Valid used Node Indexes are in the set
             // {0,1,2,...m_item.m_pin.size()-1}
-            if( !item.m_pinSequence.empty() )
+            if( activePinIndex >= item.m_pins.size() )
             {
-                // All Vector values must be less <= max package size
-                // And Total Vector size should be <= package size
-                if( ( (unsigned) item.m_pinSequence[ii] < item.m_pins.size() )
-                    && ( ii < item.m_pinSequence.size() ) )
-                {
-                    // Case of Alt Pin Sequence in control good Index:
-                    activePinIndex = item.m_pinSequence[ii];
-                }
-                else
-                {
-                    // Case of Alt Pin Sequence in control Bad Index or not using all
-                    // pins for simulation:
-                    wxASSERT_MSG( false, "Used an invalid pin number in node sequence" );
-                    continue;
-                }
-            }
-            // Case of Standard Pin Sequence in control:
-            else
-            {
-                activePinIndex = ii;
+                wxASSERT_MSG( false, "Used an invalid pin number in node sequence" );
+                continue;
             }
 
             NETLIST_OBJECT* pin = item.m_pins[activePinIndex];
@@ -139,8 +150,9 @@ bool NETLIST_EXPORTER_PSPICE::Format( OUTPUTFORMATTER* aFormatter, unsigned aCtl
                 // Replace parenthesis with underscore to prevent parse issues with simulators
                 ReplaceForbiddenChars( netName );
 
+                // Borrow LTSpice's nomenclature for unconnected nets
                 if( netName.IsEmpty() )
-                    netName = wxT( "?" );
+                    netName = wxString::Format( wxT( "NC_%.2u" ), NC_counter++ );
 
                 aFormatter->Print( 0, "%s ", TO_UTF8( netName ) );
             }
@@ -221,10 +233,12 @@ wxString NETLIST_EXPORTER_PSPICE::GetSpiceFieldDefVal( SPICE_FIELD aField,
         wxString nodeSeq;
         std::vector<LIB_PIN*> pins;
 
-        aComponent->GetPins( pins );
+        auto part = aComponent->GetPartRef().lock();
+        wxCHECK( part, wxString() );
+        part->GetPins( pins );
 
         for( auto pin : pins )
-            nodeSeq += pin->GetNumberString() + " ";
+            nodeSeq += pin->GetNumber() + " ";
 
         nodeSeq.Trim();
 
@@ -330,7 +344,7 @@ bool NETLIST_EXPORTER_PSPICE::ProcessNetlist( unsigned aCtl )
             if( fieldSeq )
             {
                 // Get the string containing the sequence of nodes:
-                wxString nodeSeqIndexLineStr = fieldSeq->GetText();
+                const wxString& nodeSeqIndexLineStr = fieldSeq->GetText();
 
                 // Verify field exists and is not empty:
                 if( !nodeSeqIndexLineStr.IsEmpty() )
@@ -363,8 +377,11 @@ bool NETLIST_EXPORTER_PSPICE::ProcessNetlist( unsigned aCtl )
 void NETLIST_EXPORTER_PSPICE::UpdateDirectives( unsigned aCtl )
 {
     const SCH_SHEET_LIST& sheetList = g_RootSheet;
+    wxRegEx couplingK( "^[kK][[:digit:]]*[[:space:]]+[[:alnum:]]+[[:space:]]+[[:alnum:]]+",
+            wxRE_ADVANCED );
 
     m_directives.clear();
+    bool controlBlock = false;
 
     for( unsigned i = 0; i < sheetList.size(); i++ )
     {
@@ -378,26 +395,71 @@ void NETLIST_EXPORTER_PSPICE::UpdateDirectives( unsigned aCtl )
             if( text.IsEmpty() )
                 continue;
 
-            if( text.GetChar( 0 ) == '.' )
+            // Analyze each line of a text field
+            wxStringTokenizer tokenizer( text, "\r\n" );
+
+            // Flag to follow multiline directives
+            bool directiveStarted = false;
+
+            while( tokenizer.HasMoreTokens() )
             {
-                wxStringTokenizer tokenizer( text, "\r\n" );
+                wxString line( tokenizer.GetNextToken() );
 
-                while( tokenizer.HasMoreTokens() )
+                // Cleanup: remove preceding and trailing white-space characters
+                line.Trim( true ).Trim( false );
+                // Convert to lower-case for parsing purposes only
+                wxString lowercaseline = line;
+                lowercaseline.MakeLower();
+
+                // 'Include' directive stores the library file name, so it
+                // can be later resolved using a list of paths
+                if( lowercaseline.StartsWith( ".inc" ) )
                 {
-                    wxString directive( tokenizer.GetNextToken() );
+                    wxString lib = line.AfterFirst( ' ' );
 
-                    if( directive.StartsWith( ".inc" ) )
-                    {
-                        wxString lib = directive.AfterFirst( ' ' );
+                    if( lib.IsEmpty() )
+                        continue;
 
-                        if( !lib.IsEmpty() )
-                            m_libraries.insert( lib );
-                    }
-                    else
+                    // Strip quotes if present
+                    if( ( lib.StartsWith( "\"" ) && lib.EndsWith( "\"" ) )
+                        || ( lib.StartsWith( "'" ) && lib.EndsWith( "'" ) ) )
                     {
-                        m_directives.push_back( directive );
+                        lib = lib.Mid( 1, lib.Length() - 2 );
                     }
+
+                    m_libraries.insert( lib );
                 }
+
+                // Store the title to be sure it appears
+                // in the first line of output
+                else if( lowercaseline.StartsWith( ".title " ) )
+                {
+                    m_title = line.AfterFirst( ' ' );
+                }
+
+                // Handle .control .. .endc blocks
+                else if( lowercaseline.IsSameAs( ".control" ) && ( !controlBlock ) )
+                {
+                    controlBlock = true;
+                    m_directives.push_back( line );
+                }
+                else if( lowercaseline.IsSameAs( ".endc" ) && controlBlock )
+                {
+                    controlBlock = false;
+                    m_directives.push_back( line );
+                }
+
+                else if( line.StartsWith( '.' )                           // one-line directives
+                        || controlBlock                                   // .control .. .endc block
+                        || couplingK.Matches( line )                      // K## L## L## coupling constant
+                        || ( directiveStarted && line.StartsWith( '+' ) ) ) // multiline directives
+                {
+                    m_directives.push_back( line );
+                }
+
+                // Mark directive as started or continued in case it is a multi-line one
+                directiveStarted = line.StartsWith( '.' )
+                    || ( directiveStarted && line.StartsWith( '+' ) );
             }
         }
     }

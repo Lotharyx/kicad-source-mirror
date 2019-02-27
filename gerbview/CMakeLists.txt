@@ -1,43 +1,50 @@
+# .cpp files are compiled with extra ${WSHADOW_FLAGS}
+if( COMPILER_SUPPORTS_WSHADOW )
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${WSHADOW_FLAGS}")
+endif()
+
 add_definitions(-DGERBVIEW)
 
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
+    ../include/legacy_wx
     ../pcbnew
     dialogs
+    ../common
     ../3d-viewer
-    ../polygon
     ${INC_AFTER}
     )
 
 
 set( DIALOGS_SRCS
-    dialogs/gerbview_dialog_display_options_frame_base.cpp
-    dialogs/gerbview_dialog_display_options_frame.cpp
+    dialogs/panel_gerbview_display_options.cpp
+    dialogs/panel_gerbview_display_options_base.cpp
+    dialogs/panel_gerbview_settings.cpp
+    dialogs/panel_gerbview_settings_base.cpp
     dialogs/dialog_layers_select_to_pcb_base.cpp
-    dialogs/dialog_print_using_printer.cpp
-    dialogs/dialog_print_using_printer_base.cpp
+    dialogs/dialog_print_gerbview.cpp
     dialogs/dialog_select_one_pcb_layer.cpp
-    dialogs/dialog_show_page_borders.cpp
-    dialogs/dialog_show_page_borders_base.cpp
     )
 
 set( GERBVIEW_SRCS
     block.cpp
-    class_am_param.cpp
-    class_aperture_macro.cpp
-    class_DCodeSelectionbox.cpp
-    class_gbr_screen.cpp
-    class_gbr_layout.cpp
-    class_gerber_file_image.cpp
-    class_gerber_file_image_list.cpp
-    class_gerber_draw_item.cpp
-    class_gerbview_layer_widget.cpp
-    class_gbr_layer_box_selector.cpp
-    class_X2_gerber_attributes.cpp
+    am_param.cpp
+    am_primitive.cpp
+    DCodeSelectionbox.cpp
+    gbr_screen.cpp
+    gbr_layout.cpp
+    gerber_file_image.cpp
+    gerber_file_image_list.cpp
+    gerber_draw_item.cpp
+    gerbview_layer_widget.cpp
+    gerbview_printout.cpp
+    gbr_layer_box_selector.cpp
+    X2_gerber_attributes.cpp
     clear_gbr_drawlayers.cpp
     controle.cpp
     dcode.cpp
     draw_gerber_screen.cpp
+    evaluate.cpp
     events_called_functions.cpp
     excellon_read_drill_file.cpp
     export_to_pcbnew.cpp
@@ -45,27 +52,37 @@ set( GERBVIEW_SRCS
     gerbview_config.cpp
     gerbview_frame.cpp
     hotkeys.cpp
-    clear_gbr_drawlayers.cpp
+    json11.cpp
+    job_file_reader.cpp
     locate.cpp
     menubar.cpp
     onleftclick.cpp
     onrightclick.cpp
-    printout_control.cpp
     readgerb.cpp
     rs274_read_XY_and_IJ_coordinates.cpp
     rs274d.cpp
     rs274x.cpp
     select_layers_to_pcb.cpp
     toolbars_gerber.cpp
+
+    gerbview_draw_panel_gal.cpp
+    gerbview_painter.cpp
+
+    tools/gerbview_actions.cpp
+    tools/selection_tool.cpp
+    tools/gerbview_control.cpp
+    gerber_collectors.cpp
     )
 
 set( GERBVIEW_EXTRA_SRCS
     ../common/base_screen.cpp
     ../common/base_units.cpp
     ../common/eda_text.cpp
-    ../common/class_layer_box_selector.cpp
-    ../common/class_page_info.cpp
+    ../common/widgets/layer_box_selector.cpp
+    ../common/lset.cpp
+    ../common/settings.cpp
     ../pcbnew/layer_widget.cpp
+    ../common/page_info.cpp
 )
 
 if( MINGW )
@@ -101,7 +118,8 @@ target_link_libraries( gerbview
     #singletop  # replaces common, giving us restrictive control and link warnings.
     # There's way too much crap coming in from common yet.
     common
-    bitmaps
+    gal
+    legacy_wx
     ${wxWidgets_LIBRARIES}
     )
 
@@ -124,9 +142,14 @@ set_target_properties( gerbview_kiface PROPERTIES
     )
 target_link_libraries( gerbview_kiface
     common
-    polygon
-    bitmaps
     gal
+    legacy_wx
+    common
+    gal
+    legacy_wx
+    common
+    gal
+    legacy_wx
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
     )

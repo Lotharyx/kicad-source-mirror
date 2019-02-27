@@ -33,8 +33,12 @@
 #include <vector>
 
 #include <base_struct.h>
+#include <gal/color4d.h>
+#include <geometry/shape_poly_set.h>
 
+using KIGFX::COLOR4D;
 
+class wxDC;
 class GERBER_DRAW_ITEM;
 
 
@@ -86,11 +90,6 @@ private:
      */
     std::vector<double>   m_am_params;
 
-    std::vector <wxPoint> m_PolyCorners;    /* Polygon used to draw APT_POLYGON shape and some other
-                                             * complex shapes which are converted to polygon
-                                             * (shapes with hole )
-                                             */
-
 public:
     wxSize                m_Size;           ///< Horizontal and vertical dimensions.
     APERTURE_T            m_Shape;          ///< shape ( Line, rectangle, circle , oval .. )
@@ -105,7 +104,10 @@ public:
     bool                  m_Defined;        ///< false if the aperture is not defined in the header
     wxString              m_AperFunction;   ///< the aperture attribute (created by a %TA.AperFunction command)
                                             ///< attached to the D_CODE
-
+    SHAPE_POLY_SET        m_Polygon;        /* Polygon used to draw APT_POLYGON shape and some other
+                                             * complex shapes which are converted to polygon
+                                             * (shapes with hole )
+                                             */
 
 public:
     D_CODE( int num_dcode );
@@ -173,7 +175,7 @@ public:
      * @param aFilledShape = true to draw in filled mode, false to draw in sketch mode
      */
     void DrawFlashedShape( GERBER_DRAW_ITEM* aParent, EDA_RECT* aClipBox,
-                           wxDC* aDC, EDA_COLOR_T aColor,
+                           wxDC* aDC, COLOR4D aColor,
                            wxPoint aShapePos, bool aFilledShape );
 
     /**
@@ -190,7 +192,7 @@ public:
      * @param aPosition = the actual shape position
      */
     void DrawFlashedPolygon( GERBER_DRAW_ITEM* aParent,
-                             EDA_RECT* aClipBox, wxDC* aDC, EDA_COLOR_T aColor,
+                             EDA_RECT* aClipBox, wxDC* aDC, COLOR4D aColor,
                              bool aFilled, const wxPoint& aPosition );
 
     /**

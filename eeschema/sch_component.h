@@ -3,8 +3,8 @@
  *
  * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2014 Dick Hollenbeck, dick@softplc.com
- * Copyright (C) 2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2015 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2015 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -32,11 +32,13 @@
 #ifndef COMPONENT_CLASS_H
 #define COMPONENT_CLASS_H
 
+#include <lib_id.h>
 
 #include <sch_field.h>
 #include <transform.h>
 #include <general.h>
 #include <vector>
+#include <set>
 #include <lib_draw_item.h>
 
 class SCH_SCREEN;
@@ -45,10 +47,11 @@ class LIB_ITEM;
 class LIB_PIN;
 class LIB_PART;
 class NETLIST_OBJECT_LIST;
-class LIB_PART;
+class PART_LIB;
 class PART_LIBS;
 class SCH_COLLECTOR;
 class SCH_SCREEN;
+class SYMBOL_LIB_TABLE;
 
 
 /// A container for several SCH_FIELD items
@@ -66,14 +69,14 @@ extern std::string toUTFTildaText( const wxString& txt );
  */
 class SCH_COMPONENT : public SCH_ITEM
 {
-    friend class DIALOG_EDIT_COMPONENT_IN_SCHEMATIC;
-
 public:
     enum AUTOPLACED { AUTOPLACED_NO = 0, AUTOPLACED_AUTO, AUTOPLACED_MANUAL };
 private:
 
     wxPoint     m_Pos;
-    wxString    m_part_name;    ///< Name to look for in the library, i.e. "74LS00".
+
+    ///< Name and library where symbol was loaded from, i.e. "74xx:74LS00".
+    LIB_ID      m_lib_id;
 
     int         m_unit;         ///< The unit for multiple part per package components.
     int         m_convert;      ///< The alternate body style for components that have more than
@@ -89,13 +92,15 @@ private:
     PART_REF    m_part;         ///< points into the PROJECT's libraries to the LIB_PART for this component
 
     std::vector<bool> m_isDangling; ///< One isDangling per pin
+    std::vector<wxPoint> m_Pins;
+    std::set<wxString> m_highlightedPins; ///< God forgive me - Tom
 
     AUTOPLACED  m_fieldsAutoplaced; ///< indicates status of field autoplacement
 
     /**
      * A temporary sheet path is required to generate the correct reference designator string
-     * in complex heirarchies.  Hopefully this is only a temporary hack to decouple schematic
-     * objects from the drawing window until a better design for handling complex heirarchies
+     * in complex hierarchies.  Hopefully this is only a temporary hack to decouple schematic
+     * objects from the drawing window until a better design for handling complex hierarchies
      * can be implemented.
      */
     const SCH_SHEET_PATH* m_currentSheetPath;
@@ -117,6 +122,7 @@ public:
      * Create schematic component from library component object.
      *
      * @param aPart - library part to create schematic component from.
+     * @param aLibId - libId of alias to create.
      * @param aSheet - Schematic sheet the component is place into.
      * @param unit - Part for components that have multiple parts per
      *               package.
@@ -125,21 +131,28 @@ public:
      * @param pos - Position to place new component.
      * @param setNewItemFlag - Set the component IS_NEW and IS_MOVED flags.
      */
-    SCH_COMPONENT( LIB_PART& aPart, SCH_SHEET_PATH* aSheet,
+    SCH_COMPONENT( LIB_PART& aPart, LIB_ID aLibId, SCH_SHEET_PATH* aSheet,
                    int unit = 0, int convert = 0,
                    const wxPoint& pos = wxPoint( 0, 0 ),
                    bool setNewItemFlag = false );
 
     /**
-     * Copy Constructor
-     * clones \a aComponent into a new object.  All fields are copied as is except
-     * for the linked list management pointers which are set to NULL, and the
-     * SCH_FIELD's m_Parent pointers which are set to the new parent,
-     * i.e. this new object.
+     * Clones \a aComponent into a new schematic symbol object.
+     *
+     * All fields are copied as is except for the linked list management pointers
+     * which are set to NULL, and the SCH_FIELD's m_Parent pointers which are set
+     * to the new object.
+     *
+     * @param aComponent is the schematic symbol to clone.
      */
     SCH_COMPONENT( const SCH_COMPONENT& aComponent );
 
     ~SCH_COMPONENT() { }
+
+    static inline bool ClassOf( const EDA_ITEM* aItem )
+    {
+        return aItem && SCH_COMPONENT_T == aItem->Type();
+    }
 
     wxString GetClass() const override
     {
@@ -148,45 +161,82 @@ public:
 
     const wxArrayString& GetPathsAndReferences() const { return m_PathsAndReferences; }
 
+    void ViewGetLayers( int aLayers[], int& aCount ) const override;
+
     /**
-     * Virtual function IsMovableFromAnchorPoint
      * Return true for items which are moved with the anchor point at mouse cursor
-     *  and false for items moved with no reference to anchor
-     * Usually return true for small items (labels, junctions) and false for
-     * items which can be large (hierarchical sheets, compoments)
-     * @return false for a componant
+     * and false for items moved with no reference to anchor.
+     *
+     * Usually return true for small items (labels, junctions) and false for items which can
+     * be large (hierarchical sheets, components).
+     *
+     * @return false for a component
      */
     bool IsMovableFromAnchorPoint() override { return false; }
 
-    void SetPartName( const wxString& aName, PART_LIBS* aLibs=NULL );
-    const wxString& GetPartName() const        { return m_part_name; }
+    void SetLibId( const LIB_ID& aName, PART_LIBS* aLibs=NULL );
+    void SetLibId( const LIB_ID& aLibId, SYMBOL_LIB_TABLE* aSymLibTable, PART_LIB* aCacheLib );
+
+    const LIB_ID& GetLibId() const        { return m_lib_id; }
+
+    PART_REF& GetPartRef() { return m_part; }
 
     /**
-     * Function Resolve
-     * [re-]assigns the current LIB_PART from aLibs which this component
-     * is based on.
+     * Return information about the aliased parts
+     */
+    wxString GetDescription() const;
+
+    /**
+     * Return the documentation text for the given part alias
+     */
+    wxString GetDatasheet() const;
+
+    /**
+     * Assigns the current #LIB_PART from \a aLibs which this symbol is based on.
+     *
      * @param aLibs is the current set of LIB_PARTs to choose from.
      */
     bool Resolve( PART_LIBS* aLibs );
 
+    bool Resolve( SYMBOL_LIB_TABLE& aLibTable, PART_LIB* aCacheLib = NULL );
+
     static void ResolveAll( const SCH_COLLECTOR& aComponents, PART_LIBS* aLibs );
+
+    static void ResolveAll( const SCH_COLLECTOR& aComponents, SYMBOL_LIB_TABLE& aLibTable,
+                            PART_LIB* aCacheLib = NULL );
 
     int GetUnit() const { return m_unit; }
 
     /**
-     * change the unit id to aUnit
-     * has maening only for multiple parts per package
-     * Also set the modified flag bit
-     * @param aUnit = the new unit Id
+     * Updates the local cache of pin positions
+     */
+    void UpdatePinCache();
+
+    /**
+     * Update the pin cache for all components in \a aComponents
+     *
+     * @param aComponents collector of components in screen
+     */
+    static void UpdateAllPinCaches( const SCH_COLLECTOR& aComponents );
+
+    /**
+     * Change the unit number to \a aUnit
+     *
+     * This has meaning only for symbols made up of multiple units per package.
+     *
+     * @note This also set the modified flag bit
+     *
+     * @param aUnit is the new unit to select.
      */
     void SetUnit( int aUnit );
 
     /**
-     * change the unit id to aUnit
-     * has maening only for multiple parts per package
-     * Do not change the modified flag bit, and should be used when
-     * change is not due to an edition command
-     * @param aUnit = the new unit Id
+     * Change the unit number to \a aUnit without setting any internal flags.
+     * This has meaning only for symbols made up of multiple units per package.
+     *
+     * @note This also set the modified flag bit
+     *
+     * @param aUnit is the new unit to select.
      */
     void UpdateUnit( int aUnit );
 
@@ -203,73 +253,92 @@ public:
     void SetTransform( const TRANSFORM& aTransform );
 
     /**
-     * Function GetUnitCount
-     * returns the number of parts per package of the component.
+     * Return the number of units per package of the symbol.
      *
-     * @return The number of parts per package or zero if the library entry cannot be found.
+     * @return the number of units per package or zero if the library entry cannot be found.
      */
     int GetUnitCount() const;
 
-    bool Save( FILE* aFile ) const override;
-
-    bool Load( LINE_READER& aLine, wxString& aErrorMsg ) override;
-
     /**
-     * Function SetOrientation
-     * computes the new transform matrix based on \a aOrientation for the component which is
+     * Compute the new transform matrix based on \a aOrientation for the symbol which is
      * applied to the current transform.
-     * @param aOrientation The orientation to apply to the transform.
+     *
+     * @param aOrientation is the orientation to apply to the transform.
      */
     void SetOrientation( int aOrientation );
 
     /**
-     * Function GetOrientation
-     * Used to display component orientation (in dialog editor or info)
-     * @return the orientation and mirror
-     * Note: Because there are different ways to have a given orientation/mirror,
-     * the orientation/mirror is not necessary what the used does
-     * (example : a mirrorX then a mirrorY give no mirror but rotate the
-     * component).
-     * So this function find a rotation and a mirror value
-     * ( CMP_MIRROR_X because this is the first mirror option tested)
-     *  but can differs from the orientation made by an user
-     * ( a CMP_MIRROR_Y is find as a CMP_MIRROR_X + orientation 180, because
-     * they are equivalent)
+     * Get the display symbol orientation.
+     *
+     * Because there are different ways to have a given orientation/mirror,
+     * the orientation/mirror is not necessary what the user does.  For example:
+     * a mirrorX then a mirrorY returns no mirror but a rotate.  This function finds
+     * a rotation and a mirror value #CMP_MIRROR_X because this is the first mirror
+     * option tested.  This can differs from the orientation made by an user.  A
+     * #CMP_MIRROR_Y is returned as a #CMP_MIRROR_X with an orientation 180 because
+     * they are equivalent.
+     *
+     * @sa COMPONENT_ORIENTATION_T
+     *
+     * @return the orientation and mirror of the symbol.
      */
     int GetOrientation();
 
     /**
-     * Function GetScreenCoord
-     * Returns the coordinated point relative to the orientation of the component of \a aPoint.
+     * Returns the coordinate points relative to the orientation of the symbol to \a aPoint.
+     *
      * The coordinates are always relative to the anchor position of the component.
+     *
      * @param aPoint The coordinates to transform.
+     *
      * @return The transformed point.
      */
     wxPoint GetScreenCoord( const wxPoint& aPoint );
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
     /**
-     * Function ClearAnnotation
-     * clears exiting component annotation ( i.i IC23 changed to IC? and part reset to 1)
-     * @param aSheetPath: SCH_SHEET_PATH value: if NULL remove all annotations,
-     *                    else remove annotation relative to this sheetpath
+     * Clear exiting component annotation.
+     *
+     * For example, IC23 would be changed to IC? and unit number would be reset.
+     *
+     * @param aSheetPath is the hierarchical path of the symbol to clear or remove all
+     *                   annotations for this symbol if NULL.
      */
     void ClearAnnotation( SCH_SHEET_PATH* aSheetPath );
 
     /**
-     * Function SetTimeStamp
-     * changes the time stamp to \a aNewTimeStamp updates the reference path.
+     * Add aSheetPath in m_PathsAndReferences alternate references list,
+     * if this entry does not exist
+     * Do nothing if already exists.
+     * In component lists shared by more than one sheet path, an entry for each
+     * sheet path must exist to manage references
+     * @param aSheetPathName is the candidate sheet path name
+     * this sheet path is the sheet path of the sheet containing the component,
+     * not the full component sheet path
+     * @return false if the alternate reference was existing, true if added.
+     */
+    bool AddSheetPathReferenceEntryIfMissing( const wxString& aSheetPathName );
+
+    /**
+     * Change the time stamp to \a aNewTimeStamp and updates the reference path.
+     *
      * @see m_PathsAndReferences
+     *
      * @param aNewTimeStamp = new time stamp
      */
-    void SetTimeStamp( time_t aNewTimeStamp );
+    void SetTimeStamp( timestamp_t aNewTimeStamp );
+
+    /**
+     * Clear the HIGHLIGHTED flag of all items of the component
+     * (fields, pins ...)
+     */
+    void ClearAllHighlightFlags();
 
     const EDA_RECT GetBoundingBox() const override;
 
     /**
-     * Function GetBodyBoundingBox
-     * Return a bounding box for the component body but not the fields.
+     * Return a bounding box for the symbol body but not the fields.
      */
     EDA_RECT GetBodyBoundingBox() const;
 
@@ -277,75 +346,105 @@ public:
     //-----<Fields>-----------------------------------------------------------
 
     /**
-     * Function GetField
-     * returns a field.
-     * @param aFieldNdx An index into the array of fields, not a field id.
-     * @return SCH_FIELD* - the field value or NULL if does not exist
+     * Returns a field in this symbol.
+     *
+     * @param aFieldNdx is the index into the array of fields, not a field id.
+     *
+     * @return is the field at \a aFieldNdx or NULL if the field does not exist.
      */
     SCH_FIELD* GetField( int aFieldNdx ) const;
 
     /**
-     * Function GetFields
-     * populates a std::vector with SCH_FIELDs.
-     * @param aVector - vector to populate.
-     * @param aVisibleOnly - if true, only get fields that are visible and contain text.
+     * Search for a field named \a aFieldName and returns text associated with this field.
+     *
+     * @param aFieldName is the name of the field
+     */
+    wxString GetFieldText( const wxString& aFieldName, SCH_EDIT_FRAME* aFrame ) const;
+
+    /**
+     * Populates a std::vector with SCH_FIELDs.
+     *
+     * @param aVector is the vector to populate.
+     * @param aVisibleOnly is used to add only the fields that are visible and contain text.
      */
     void GetFields( std::vector<SCH_FIELD*>& aVector, bool aVisibleOnly );
 
     /**
-     * Function AddField
-     * adds a field to the component.  The field is copied as it is put into
-     * the component.
-     * @param aField A const reference to the SCH_FIELD to add.
-     * @return SCH_FIELD* - the newly inserted field.
+     * Add a field to the symbol.
+     *
+     * @param aField is the field to add to this symbol.
+     *
+     * @return the newly inserted field.
      */
     SCH_FIELD* AddField( const SCH_FIELD& aField );
 
     /**
-     * Function FindField
-     * searches for SCH_FIELD with \a aFieldName and returns it if found, else NULL.
+     * Removes a user field from the symbol.
+     * @param aFieldName is the user fieldName to remove.  Attempts to remove a mandatory
+     *                   field or a non-existant field are silently ignored.
      */
-    SCH_FIELD* FindField( const wxString& aFieldName );
+    void RemoveField( const wxString& aFieldName );
 
+    /**
+     * Search for a #SCH_FIELD with \a aFieldName
+     *
+     * @param aFieldName is the name of the field to find.
+     * @param aIncludeDefaultFields searches the library symbol default fields if true.
+     *
+     * @return the field if found or NULL if the field was not found.
+     */
+    SCH_FIELD* FindField( const wxString& aFieldName, bool aIncludeDefaultFields = true );
+
+    /**
+     * Set multiple schematic fields.
+     *
+     * @param aFields are the fields to set in this symbol.
+     */
     void SetFields( const SCH_FIELDS& aFields )
     {
         m_Fields = aFields;     // vector copying, length is changed possibly
     }
+
     /**
-     * Function GetFieldCount
-     * returns the number of fields in this component.
+     * Restores fields to the original library values.
+     * @param aResetStyle selects whether fields should reset the position and text attribute.
+     * @param aResetRef selects whether the reference field should be restored.
+     */
+    void UpdateFields( bool aResetStyle, bool aResetRef = false );
+
+    /**
+     * Return the number of fields in this symbol.
      */
     int GetFieldCount() const { return (int)m_Fields.size(); }
 
     /**
-     * Function GetFieldsAutoplaced
-     * returns whether the fields are autoplaced.
+     * Return whether the fields have been automatically placed.
      */
     AUTOPLACED GetFieldsAutoplaced() const { return m_fieldsAutoplaced; }
 
     /**
-     * Function ClearFieldsAutoplaced
-     * Set fields autoplaced flag false.
+     * Set fields automatically placed flag false.
      */
     void ClearFieldsAutoplaced() { m_fieldsAutoplaced = AUTOPLACED_NO; }
 
     /**
-     * Function AutoplaceFields
      * Automatically orient all the fields in the component.
-     * @param aScreen - the SCH_SCREEN associated with the current instance of the
-     *  component. This can be NULL when aManual is false.
-     * @param aManual - True if the autoplace was manually initiated (e.g. by a hotkey
+     *
+     * @param aScreen is the SCH_SCREEN associated with the current instance of the
+     * component. This can be NULL when aManual is false.
+     * @param aManual should be true if the autoplace was manually initiated (e.g. by a hotkey
      *  or a menu item). Some more 'intelligent' routines will be used that would be
      *  annoying if done automatically during moves.
      */
     void AutoplaceFields( SCH_SCREEN* aScreen, bool aManual );
 
     /**
-     * Function AutoAutoplaceFields
-     * Autoplace fields only if correct to do so automatically. That is, do not
-     * autoplace if fields have been moved by hand.
-     * @param aScreen - the SCH_SCREEN associated with the current instance of the
-     *  component.
+     * Autoplace fields only if correct to do so automatically.
+     *
+     * Fields that have been moved by hand are not automatically placed.
+     *
+     * @param aScreen is the SCH_SCREEN associated with the current instance of the
+     *                component.
      */
     void AutoAutoplaceFields( SCH_SCREEN* aScreen )
     {
@@ -358,43 +457,44 @@ public:
 
 
     /**
-     * Function GetPin
-     * finds a component pin by number.
+     * Find a symbol pin by number.
      *
-     * @param number - The number of the pin to find.
+     * @param number is the number of the pin to find.
+     *
      * @return Pin object if found, otherwise NULL.
      */
     LIB_PIN* GetPin( const wxString& number );
 
     /**
-     * Function GetPins
-     * populate a vector with all the pins.
+     * Populate a vector with all the pins.
+     *
+     * @param aPinsList is the list to populate with all of the pins.
      */
     void GetPins( std::vector<LIB_PIN*>& aPinsList );
 
-    /**
-     * Virtual function, from the base class SCH_ITEM::Draw
-     */
+    std::vector<bool>* GetDanglingPinFlags() { return &m_isDangling; }
+
     void Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-               GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR ) override
+               GR_DRAWMODE aDrawMode, COLOR4D aColor = COLOR4D::UNSPECIFIED ) override
     {
         Draw( aPanel, aDC, aOffset, aDrawMode, aColor, true );
     }
 
     /**
-     * Function Draw, specific to components.
-     * Draw a component, with or without pin texts.
-     * @param aPanel DrawPanel to use (can be null) mainly used for clipping purposes.
-     * @param aDC Device Context (can be null)
-     * @param aOffset drawing Offset (usually wxPoint(0,0),
+     * Draw a component with or without pin text
+     *
+     * @param aPanel is the panel to use (can be null) mainly used for clipping purposes.
+     * @param aDC is the device context (can be null)
+     * @param aOffset is the drawing offset (usually wxPoint(0,0),
      *  but can be different when moving an object)
-     * @param aDrawMode GR_OR, GR_XOR, ...
-     * @param aColor UNSPECIFIED_COLOR to use the normal body item color, or use this color if >= 0
-     * @param aDrawPinText = true to draw pin texts, false to draw only the pin shape
-     *  usually false to draw a component when moving it, and true otherwise.
+     * @param aDrawMode is the drawing mode, GR_OR, GR_XOR, ...
+     * @param aColor use COLOR4D::UNSPECIFIED for the normal body item color or use this
+     *               color if >= 0
+     * @param aDrawPinText use true to draw pin texts, false to draw only the pin shape
+     *  usually false to draw a component when moving it and true otherwise.
      */
     void Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-               GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor,
+               GR_DRAWMODE aDrawMode, COLOR4D aColor,
                bool aDrawPinText );
 
     void SwapData( SCH_ITEM* aItem ) override;
@@ -403,12 +503,13 @@ public:
     wxString GetPath( const SCH_SHEET_PATH* sheet ) const;
 
     /**
-     * Function IsReferenceStringValid (static)
-     * Tests for an acceptable reference string
-     * An acceptable reference string must support unannotation
-     * i.e starts by letter
-     * @param aReferenceString = the reference string to validate
-     * @return true if OK
+     * Tests for an acceptable reference string.
+     *
+     * An acceptable reference string must support unannotation i.e starts by letter
+     *
+     * @param aReferenceString is the reference string to validate
+     *
+     * @return true if reference string is valid.
      */
     static bool IsReferenceStringValid( const wxString& aReferenceString );
 
@@ -418,23 +519,27 @@ public:
     }
 
     /**
-     * Function GetRef
-     * returns the reference, for the given sheet path.
+     * Return the reference for the given sheet path.
+     *
+     * @return the reference for the sheet.
      */
-    const wxString GetRef( const SCH_SHEET_PATH* sheet );
+    const wxString GetRef( const SCH_SHEET_PATH* aSheet );
 
     /**
-     * Set the reference, for the given sheet path.
+     * Set the reference for the given sheet path for this symbol.
+     *
+     * @param aSheet is the hierarchical path of the reference.
+     * @param aReference is the new reference for the symbol.
      */
-    void SetRef( const SCH_SHEET_PATH* sheet, const wxString& ref );
+    void SetRef( const SCH_SHEET_PATH* aSheet, const wxString& aReference );
 
     /**
-     * Function AddHierarchicalReference
-     * adds a full hierarchical reference (path + local reference)
-     * @param aPath Hierarchical path (/&ltsheet timestamp&gt/&ltcomponent
+     * Add a full hierarchical reference to this symbol.
+     *
+     * @param aPath is the hierarchical path (/&ltsheet timestamp&gt/&ltcomponent
      *              timestamp&gt like /05678E50/A23EF560)
-     * @param aRef :local reference like C45, R56
-     * @param aMulti Part selection, used in multi part per package (0 or 1 for non multi)
+     * @param aRef is the local reference like C45, R56
+     * @param aMulti is the unit selection used for symbols with multiple units per package.
      */
     void AddHierarchicalReference( const wxString& aPath,
                                    const wxString& aRef,
@@ -472,37 +577,31 @@ public:
     void GetEndPoints( std::vector<DANGLING_END_ITEM>& aItemList ) override;
 
     /**
-     * Test if the component's dangling state has changed for one given pin index. As
-     * a side effect, actually update the dangling status for that pin.
+     * Test if the component's dangling state has changed for all pins.
      *
-     * @param aItemList - list of all DANGLING_END_ITEMs to be tested
-     * @param aLibPins - list of all the LIB_PIN items in this component's symbol
-     * @param aPin - index into aLibPins that identifies the pin to test
-     * @return true if the pin's state has changed.
-     */
-    bool IsPinDanglingStateChanged( std::vector<DANGLING_END_ITEM>& aItemList,
-            LIB_PINS& aLibPins, unsigned aPin );
-
-    /**
-     * Test if the component's dangling state has changed for all pins. As a side
-     * effect, actually update the dangling status for all pins (does not short-circuit).
+     * As a side effect, actually update the dangling status for all pins.
      *
-     * @param aItemList - list of all DANGLING_END_ITEMs to be tested
+     * @note This does not test for  short circuits.
+     *
+     * @param aItemList is list of all #DANGLING_END_ITEM items to be tested.
+     *
      * @return true if any pin's state has changed.
      */
-    bool IsDanglingStateChanged( std::vector<DANGLING_END_ITEM>& aItemList ) override;
+    bool UpdateDanglingState( std::vector<DANGLING_END_ITEM>& aItemList ) override;
 
-    /**
-     * Return whether any pin has dangling status. Does NOT update the internal status,
-     * only checks the existing status.
-     */
-    bool IsDangling() const override;
-
-    wxPoint GetPinPhysicalPosition( LIB_PIN* Pin );
+    wxPoint GetPinPhysicalPosition( const LIB_PIN* Pin ) const;
 
     bool IsSelectStateChanged( const wxRect& aRect ) override;
 
     bool IsConnectable() const override { return true; }
+
+    bool CanConnect( const SCH_ITEM* aItem ) const override
+    {
+        return ( aItem->Type() == SCH_LINE_T && aItem->GetLayer() == LAYER_WIRE ) ||
+                ( aItem->Type() == SCH_NO_CONNECT_T ) ||
+                ( aItem->Type() == SCH_JUNCTION_T ) ||
+                ( aItem->Type() == SCH_COMPONENT_T ) ;
+    }
 
     /**
      * @return true if the component is in netlist
@@ -516,18 +615,18 @@ public:
     SEARCH_RESULT Visit( INSPECTOR inspector, void* testData, const KICAD_T scanTypes[] ) override;
 
     /**
-     * Function GetDrawItem().
      * Return the component library item at \a aPosition that is part of this component.
      *
-     * @param aPosition - Schematic position of the component library object.
-     * @param aType - Type of component library object to find or any if set to TYPE_NOT_INIT.
-     * @return A pointer to the component library object if found, otherwise NULL.
+     * @param aPosition is the schematic position of the component library object.
+     * @param aType is the type of symbol library object to find or any if set to TYPE_NOT_INIT.
+     *
+     * @return is the symbol library object if found otherwise NULL.
      */
     LIB_ITEM* GetDrawItem( const wxPoint& aPosition, KICAD_T aType = TYPE_NOT_INIT );
 
-    wxString GetSelectMenuText() const override;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    BITMAP_DEF GetMenuImage() const override { return  add_component_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
     void GetNetListItem( NETLIST_OBJECT_LIST& aNetListItems,
                          SCH_SHEET_PATH*      aSheetPath ) override;
@@ -556,6 +655,12 @@ public:
 #if defined(DEBUG)
     void Show( int nestLevel, std::ostream& os ) const override;
 #endif
+
+    void ClearHighlightedPins();
+
+    void HighlightPin( LIB_PIN* aPin );
+
+    bool IsPinHighlighted( const LIB_PIN* aPin );
 
 private:
     bool doIsConnected( const wxPoint& aPosition ) const override;

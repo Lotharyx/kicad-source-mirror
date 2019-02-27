@@ -46,6 +46,7 @@ enum OBJECT3D_TYPE
     OBJ3D_MAX
 };
 
+
 class  COBJECT
 {
 protected:
@@ -78,15 +79,15 @@ public:
      * @brief Intersect
      * @param aRay
      * @param aHitInfo
-     * @return TRUE if the aRay intersects the object
+     * @return true if the aRay intersects the object
      */
     virtual bool Intersect( const RAY &aRay, HITINFO &aHitInfo ) const = 0;
 
     /** Functions Intersect for shadow test
      * @brief Intersect
      * @param aRay
-     * @param aDistance - max distance of the test
-     * @return TRUE if the aRay intersects the object
+     * @param aMaxDistance - max distance of the test
+     * @return true if the aRay intersects the object
      */
     virtual bool IntersectP( const RAY &aRay, float aMaxDistance ) const = 0;
 

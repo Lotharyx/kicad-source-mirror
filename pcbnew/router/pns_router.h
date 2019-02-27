@@ -25,7 +25,7 @@
 #include <list>
 
 #include <memory>
-#include <boost/optional.hpp>
+#include <core/optional.h>
 #include <boost/unordered_set.hpp>
 
 #include <geometry/shape_line_chain.h>
@@ -42,7 +42,7 @@ namespace KIGFX
 class VIEW;
 class VIEW_GROUP;
 
-};
+}
 
 namespace PNS {
 
@@ -69,6 +69,14 @@ enum ROUTER_MODE {
     PNS_MODE_TUNE_DIFF_PAIR_SKEW
 };
 
+enum DRAG_MODE
+{
+    DM_CORNER = 0x1,
+    DM_SEGMENT = 0x2,
+    DM_VIA = 0x4,
+    DM_FREE_ANGLE = 0x8,
+    DM_ANY = 0x7
+};
 /**
  * Class ROUTER
  *
@@ -125,7 +133,8 @@ public:
     bool RoutingInProgress() const;
     bool StartRouting( const VECTOR2I& aP, ITEM* aItem, int aLayer );
     void Move( const VECTOR2I& aP, ITEM* aItem );
-    bool FixRoute( const VECTOR2I& aP, ITEM* aItem );
+    bool FixRoute( const VECTOR2I& aP, ITEM* aItem, bool aForceFinish = false );
+    void BreakSegment( ITEM *aItem, const VECTOR2I& aP );
 
     void StopRouting();
 
@@ -161,7 +170,7 @@ public:
     const ITEM_SET   QueryHoverItems( const VECTOR2I& aP );
     const VECTOR2I      SnapToItem( ITEM* aItem, VECTOR2I aP, bool& aSplitsSegment );
 
-    bool StartDragging( const VECTOR2I& aP, ITEM* aItem );
+    bool StartDragging( const VECTOR2I& aP, ITEM* aItem, int aDragMode = DM_ANY );
 
     void SetIterLimit( int aX ) { m_iterLimit = aX; }
     int GetIterLimit() const { return m_iterLimit; };
@@ -236,6 +245,7 @@ private:
     void highlightCurrent( bool enabled );
 
     void markViolations( NODE* aNode, ITEM_SET& aCurrent, NODE::ITEM_VECTOR& aRemoved );
+    bool isStartingPointRoutable( const VECTOR2I& aWhere, int aLayer );
 
     VECTOR2I m_currentEnd;
     RouterState m_state;
@@ -253,6 +263,7 @@ private:
     bool m_showInterSteps;
     int m_snapshotIter;
     bool m_violation;
+    bool m_forceMarkObstaclesMode = false;
 
     ROUTING_SETTINGS m_settings;
     SIZES_SETTINGS m_sizes;

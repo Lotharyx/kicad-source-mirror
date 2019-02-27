@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KICAD, a free EDA CAD application.
  *
- * Copyright (C) 2013 CERN
+ * Copyright (C) 2013-2018 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
@@ -29,29 +29,31 @@
 
 #include <worksheet_viewitem.h>
 #include <worksheet_shape_builder.h>
+#include <worksheet_dataitem.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <painter.h>
 #include <layers_id_colors_and_visibility.h>
-#include <class_page_info.h>
+#include <page_info.h>
+#include <view/view.h>
 
 using namespace KIGFX;
 
-WORKSHEET_VIEWITEM::WORKSHEET_VIEWITEM( const PAGE_INFO* aPageInfo, const TITLE_BLOCK* aTitleBlock ) :
+WORKSHEET_VIEWITEM::WORKSHEET_VIEWITEM( int aMils2IUscalefactor,
+            const PAGE_INFO* aPageInfo, const TITLE_BLOCK* aTitleBlock ) :
     EDA_ITEM( NOT_USED ), // this item is never added to a BOARD so it needs no type
+    m_mils2IUscalefactor( aMils2IUscalefactor ),
     m_titleBlock( aTitleBlock ), m_pageInfo( aPageInfo ), m_sheetNumber( 1 ), m_sheetCount( 1 ) {}
 
 
 void WORKSHEET_VIEWITEM::SetPageInfo( const PAGE_INFO* aPageInfo )
 {
     m_pageInfo = aPageInfo;
-    ViewUpdate( GEOMETRY );
 }
 
 
 void WORKSHEET_VIEWITEM::SetTitleBlock( const TITLE_BLOCK* aTitleBlock )
 {
     m_titleBlock = aTitleBlock;
-    ViewUpdate( GEOMETRY );
 }
 
 
@@ -62,8 +64,8 @@ const BOX2I WORKSHEET_VIEWITEM::ViewBBox() const
     if( m_pageInfo != NULL )
     {
         bbox.SetOrigin( VECTOR2I( 0, 0 ) );
-        bbox.SetEnd( VECTOR2I( m_pageInfo->GetWidthMils() * 25400,
-                               m_pageInfo->GetHeightMils() * 25400 ) );
+        bbox.SetEnd( VECTOR2I( m_pageInfo->GetWidthMils() * m_mils2IUscalefactor,
+                               m_pageInfo->GetHeightMils() * m_mils2IUscalefactor ) );
     }
     else
     {
@@ -74,26 +76,36 @@ const BOX2I WORKSHEET_VIEWITEM::ViewBBox() const
 }
 
 
-void WORKSHEET_VIEWITEM::ViewDraw( int aLayer, GAL* aGal ) const
+void WORKSHEET_VIEWITEM::ViewDraw( int aLayer, VIEW* aView ) const
 {
-    RENDER_SETTINGS* settings = m_view->GetPainter()->GetSettings();
+    auto gal = aView->GetGAL();
+    auto settings = aView->GetPainter()->GetSettings();
     wxString fileName( m_fileName.c_str(), wxConvUTF8 );
     wxString sheetName( m_sheetName.c_str(), wxConvUTF8 );
     WS_DRAW_ITEM_LIST drawList;
 
     drawList.SetPenSize( settings->GetWorksheetLineWidth() );
-    // Sorry, but I don't get this multi #ifdef from include/convert_to_biu.h, so here goes a magic
-    // number. IU_PER_MILS should be 25400 (as in a different compilation unit), but somehow
-    // it equals 1 in this case..
-    drawList.SetMilsToIUfactor( 25400 /* IU_PER_MILS */ );
+    // Adjust the scaling factor for worksheet items:
+    // worksheet items coordinates and sizes are stored in mils,
+    // and must be scaled to the same units as the caller
+    drawList.SetMilsToIUfactor( m_mils2IUscalefactor );
     drawList.SetSheetNumber( m_sheetNumber );
     drawList.SetSheetCount( m_sheetCount );
     drawList.SetFileName( fileName );
     drawList.SetSheetName( sheetName );
 
     COLOR4D color = settings->GetColor( this, aLayer );
-    EDA_COLOR_T edaColor = ColorFindNearest( color.r * 255, color.g * 255, color.b * 255 );
-    drawList.BuildWorkSheetGraphicList( *m_pageInfo, *m_titleBlock, edaColor, edaColor );
+    drawList.BuildWorkSheetGraphicList( *m_pageInfo, *m_titleBlock, color, color );
+
+    // Draw the title block normally even if the view is flipped
+    bool flipped = gal->IsFlippedX();
+
+    if( flipped )
+    {
+        gal->Save();
+        gal->Translate( VECTOR2D( m_pageInfo->GetWidthMils() * m_mils2IUscalefactor, 0 ) );
+        gal->Scale( VECTOR2D( -1.0, 1.0 ) );
+    }
 
     // Draw all the components that make the page layout
     WS_DRAW_ITEM_BASE* item = drawList.GetFirst();
@@ -102,22 +114,23 @@ void WORKSHEET_VIEWITEM::ViewDraw( int aLayer, GAL* aGal ) const
         switch( item->GetType() )
         {
         case WS_DRAW_ITEM_BASE::wsg_line:
-            draw( static_cast<const WS_DRAW_ITEM_LINE*>( item ), aGal );
+            draw( static_cast<const WS_DRAW_ITEM_LINE*>( item ), gal );
             break;
 
         case WS_DRAW_ITEM_BASE::wsg_rect:
-            draw( static_cast<const WS_DRAW_ITEM_RECT*>( item ), aGal );
+            draw( static_cast<const WS_DRAW_ITEM_RECT*>( item ), gal );
             break;
 
         case WS_DRAW_ITEM_BASE::wsg_poly:
-            draw( static_cast<const WS_DRAW_ITEM_POLYGON*>( item ), aGal );
+            draw( static_cast<const WS_DRAW_ITEM_POLYGON*>( item ), gal );
             break;
 
         case WS_DRAW_ITEM_BASE::wsg_text:
-            draw( static_cast<const WS_DRAW_ITEM_TEXT*>( item ), aGal );
+            draw( static_cast<const WS_DRAW_ITEM_TEXT*>( item ), gal );
             break;
 
         case WS_DRAW_ITEM_BASE::wsg_bitmap:
+            draw( static_cast<const WS_DRAW_ITEM_BITMAP*>( item ), gal );
             break;
         }
 
@@ -125,14 +138,18 @@ void WORKSHEET_VIEWITEM::ViewDraw( int aLayer, GAL* aGal ) const
     }
 
     // Draw gray line that outlines the sheet size
-    drawBorder( aGal );
+    if( settings->GetShowPageLimits() )
+        drawBorder( gal );
+
+    if( flipped )
+        gal->Restore();
 }
 
 
 void WORKSHEET_VIEWITEM::ViewGetLayers( int aLayers[], int& aCount ) const
 {
     aCount = 1;
-    aLayers[0] = ITEM_GAL_LAYER( WORKSHEET );
+    aLayers[0] = LAYER_WORKSHEET;
 }
 
 
@@ -184,11 +201,11 @@ void WORKSHEET_VIEWITEM::draw( const WS_DRAW_ITEM_POLYGON* aItem, GAL* aGal ) co
 
 void WORKSHEET_VIEWITEM::draw( const WS_DRAW_ITEM_TEXT* aItem, GAL* aGal ) const
 {
-    VECTOR2D position( aItem->GetTextPosition().x, aItem->GetTextPosition().y );
+    VECTOR2D position( aItem->GetTextPos().x, aItem->GetTextPos().y );
 
     aGal->Save();
     aGal->Translate( position );
-    aGal->Rotate( -aItem->GetOrientation() * M_PI / 1800.0 );
+    aGal->Rotate( -aItem->GetTextAngle() * M_PI / 1800.0 );
     aGal->SetStrokeColor( COLOR4D( aItem->GetColor() ) );
     aGal->SetLineWidth( aItem->GetThickness() );
     aGal->SetTextAttributes( aItem );
@@ -197,11 +214,30 @@ void WORKSHEET_VIEWITEM::draw( const WS_DRAW_ITEM_TEXT* aItem, GAL* aGal ) const
 }
 
 
+void WORKSHEET_VIEWITEM::draw( const WS_DRAW_ITEM_BITMAP* aItem, GAL* aGal ) const
+{
+    aGal->Save();
+    VECTOR2D position = aItem->GetPosition();
+    aGal->Translate( position );
+    WORKSHEET_DATAITEM_BITMAP* parent = static_cast<WORKSHEET_DATAITEM_BITMAP*>( aItem->GetParent() );
+
+    // When the image scale factor is not 1.0, we need to modify the actual scale
+    // as the image scale factor is similar to a local zoom
+    double img_scale = parent->m_ImageBitmap->GetScale();
+
+    if( img_scale != 1.0 )
+        aGal->Scale( VECTOR2D( img_scale, img_scale ) );
+
+    aGal->DrawBitmap( *parent->m_ImageBitmap );
+    aGal->Restore();
+}
+
+
 void WORKSHEET_VIEWITEM::drawBorder( GAL* aGal ) const
 {
     VECTOR2D origin = VECTOR2D( 0.0, 0.0 );
-    VECTOR2D end = VECTOR2D( m_pageInfo->GetWidthMils() * 25400,
-                             m_pageInfo->GetHeightMils() * 25400 );
+    VECTOR2D end = VECTOR2D( m_pageInfo->GetWidthMils() * m_mils2IUscalefactor,
+                             m_pageInfo->GetHeightMils() * m_mils2IUscalefactor );
 
     aGal->SetIsStroke( true );
     // Use a gray color for the border color

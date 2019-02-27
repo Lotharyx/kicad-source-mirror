@@ -31,7 +31,7 @@
 #include <fctsys.h>
 #include <class_drawpanel.h>
 #include <confirm.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <gr_basic.h>
 
 #include <pcbnew.h>
@@ -101,8 +101,7 @@ static void Move_Segment( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aPos
     wxPoint delta;
     delta = aPanel->GetParent()->GetCrossHairPosition() - s_LastPosition;
 
-    segment->SetStart( segment->GetStart() + delta );
-    segment->SetEnd(   segment->GetEnd()   + delta );
+    segment->Move( delta );
 
     s_LastPosition = aPanel->GetParent()->GetCrossHairPosition();
 
@@ -112,28 +111,23 @@ static void Move_Segment( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aPos
 
 void PCB_EDIT_FRAME::Delete_Segment_Edge( DRAWSEGMENT* Segment, wxDC* DC )
 {
-    EDA_ITEM* PtStruct;
-    DISPLAY_OPTIONS* displ_opts = (DISPLAY_OPTIONS*)GetDisplayOptions();
+    auto displ_opts = (PCB_DISPLAY_OPTIONS*)GetDisplayOptions();
     bool tmp = displ_opts->m_DisplayDrawItemsFill;
 
     if( Segment == NULL )
         return;
 
+    int mask = EDA_ITEM_ALL_FLAGS - ( SELECTED | HIGHLIGHTED | BRIGHTENED );
     if( Segment->IsNew() )  // Trace in progress.
     {
         // Delete current segment.
         displ_opts->m_DisplayDrawItemsFill = SKETCH;
         Segment->Draw( m_canvas, DC, GR_XOR );
-        PtStruct = Segment->Back();
-        Segment ->DeleteStructure();
-
-        if( PtStruct && (PtStruct->Type() == PCB_LINE_T ) )
-            Segment = (DRAWSEGMENT*) PtStruct;
-
+        Segment->DeleteStructure();
         displ_opts->m_DisplayDrawItemsFill = tmp;
         SetCurItem( NULL );
     }
-    else if( Segment->GetFlags() == 0 )
+    else if( ( Segment->GetFlags() & mask ) == 0 )    // i.e. not edited, or moved
     {
         Segment->Draw( m_canvas, DC, GR_XOR );
         Segment->ClearFlags();
@@ -145,7 +139,7 @@ void PCB_EDIT_FRAME::Delete_Segment_Edge( DRAWSEGMENT* Segment, wxDC* DC )
 }
 
 
-void PCB_EDIT_FRAME::Delete_Drawings_All_Layer( LAYER_ID aLayer )
+void PCB_EDIT_FRAME::Delete_Drawings_All_Layer( PCB_LAYER_ID aLayer )
 {
     if( IsCopperLayer( aLayer ) )
     {
@@ -160,14 +154,15 @@ void PCB_EDIT_FRAME::Delete_Drawings_All_Layer( LAYER_ID aLayer )
     if( !IsOK( this, msg ) )
         return;
 
-    PICKED_ITEMS_LIST   pickList;
-    ITEM_PICKER         picker( NULL, UR_DELETED );
-    BOARD_ITEM*         PtNext;
+    // Step 1: build the list of items to remove.
+    // because we are using iterators, we cannot modify the drawing list during iterate
+    // so we are using a 2 steps calculation:
+    // First, collect items.
+    // Second, remove items.
+    std::vector<BOARD_ITEM*> list;
 
-    for( BOARD_ITEM* item = GetBoard()->m_Drawings;  item;  item = PtNext )
+    for( auto item : GetBoard()->Drawings() )
     {
-        PtNext = item->Next();
-
         switch( item->Type() )
         {
         case PCB_LINE_T:
@@ -175,29 +170,32 @@ void PCB_EDIT_FRAME::Delete_Drawings_All_Layer( LAYER_ID aLayer )
         case PCB_DIMENSION_T:
         case PCB_TARGET_T:
             if( item->GetLayer() == aLayer )
-            {
-                item->UnLink();
-                picker.SetItem( item );
-                pickList.PushItem( picker );
-            }
+                list.push_back( item );
 
             break;
 
         default:
-        {
-            msg.Printf( wxT("Delete_Drawings_All_Layer() error: unknown type %d"),
-                        item->Type() );
-            wxMessageBox( msg );
-            break;
-        }
+            wxLogDebug( wxT( "Delete_Drawings_All_Layer() error: unknown type %d" ), item->Type() );
+
         }
     }
 
-    if( pickList.GetCount() )
+    if( list.size() == 0 )  // No item found
+        return;
+
+    // Step 2: remove items from main list, and move them to the undo list
+    PICKED_ITEMS_LIST   pickList;
+    ITEM_PICKER         picker( NULL, UR_DELETED );
+
+    for( auto item : list )
     {
-        OnModify();
-        SaveCopyInUndoList(pickList, UR_DELETED);
+        item->UnLink();
+        picker.SetItem( item );
+        pickList.PushItem( picker );
     }
+
+    OnModify();
+    SaveCopyInUndoList(pickList, UR_DELETED);
 }
 
 
@@ -240,33 +238,27 @@ static void Abort_EditEdge( EDA_DRAW_PANEL* aPanel, wxDC* DC )
  */
 DRAWSEGMENT* PCB_EDIT_FRAME::Begin_DrawSegment( DRAWSEGMENT* Segment, STROKE_T shape, wxDC* DC )
 {
-    int          s_large;
+    int          lineWidth;
     DRAWSEGMENT* DrawItem;
 
-    s_large = GetDesignSettings().m_DrawSegmentWidth;
+    lineWidth = GetDesignSettings().GetLineThickness( GetActiveLayer() );
 
-    if( GetActiveLayer() == Edge_Cuts )
-    {
-        s_large = GetDesignSettings().m_EdgeSegmentWidth;
-    }
-
-    if( Segment == NULL )        // Create new trace.
+    if( Segment == NULL )        // Create new segment.
     {
         SetCurItem( Segment = new DRAWSEGMENT( GetBoard() ) );
         Segment->SetFlags( IS_NEW );
         Segment->SetLayer( GetActiveLayer() );
-        Segment->SetWidth( s_large );
+        Segment->SetWidth( lineWidth );
         Segment->SetShape( shape );
         Segment->SetAngle( 900 );
         Segment->SetStart( GetCrossHairPosition() );
         Segment->SetEnd( GetCrossHairPosition() );
         m_canvas->SetMouseCapture( DrawSegment, Abort_EditEdge );
     }
-    else    /* The ending point ccordinate Segment->m_End was updated by he function
-             * DrawSegment() called on a move mouse event
-             * during the segment creation
-             */
+    else
     {
+        // The ending point coordinate Segment->m_End was updated by the function
+        // DrawSegment() called on a move mouse event during the segment creation
         if( Segment->GetStart() != Segment->GetEnd() )
         {
             if( Segment->GetShape() == S_SEGMENT )
@@ -285,7 +277,7 @@ DRAWSEGMENT* PCB_EDIT_FRAME::Begin_DrawSegment( DRAWSEGMENT* Segment, STROKE_T s
 
                 Segment->SetFlags( IS_NEW );
                 Segment->SetLayer( DrawItem->GetLayer() );
-                Segment->SetWidth( s_large );
+                Segment->SetWidth( lineWidth );
                 Segment->SetShape( DrawItem->GetShape() );
                 Segment->SetType( DrawItem->GetType() );
                 Segment->SetAngle( DrawItem->GetAngle() );
@@ -335,11 +327,11 @@ void PCB_EDIT_FRAME::End_Edge( DRAWSEGMENT* Segment, wxDC* DC )
 static void DrawSegment( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aPosition, bool aErase )
 {
     DRAWSEGMENT* Segment = (DRAWSEGMENT*) aPanel->GetScreen()->GetCurItem();
-
+    auto frame = (PCB_EDIT_FRAME*) ( aPanel->GetParent() );
     if( Segment == NULL )
         return;
 
-    DISPLAY_OPTIONS* displ_opts = (DISPLAY_OPTIONS*)aPanel->GetDisplayOptions();
+    auto displ_opts = (PCB_DISPLAY_OPTIONS*) ( aPanel->GetDisplayOptions() );
     bool tmp = displ_opts->m_DisplayDrawItemsFill;
 
     displ_opts->m_DisplayDrawItemsFill = SKETCH;
@@ -347,13 +339,12 @@ static void DrawSegment( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aPosi
     if( aErase )
         Segment->Draw( aPanel, aDC, GR_XOR );
 
-    if( g_Segments_45_Only && Segment->GetShape() == S_SEGMENT )
+    if( frame->Settings().m_use45DegreeGraphicSegments && Segment->GetShape() == S_SEGMENT )
     {
         wxPoint pt;
 
-        CalculateSegmentEndPoint( aPanel->GetParent()->GetCrossHairPosition(),
-                                  Segment->GetStart().x, Segment->GetStart().y,
-                                  &pt.x, &pt.y );
+        pt = CalculateSegmentEndPoint( aPanel->GetParent()->GetCrossHairPosition(),
+                                       Segment->GetStart() );
         Segment->SetEnd( pt );
     }
     else    // here the angle is arbitrary

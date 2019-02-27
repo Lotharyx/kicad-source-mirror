@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2009 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -35,9 +35,8 @@
 class NETLIST_OBJECT_LIST;
 
 /**
- * Class SCH_LINE
- * is a segment description base class to describe items which have 2 end
- * points (track, wire, draw line ...)
+ * Segment description base class to describe items which have 2 end points (track, wire,
+ * draw line ...)
  */
 class SCH_LINE : public SCH_ITEM
 {
@@ -45,8 +44,14 @@ class SCH_LINE : public SCH_ITEM
     bool    m_endIsDangling;    ///< True if end point is not connected.
     wxPoint m_start;            ///< Line start point
     wxPoint m_end;              ///< Line end point
+    int     m_size;             ///< Line pensize
+    int     m_style;            ///< Line style
+    COLOR4D m_color;            ///< Line color
 
 public:
+
+    static const enum wxPenStyle PenStyle[];
+
     SCH_LINE( const wxPoint& pos = wxPoint( 0, 0 ), int layer = LAYER_NOTES );
 
     SCH_LINE( const SCH_LINE& aLine );
@@ -76,6 +81,34 @@ public:
 
     void SetEndPoint( const wxPoint& aPosition ) { m_end = aPosition; }
 
+    int GetDefaultStyle() const;
+
+    void SetLineStyle( const int aStyle );
+
+    int GetLineStyle() const;
+
+    /// @return the style name from the style id
+    /// (mainly to write it in .sch file
+    static const char* GetLineStyleName( int aStyle );
+
+    /// @return the style id from the style  name
+    /// (mainly to read style from .sch file
+    static int GetLineStyleInternalId( const wxString& aStyleName );
+
+    void SetLineColor( const COLOR4D aColor );
+
+    void SetLineColor( const double r, const double g, const double b, const double a );
+
+    COLOR4D GetLineColor() const;
+
+    COLOR4D GetDefaultColor() const;
+
+    int GetDefaultWidth() const;
+
+    void SetLineWidth( const int aSize );
+
+    int GetLineSize() const { return m_size; }
+
     const EDA_RECT GetBoundingBox() const override;
 
     /**
@@ -85,11 +118,7 @@ public:
     double GetLength() const;
 
     void Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-               GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR ) override;
-
-    bool Save( FILE* aFile ) const override;
-
-    bool Load( LINE_READER& aLine, wxString& aErrorMsg ) override;
+               GR_DRAWMODE aDrawMode, COLOR4D aColor = COLOR4D::UNSPECIFIED ) override;
 
     int GetPenSize() const override;
 
@@ -104,18 +133,33 @@ public:
     /**
      * Check line against \a aLine to see if it overlaps and merge if it does.
      *
-     * This method will change the line to be equivalent of the line and \a aLine if the
+     * This method will return an equivalent of the union of line and \a aLine if the
      * two lines overlap.  This method is used to merge multiple line segments into a single
      * line.
      *
      * @param aLine - Line to compare.
-     * @return True if lines overlap and the line was merged with \a aLine.
+     * @return New line that combines the two or NULL on non-overlapping segments.
      */
-    bool MergeOverlap( SCH_LINE* aLine );
+    EDA_ITEM* MergeOverlap( SCH_LINE* aLine );
+
+    /**
+     * Check if two lines are in the same quadrant as each other, using a reference point as
+     * the origin
+     *
+     * @param aLine - Line to compare
+     * @param aPosition - Point to reference against lines
+     * @return true if lines are mostly in different quadrants of aPosition, false otherwise
+     */
+    bool IsSameQuadrant( SCH_LINE* aLine, const wxPoint& aPosition );
+
+    bool IsParallel( SCH_LINE* aLine );
 
     void GetEndPoints( std::vector<DANGLING_END_ITEM>& aItemList ) override;
 
-    bool IsDanglingStateChanged( std::vector< DANGLING_END_ITEM >& aItemList ) override;
+    bool UpdateDanglingState( std::vector<DANGLING_END_ITEM>& aItemList ) override;
+
+    bool IsStartDangling() const { return m_startIsDangling; }
+    bool IsEndDangling() const { return m_endIsDangling; }
 
     bool IsDangling() const override { return m_startIsDangling || m_endIsDangling; }
 
@@ -125,7 +169,9 @@ public:
 
     void GetConnectionPoints(std::vector< wxPoint >& aPoints ) const override;
 
-    wxString GetSelectMenuText() const override;
+    bool CanConnect( const SCH_ITEM* aItem ) const override;
+
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
     BITMAP_DEF GetMenuImage() const override;
 
@@ -143,7 +189,11 @@ public:
 
     void Plot( PLOTTER* aPlotter ) override;
 
+    wxPoint MidPoint();
+
     EDA_ITEM* Clone() const override;
+
+    void SwapData( SCH_ITEM* aItem ) override;
 
 #if defined(DEBUG)
     void Show( int nestLevel, std::ostream& os ) const override;

@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2018 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -24,7 +24,7 @@
 
 /**
  * @brief Implement a very basic GAL used to draw, plot and convert texts in segments
- * for DRC funstions, using the common GAL functions.
+ * for DRC functions, using the common GAL functions.
  * Draw functions use wxDC.
  * Plot functions use a PLOTTER
  * Convert texts in segments use a callback function created by the caller
@@ -32,14 +32,17 @@
  */
 
 #include <gr_basic.h>
-#include <plot_common.h>
+#include <plotter.h>
 #include <trigo.h>
 
 #include <basic_gal.h>
 
 using namespace KIGFX;
 
-BASIC_GAL basic_gal;
+KIGFX::GAL_DISPLAY_OPTIONS basic_displayOptions;
+
+// the basic GAL doesn't get an external display option object
+BASIC_GAL basic_gal( basic_displayOptions );
 
 const VECTOR2D BASIC_GAL::transform( const VECTOR2D& aPoint ) const
 {
@@ -94,7 +97,7 @@ void BASIC_GAL::DrawPolyline( const std::deque<VECTOR2D>& aPointList )
         for( unsigned ii = 1; ii < polyline_corners.size(); ii++ )
         {
             m_callback( polyline_corners[ii-1].x, polyline_corners[ii-1].y,
-                        polyline_corners[ii].x, polyline_corners[ii].y );
+                        polyline_corners[ii].x, polyline_corners[ii].y, m_callbackData );
         }
     }
 }
@@ -126,6 +129,6 @@ void BASIC_GAL::DrawLine( const VECTOR2D& aStartPoint, const VECTOR2D& aEndPoint
     else if( m_callback )
     {
             m_callback( startVector.x, startVector.y,
-                        endVector.x, endVector.y );
+                        endVector.x, endVector.y, m_callbackData );
     }
 }

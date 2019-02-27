@@ -27,7 +27,7 @@
  */
 
 #include <fctsys.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <class_drawpanel.h>
 #include <confirm.h>
 
@@ -35,14 +35,16 @@
 #include <class_module.h>
 #include <class_track.h>
 #include <class_pcb_text.h>
-#include <class_mire.h>
+#include <class_pcb_target.h>
 #include <class_drawsegment.h>
+#include <origin_viewitem.h>
 
 #include <pcbnew.h>
 #include <pcbnew_id.h>
 #include <hotkeys.h>
 #include <class_zone.h>
 #include <tool/tool_manager.h>
+#include <tools/pcbnew_control.h>
 
 /* How to add a new hotkey:
  * see hotkeys.cpp
@@ -70,7 +72,7 @@ bool PCB_EDIT_FRAME::OnHotKey( wxDC* aDC, int aHotkeyCode, const wxPoint& aPosit
     MODULE* module = NULL;
     int evt_type = 0;       //Used to post a wxCommandEvent on demand
     PCB_SCREEN* screen = GetScreen();
-    DISPLAY_OPTIONS* displ_opts = (DISPLAY_OPTIONS*)GetDisplayOptions();
+    auto displ_opts = (PCB_DISPLAY_OPTIONS*)GetDisplayOptions();
 
     /* Convert lower to upper case
      * (the usual toupper function has problem with non ascii codes like function keys
@@ -216,15 +218,15 @@ bool PCB_EDIT_FRAME::OnHotKey( wxDC* aDC, int aHotkeyCode, const wxPoint& aPosit
         break;
 
     case HK_HELP: // Display Current hotkey list
-        DisplayHotkeyList( this, g_Board_Editor_Hokeys_Descr );
+        DisplayHotkeyList( this, g_Board_Editor_Hotkeys_Descr );
         break;
 
     case HK_ZOOM_IN:
-        evt_type = ID_POPUP_ZOOM_IN;
+        evt_type = ID_KEY_ZOOM_IN;
         break;
 
     case HK_ZOOM_OUT:
-        evt_type = ID_POPUP_ZOOM_OUT;
+        evt_type = ID_KEY_ZOOM_OUT;
         break;
 
     case HK_ZOOM_REDRAW:
@@ -262,19 +264,21 @@ bool PCB_EDIT_FRAME::OnHotKey( wxDC* aDC, int aHotkeyCode, const wxPoint& aPosit
         break;
 
     case HK_SET_GRID_ORIGIN:
-        SetGridOrigin( GetCrossHairPosition() );
-        OnModify();     // because grid origin is saved in board, show as modified
+        PCBNEW_CONTROL::SetGridOrigin( GetGalCanvas()->GetView(), this,
+                                       new KIGFX::ORIGIN_VIEWITEM( GetGridOrigin(), UR_TRANSIENT ),
+                                       GetCrossHairPosition() );
         m_canvas->Refresh();
         break;
 
     case HK_RESET_GRID_ORIGIN:
-        SetGridOrigin( wxPoint( 0,0 ) );
-        OnModify();     // because grid origin is saved in board, show as modified
+        PCBNEW_CONTROL::SetGridOrigin( GetGalCanvas()->GetView(), this,
+                                       new KIGFX::ORIGIN_VIEWITEM( GetGridOrigin(), UR_TRANSIENT ),
+                                       wxPoint( 0, 0 ) );
         m_canvas->Refresh();
         break;
 
     case HK_SWITCH_UNITS:
-        evt_type = (g_UserUnit == INCHES) ?
+        evt_type = (GetUserUnits() == INCHES) ?
                     ID_TB_OPTIONS_SELECT_UNIT_MM : ID_TB_OPTIONS_SELECT_UNIT_INCH;
         break;
 
@@ -331,13 +335,13 @@ bool PCB_EDIT_FRAME::OnHotKey( wxDC* aDC, int aHotkeyCode, const wxPoint& aPosit
 
         break;
 
-    case HK_LOAD_BOARD:
+    case HK_OPEN:
         if( !itemCurrentlyEdited )
             evt_type = ID_LOAD_FILE ;
 
         break;
 
-    case HK_SAVE_BOARD:
+    case HK_SAVE:
         if( !itemCurrentlyEdited )
             evt_type = ID_SAVE_BOARD;
 
@@ -429,7 +433,6 @@ bool PCB_EDIT_FRAME::OnHotKey( wxDC* aDC, int aHotkeyCode, const wxPoint& aPosit
         OnHotkeyEditItem( HK_EDIT_MODULE_WITH_MODEDIT );
         break;
 
-    // Footprint edition:
     case HK_LOCK_UNLOCK_FOOTPRINT: // toggle module "MODULE_is_LOCKED" status:
         // get any module, locked or not locked and toggle its locked status
         if( !itemCurrentlyEdited )
@@ -642,7 +645,7 @@ bool PCB_EDIT_FRAME::OnHotkeyEditItem( int aIdCommand )
 
     case PCB_TARGET_T:
         if( aIdCommand == HK_EDIT_ITEM )
-            evt_type = ID_POPUP_PCB_EDIT_MIRE;
+            evt_type = ID_POPUP_PCB_EDIT_PCB_TARGET;
 
         break;
 
@@ -781,7 +784,7 @@ bool PCB_EDIT_FRAME::OnHotkeyMoveItem( int aIdCommand )
 
     case PCB_TARGET_T:
         if( aIdCommand == HK_MOVE_ITEM )
-            evt_type = ID_POPUP_PCB_MOVE_MIRE_REQUEST;
+            evt_type = ID_POPUP_PCB_MOVE_PCB_TARGET_REQUEST;
 
         break;
 

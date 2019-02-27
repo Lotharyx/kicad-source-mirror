@@ -28,18 +28,30 @@
  */
 
 #include <gal/opengl/vertex_container.h>
-#include <gal/opengl/cached_container.h>
+#include <gal/opengl/cached_container_ram.h>
+#include <gal/opengl/cached_container_gpu.h>
 #include <gal/opengl/noncached_container.h>
 #include <gal/opengl/shader.h>
+
+#include <cstring>
 
 using namespace KIGFX;
 
 VERTEX_CONTAINER* VERTEX_CONTAINER::MakeContainer( bool aCached )
 {
     if( aCached )
-        return new CACHED_CONTAINER;
-    else
-        return new NONCACHED_CONTAINER;
+    {
+        const char* vendor = (const char*) glGetString( GL_VENDOR );
+
+        // Open source drivers do not cope well with GPU memory mapping,
+        // so the vertex data has to be kept in RAM
+        if( strstr( vendor, "X.Org" ) || strstr( vendor, "nouveau" ) )
+            return new CACHED_CONTAINER_RAM;
+        else
+            return new CACHED_CONTAINER_GPU;
+    }
+
+    return new NONCACHED_CONTAINER;
 }
 
 

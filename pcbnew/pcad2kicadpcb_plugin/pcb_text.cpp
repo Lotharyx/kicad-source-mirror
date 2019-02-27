@@ -48,10 +48,10 @@ PCB_TEXT::~PCB_TEXT()
 }
 
 
-void PCB_TEXT::Parse( XNODE*        aNode,
-                      int           aLayer,
-                      wxString      aDefaultMeasurementUnit,
-                      wxString      aActualConversion )
+void PCB_TEXT::Parse( XNODE*          aNode,
+                      int             aLayer,
+                      const wxString& aDefaultMeasurementUnit,
+                      const wxString& aActualConversion )
 {
     XNODE*      lNode;
     wxString    str;
@@ -110,14 +110,18 @@ void PCB_TEXT::AddToBoard()
 
     pcbtxt->SetText( m_name.text );
 
-    SetTextSizeFromStrokeFontHeight( pcbtxt, m_name.textHeight );
+    if( m_name.isTrueType )
+        SetTextSizeFromTrueTypeFontHeight( pcbtxt, m_name.textHeight );
+    else
+        SetTextSizeFromStrokeFontHeight( pcbtxt, m_name.textHeight );
 
+    pcbtxt->SetItalic( m_name.isItalic );
     pcbtxt->SetThickness( m_name.textstrokeWidth );
-    pcbtxt->SetOrientation( m_name.textRotation );
+    pcbtxt->SetTextAngle( m_name.textRotation );
 
     SetTextJustify( pcbtxt, m_name.justify );
-    pcbtxt->SetTextPosition( wxPoint( m_name.textPositionX,
-                                      m_name.textPositionY ) );
+    pcbtxt->SetTextPos( wxPoint( m_name.textPositionX,
+                                 m_name.textPositionY ) );
 
     pcbtxt->SetMirrored( m_name.mirror );
     pcbtxt->SetTimeStamp( 0 );

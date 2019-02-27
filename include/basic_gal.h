@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -25,17 +25,20 @@
 #ifndef BASIC_GAL_H
 #define BASIC_GAL_H
 
-#include <plot_common.h>
+#include <eda_rect.h>
 
 #include <gal/stroke_font.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <newstroke_font.h>
 
+class PLOTTER;
+
+
 /*
  * class BASIC_GAL is a minimal GAL implementation to draw, plot and convert
  * stroke texts to a set of segments for DRC tests, and to calculate text sizes.
  *
- * Currently it allows to use GAL and STROKE_FONT methods in legacy draw mode
+ * Currently it allows one to use GAL and STROKE_FONT methods in legacy draw mode
  * (using wxDC functions) in plot functions only for texts.
  * It is used also to calculate the text bounding boxes
  *
@@ -57,19 +60,21 @@ class BASIC_GAL: public KIGFX::GAL
 {
 public:
     wxDC* m_DC;
-    EDA_COLOR_T m_Color;
+    COLOR4D m_Color;
 
 private:
     TRANSFORM_PRM m_transform;
     std::stack <TRANSFORM_PRM>  m_transformHistory;
 
 public:
-    BASIC_GAL()
+    BASIC_GAL( KIGFX::GAL_DISPLAY_OPTIONS& aDisplayOptions ) :
+        GAL( aDisplayOptions )
     {
         m_DC = NULL;
         m_Color = RED;
         m_plotter = NULL;
         m_callback = NULL;
+        m_callbackData = nullptr;
         m_isClipped = false;
     }
 
@@ -78,9 +83,10 @@ public:
         m_plotter = aPlotter;
     }
 
-    void SetCallback( void (* aCallback)( int x0, int y0, int xf, int yf ) )
+    void SetCallback( void (* aCallback)( int x0, int y0, int xf, int yf, void* aData ), void* aData  )
     {
         m_callback = aCallback;
+        m_callbackData = aData;
     }
 
     /// Set a clip box for drawings
@@ -150,7 +156,8 @@ private:
     // When calling the draw functions outside a wxDC, to get the basic drawings
     // lines / polylines ..., a callback function (used in DRC) to store
     // coordinates of each segment:
-    void (* m_callback)( int x0, int y0, int xf, int yf );
+    void (* m_callback)( int x0, int y0, int xf, int yf, void* aData );
+    void* m_callbackData;       // a optional parameter for m_callback
 
     // When calling the draw functions for plot, the plotter acts as a wxDC
     // to plot basic items

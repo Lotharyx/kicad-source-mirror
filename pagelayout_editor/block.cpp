@@ -32,7 +32,7 @@
 #include <class_drawpanel.h>
 #include <pl_editor_frame.h>
 #include <worksheet_shape_builder.h>
-#include <class_worksheet_dataitem.h>
+#include <worksheet_dataitem.h>
 
 
 static void DrawMovingBlockOutlines( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aPosition,
@@ -226,12 +226,26 @@ void PL_EDITOR_FRAME::Block_Move( wxDC* DC )
 
     // Move items in block
     SaveCopyInUndoList();
+
+    for( auto item: items )
+    {
+        auto parent = item->GetParent();
+
+        if( parent )
+            parent->ClearFlags( FLAG1 );
+    }
+
     for( auto item: items )
     {
         if( item->HitTest( screen->m_BlockLocate ) )
         {
             auto data_item = item->GetParent();
-            data_item->MoveToUi( data_item->GetStartPosUi() + delta );
+
+            if( data_item && !( data_item->GetFlags() & FLAG1 ) )
+            {
+                data_item->SetFlags( FLAG1 );
+                data_item->MoveToUi( data_item->GetStartPosUi() + delta );
+            }
         }
     }
 

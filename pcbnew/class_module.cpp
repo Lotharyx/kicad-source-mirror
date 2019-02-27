@@ -1,10 +1,10 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2017 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2015 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2015 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -31,23 +31,27 @@
 
 #include <fctsys.h>
 #include <gr_basic.h>
-#include <wxstruct.h>
-#include <plot_common.h>
+#include <plotter.h>
 #include <class_drawpanel.h>
 #include <trigo.h>
 #include <confirm.h>
 #include <kicad_string.h>
 #include <pcbnew.h>
-#include <colors_selection.h>
+#include <refdes_utils.h>
 #include <richio.h>
 #include <filter_reader.h>
 #include <macros.h>
 #include <msgpanel.h>
+#include <bitmaps.h>
+#include <unordered_set>
 
+#include <pcb_edit_frame.h>
 #include <class_board.h>
 #include <class_edge_mod.h>
 #include <class_module.h>
+#include <convert_basic_shapes_to_polygon.h>
 
+#include <view/view.h>
 
 MODULE::MODULE( BOARD* parent ) :
     BOARD_ITEM_CONTAINER( (BOARD_ITEM*) parent, PCB_MODULE_T ),
@@ -59,7 +63,6 @@ MODULE::MODULE( BOARD* parent ) :
     m_ModuleStatus = MODULE_PADS_LOCKED;
     m_arflag = 0;
     m_CntRot90 = m_CntRot180 = 0;
-    m_Surface  = 0.0;
     m_Link     = 0;
     m_LastEditTime  = 0;
     m_LocalClearance = 0;
@@ -91,7 +94,7 @@ MODULE::MODULE( const MODULE& aModule ) :
     m_CntRot180 = aModule.m_CntRot180;
     m_LastEditTime = aModule.m_LastEditTime;
     m_Link = aModule.m_Link;
-    m_Path = aModule.m_Path;              //is this correct behavior?
+    m_Path = aModule.m_Path;              // is this correct behavior?
 
     m_LocalClearance = aModule.m_LocalClearance;
     m_LocalSolderMaskMargin = aModule.m_LocalSolderMaskMargin;
@@ -226,7 +229,7 @@ void MODULE::ClearAllNets()
 {
     // Force the ORPHANED dummy net info for all pads.
     // ORPHANED dummy net does not depend on a board
-    for( D_PAD* pad = Pads(); pad; pad = pad->Next() )
+    for( D_PAD* pad = PadsList(); pad; pad = pad->Next() )
         pad->SetNetCode( NETINFO_LIST::ORPHANED );
 }
 
@@ -234,13 +237,15 @@ void MODULE::ClearAllNets()
 void MODULE::DrawAncre( EDA_DRAW_PANEL* panel, wxDC* DC, const wxPoint& offset,
                         int dim_ancre, GR_DRAWMODE draw_mode )
 {
+    auto frame = (PCB_EDIT_FRAME*) panel->GetParent();
+
     GRSetDrawMode( DC, draw_mode );
 
-    if( GetBoard()->IsElementVisible( ANCHOR_VISIBLE ) )
+    if( GetBoard()->IsElementVisible( LAYER_ANCHOR ) )
     {
         GRDrawAnchor( panel->GetClipBox(), DC, m_Pos.x, m_Pos.y,
                       dim_ancre,
-                      g_ColorsSettings.GetItemColor( ANCHOR_VISIBLE ) );
+                      frame->Settings().Colors().GetItemColor( LAYER_ANCHOR ) );
     }
 }
 
@@ -281,28 +286,6 @@ void MODULE::Add( BOARD_ITEM* aBoardItem, ADD_MODE aMode )
     }
 
     aBoardItem->SetParent( this );
-    SetLastEditTime();
-
-    // Update relative coordinates, it can be done only after there is a parent object assigned
-    switch( aBoardItem->Type() )
-    {
-    case PCB_MODULE_TEXT_T:
-        static_cast<TEXTE_MODULE*>( aBoardItem )->SetLocalCoord();
-        break;
-
-    case PCB_MODULE_EDGE_T:
-        static_cast<EDGE_MODULE*>( aBoardItem )->SetLocalCoord();
-        break;
-
-    case PCB_PAD_T:
-        static_cast<D_PAD*>( aBoardItem )->SetLocalCoord();
-        break;
-
-    default:
-        // Huh? It should have been filtered out by the previous switch
-        assert(false);
-        break;
-    }
 }
 
 
@@ -362,14 +345,14 @@ void MODULE::CopyNetlistSettings( MODULE* aModule, bool aCopyLocalSettings )
         aModule->SetThermalGap( GetThermalGap() );
     }
 
-    for( D_PAD* pad = aModule->Pads();  pad;  pad = pad->Next() )
+    for( D_PAD* pad = aModule->PadsList();  pad;  pad = pad->Next() )
     {
         // Fix me: if aCopyLocalSettings == true, for "multiple" pads
         // (set of pads having the same name/number) this is broken
         // because we copy settings from the first pad found.
         // When old and new footprints have very few differences, a better
         // algo can be used.
-        D_PAD* oldPad = FindPadByName( pad->GetPadName() );
+        D_PAD* oldPad = FindPadByName( pad->GetName() );
 
         if( oldPad )
             oldPad->CopyNetlistSettings( pad, aCopyLocalSettings );
@@ -402,13 +385,13 @@ void MODULE::Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, GR_DRAWMODE aDrawMode,
     DrawAncre( aPanel, aDC, aOffset, DIM_ANCRE_MODULE, aDrawMode );
 
     // Draw graphic items
-    if( brd->IsElementVisible( MOD_REFERENCES_VISIBLE ) )
+    if( brd->IsElementVisible( LAYER_MOD_REFERENCES ) )
     {
         if( !(m_Reference->IsMoving()) )
             m_Reference->Draw( aPanel, aDC, aDrawMode, aOffset );
     }
 
-    if( brd->IsElementVisible( MOD_VALUES_VISIBLE ) )
+    if( brd->IsElementVisible( LAYER_MOD_VALUES ) )
     {
         if( !(m_Value->IsMoving()) )
             m_Value->Draw( aPanel, aDC, aDrawMode, aOffset );
@@ -460,7 +443,14 @@ void MODULE::DrawEdgesOnly( EDA_DRAW_PANEL* panel, wxDC* DC, const wxPoint& offs
 void MODULE::CalculateBoundingBox()
 {
     m_BoundaryBox = GetFootprintRect();
-    m_Surface = std::abs( (double) m_BoundaryBox.GetWidth() * m_BoundaryBox.GetHeight() );
+}
+
+
+double MODULE::GetArea( int aPadding ) const
+{
+    double w = std::abs( m_BoundaryBox.GetWidth() ) + aPadding;
+    double h = std::abs( m_BoundaryBox.GetHeight() ) + aPadding;
+    return w * h;
 }
 
 
@@ -474,10 +464,8 @@ EDA_RECT MODULE::GetFootprintRect() const
 
     for( const BOARD_ITEM* item = m_Drawings.GetFirst(); item; item = item->Next() )
     {
-        const EDGE_MODULE* edge = dyn_cast<const EDGE_MODULE*>( item );
-
-        if( edge )
-            area.Merge( edge->GetBoundingBox() );
+        if( item->Type() == PCB_MODULE_EDGE_T )
+            area.Merge( item->GetBoundingBox() );
     }
 
     for( D_PAD* pad = m_Pads;  pad;  pad = pad->Next() )
@@ -491,25 +479,70 @@ const EDA_RECT MODULE::GetBoundingBox() const
 {
     EDA_RECT area = GetFootprintRect();
 
-    // Calculate extended area including text fields
-    area.Merge( m_Reference->GetBoundingBox() );
-    area.Merge( m_Value->GetBoundingBox() );
-
-    // Add the Clearance shape size: (shape around the pads when the
-    // clearance is shown.  Not optimized, but the draw cost is small
-    // (perhaps smaller than optimization).
-    BOARD* board = GetBoard();
-    if( board )
+    // Add in items not collected by GetFootprintRect():
+    for( const BOARD_ITEM* item = m_Drawings.GetFirst(); item; item = item->Next() )
     {
-        int biggest_clearance = board->GetDesignSettings().GetBiggestClearanceValue();
-        area.Inflate( biggest_clearance );
+        if( item->Type() != PCB_MODULE_EDGE_T )
+            area.Merge( item->GetBoundingBox() );
     }
+
+    area.Merge( m_Value->GetBoundingBox() );
+    area.Merge( m_Reference->GetBoundingBox() );
 
     return area;
 }
 
 
-void MODULE::GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList )
+/**
+ * This is a bit hacky right now for performance reasons.
+ *
+ * We assume that most footprints will have features aligned to the axes in
+ * the zero-rotation state.  Therefore, if the footprint is rotated, we
+ * temporarily rotate back to zero, get the bounding box (excluding reference
+ * and value text) and then rotate the resulting poly back to the correct
+ * orientation.
+ *
+ * This is more accurate than using the AABB when most footprints are rotated
+ * off of the axes, but less accurate than computing some kind of bounding hull.
+ * We should consider doing that instead at some point in the future if we can
+ * use a performant algorithm and cache the result to avoid extra computing.
+ */
+SHAPE_POLY_SET MODULE::GetBoundingPoly() const
+{
+    SHAPE_POLY_SET poly;
+
+    double orientation = GetOrientationRadians();
+
+    MODULE temp = *this;
+    temp.SetOrientation( 0.0 );
+    BOX2I area = temp.GetFootprintRect();
+
+    poly.NewOutline();
+
+    VECTOR2I p = area.GetPosition();
+    poly.Append( p );
+    p.x = area.GetRight();
+    poly.Append( p );
+    p.y = area.GetBottom();
+    poly.Append( p );
+    p.x = area.GetX();
+    poly.Append( p );
+
+    BOARD* board = GetBoard();
+    if( board )
+    {
+        int biggest_clearance = board->GetDesignSettings().GetBiggestClearanceValue();
+        poly.Inflate( biggest_clearance, 4 );
+    }
+
+    poly.Inflate( Millimeter2iu( 0.01 ), 4 );
+    poly.Rotate( -orientation, m_Pos );
+
+    return poly;
+}
+
+
+void MODULE::GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList )
 {
     int      nbpad;
     wxString msg;
@@ -517,7 +550,7 @@ void MODULE::GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList )
     aList.push_back( MSG_PANEL_ITEM( m_Reference->GetShownText(), m_Value->GetShownText(), DARKCYAN ) );
 
     // Display last date the component was edited (useful in Module Editor).
-    wxDateTime date( m_LastEditTime );
+    wxDateTime date( static_cast<time_t>( m_LastEditTime ) );
 
     if( m_LastEditTime && date.IsValid() )
     // Date format: see http://www.cplusplus.com/reference/ctime/strftime
@@ -604,6 +637,13 @@ bool MODULE::HitTest( const wxPoint& aPosition ) const
 }
 
 
+bool MODULE::HitTestAccurate( const wxPoint& aPosition ) const
+{
+    auto shape = GetBoundingPoly();
+    return shape.Contains( aPosition, -1, true );
+}
+
+
 bool MODULE::HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy ) const
 {
     EDA_RECT arect = aRect;
@@ -612,22 +652,35 @@ bool MODULE::HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy ) co
     if( aContained )
         return arect.Contains( m_BoundaryBox );
     else
-        return m_BoundaryBox.Intersects( arect );
+    {
+        // If the rect does not intersect the bounding box, skip any tests
+        if( !aRect.Intersects( GetBoundingBox() ) )
+            return false;
+
+        // Determine if any elements in the MODULE intersect the rect
+        for( D_PAD* pad = m_Pads; pad; pad = pad->Next() )
+        {
+            if( pad->HitTest( arect, false, 0 ) )
+                return true;
+        }
+
+        for( BOARD_ITEM* item = m_Drawings; item; item = item->Next() )
+        {
+            if( item->HitTest( arect, false, 0 ) )
+                return true;
+        }
+
+        // No items were hit
+        return false;
+    }
 }
 
 
 D_PAD* MODULE::FindPadByName( const wxString& aPadName ) const
 {
-    wxString buf;
-
     for( D_PAD* pad = m_Pads;  pad;  pad = pad->Next() )
     {
-        pad->StringPadName( buf );
-#if 1
-        if( buf.CmpNoCase( aPadName ) == 0 )    // why case insensitive?
-#else
-        if( buf == aPadName )
-#endif
+        if( pad->GetName().CmpNoCase( aPadName ) == 0 )    // why case insensitive?
             return pad;
     }
 
@@ -648,6 +701,26 @@ D_PAD* MODULE::GetPad( const wxPoint& aPosition, LSET aLayerMask )
     }
 
     return NULL;
+}
+
+
+D_PAD* MODULE::GetTopLeftPad()
+{
+    D_PAD* topLeftPad = m_Pads;
+
+    for( D_PAD* p = m_Pads->Next(); p; p =  p->Next() )
+    {
+        wxPoint pnt = p->GetPosition(); // GetPosition() returns the center of the pad
+
+        if( ( pnt.x < topLeftPad->GetPosition().x ) ||
+            ( ( topLeftPad->GetPosition().x == pnt.x ) &&
+              ( pnt.y < topLeftPad->GetPosition().y ) ) )
+        {
+            topLeftPad = p;
+        }
+    }
+
+    return topLeftPad;
 }
 
 
@@ -672,10 +745,10 @@ unsigned MODULE::GetPadCount( INCLUDE_NPTH_T aIncludeNPTH ) const
 
 unsigned MODULE::GetUniquePadCount( INCLUDE_NPTH_T aIncludeNPTH ) const
 {
-    std::set<wxUint32> usedNames;
+    std::set<wxString> usedNames;
 
     // Create a set of used pad numbers
-    for( D_PAD* pad = Pads(); pad; pad = pad->Next() )
+    for( D_PAD* pad = PadsList(); pad; pad = pad->Next() )
     {
         // Skip pads not on copper layers (used to build complex
         // solder paste shapes for instance)
@@ -684,7 +757,7 @@ unsigned MODULE::GetUniquePadCount( INCLUDE_NPTH_T aIncludeNPTH ) const
 
         // Skip pads with no name, because they are usually "mechanical"
         // pads, not "electrical" pads
-        if( pad->GetPadName().IsEmpty() )
+        if( pad->GetName().IsEmpty() )
             continue;
 
         if( !aIncludeNPTH )
@@ -696,14 +769,14 @@ unsigned MODULE::GetUniquePadCount( INCLUDE_NPTH_T aIncludeNPTH ) const
             }
         }
 
-        usedNames.insert( pad->GetPackedPadName() );
+        usedNames.insert( pad->GetName() );
     }
 
     return usedNames.size();
 }
 
 
-void MODULE::Add3DModel( S3D_INFO* a3DModel )
+void MODULE::Add3DModel( MODULE_3D_SETTINGS* a3DModel )
 {
     if( NULL == a3DModel )
         return;
@@ -790,14 +863,20 @@ SEARCH_RESULT MODULE::Visit( INSPECTOR inspector, void* testData, const KICAD_T 
 }
 
 
-wxString MODULE::GetSelectMenuText() const
+wxString MODULE::GetSelectMenuText( EDA_UNITS_T aUnits ) const
 {
-    wxString text;
-    text.Printf( _( "Footprint %s on %s" ),
-                 GetChars ( GetReference() ),
-                 GetChars ( GetLayerName() ) );
+    wxString reference = GetReference();
 
-    return text;
+    if( reference.IsEmpty() )
+        reference = _( "<no reference>" );
+
+    return wxString::Format( _( "Footprint %s on %s" ), reference, GetLayerName() );
+}
+
+
+BITMAP_DEF MODULE::GetMenuImage() const
+{
+    return module_xpm;
 }
 
 
@@ -807,7 +886,7 @@ EDA_ITEM* MODULE::Clone() const
 }
 
 
-void MODULE::RunOnChildren( std::function<void (BOARD_ITEM*)> aFunction )
+void MODULE::RunOnChildren( const std::function<void (BOARD_ITEM*)>& aFunction )
 {
     try
     {
@@ -820,39 +899,46 @@ void MODULE::RunOnChildren( std::function<void (BOARD_ITEM*)> aFunction )
         aFunction( static_cast<BOARD_ITEM*>( m_Reference ) );
         aFunction( static_cast<BOARD_ITEM*>( m_Value ) );
     }
-    catch( std::bad_function_call& e )
+    catch( std::bad_function_call& )
     {
         DisplayError( NULL, wxT( "Error running MODULE::RunOnChildren" ) );
     }
 }
 
 
-void MODULE::ViewUpdate( int aUpdateFlags )
+void MODULE::GetAllDrawingLayers( int aLayers[], int& aCount, bool aIncludePads ) const
 {
-    if( !m_view )
-        return;
+    std::unordered_set<int> layers;
 
-    // Update the module itself
-    VIEW_ITEM::ViewUpdate( aUpdateFlags );
+    for( BOARD_ITEM* item = m_Drawings; item; item = item->Next() )
+    {
+        layers.insert( static_cast<int>( item->GetLayer() ) );
+    }
 
-    // Update pads
-    for( D_PAD* pad = m_Pads.GetFirst(); pad; pad = pad->Next() )
-        pad->ViewUpdate( aUpdateFlags );
+    if( aIncludePads )
+    {
+        for( D_PAD* pad = m_Pads; pad; pad = pad->Next() )
+        {
+            int pad_layers[KIGFX::VIEW::VIEW_MAX_LAYERS], pad_layers_count;
+            pad->ViewGetLayers( pad_layers, pad_layers_count );
 
-    // Update module's drawing (mostly silkscreen)
-    for( BOARD_ITEM* drawing = m_Drawings.GetFirst(); drawing; drawing = drawing->Next() )
-        drawing->ViewUpdate( aUpdateFlags );
+            for( int i = 0; i < pad_layers_count; i++ )
+                layers.insert( pad_layers[i] );
+        }
+    }
 
-    // Update module's texts
-    m_Reference->ViewUpdate( aUpdateFlags );
-    m_Value->ViewUpdate( aUpdateFlags );
+    aCount = layers.size();
+    int i = 0;
+
+    for( auto layer : layers )
+        aLayers[i++] = layer;
 }
 
 
 void MODULE::ViewGetLayers( int aLayers[], int& aCount ) const
 {
     aCount = 2;
-    aLayers[0] = ITEM_GAL_LAYER( ANCHOR_VISIBLE );
+    aLayers[0] = LAYER_ANCHOR;
 
     switch( m_Layer )
     {
@@ -861,24 +947,48 @@ void MODULE::ViewGetLayers( int aLayers[], int& aCount ) const
         wxASSERT_MSG( false, "Illegal layer" );    // do you really have modules placed on other layers?
         // pass through
     case F_Cu:
-        aLayers[1] = ITEM_GAL_LAYER( MOD_FR_VISIBLE );
+        aLayers[1] = LAYER_MOD_FR;
         break;
 
     case B_Cu:
-        aLayers[1] = ITEM_GAL_LAYER( MOD_BK_VISIBLE );
+        aLayers[1] = LAYER_MOD_BK;
         break;
+    }
+
+    // If there are no pads, and only drawings on a silkscreen layer, then
+    // report the silkscreen layer as well so that the component can be edited
+    // with the silkscreen layer
+    bool f_silk = false, b_silk = false, non_silk = false;
+
+    for( BOARD_ITEM* item = m_Drawings; item; item = item->Next() )
+    {
+        if( item->GetLayer() == F_SilkS )
+            f_silk = true;
+        else if( item->GetLayer() == B_SilkS )
+            b_silk = true;
+        else
+            non_silk = true;
+    }
+
+    if( ( f_silk || b_silk ) && !non_silk && m_Pads.GetCount() == 0 )
+    {
+        if( f_silk )
+            aLayers[ aCount++ ] = F_SilkS;
+
+        if( b_silk )
+            aLayers[ aCount++ ] = B_SilkS;
     }
 }
 
 
-unsigned int MODULE::ViewGetLOD( int aLayer ) const
+unsigned int MODULE::ViewGetLOD( int aLayer, KIGFX::VIEW* aView ) const
 {
-    int layer = ( m_Layer == F_Cu ) ? MOD_FR_VISIBLE :
-                ( m_Layer == B_Cu ) ? MOD_BK_VISIBLE : ANCHOR_VISIBLE;
+    int layer = ( m_Layer == F_Cu ) ? LAYER_MOD_FR :
+                ( m_Layer == B_Cu ) ? LAYER_MOD_BK : LAYER_ANCHOR;
 
     // Currently it is only for anchor layer
-    if( m_view->IsLayerVisible( ITEM_GAL_LAYER( layer ) ) )
-        return 30;
+    if( aView->IsLayerVisible( layer ) )
+        return 3;
 
     return std::numeric_limits<unsigned int>::max();
 }
@@ -886,9 +996,23 @@ unsigned int MODULE::ViewGetLOD( int aLayer ) const
 
 const BOX2I MODULE::ViewBBox() const
 {
-    EDA_RECT fpRect = GetFootprintRect();
+    EDA_RECT area = GetFootprintRect();
 
-    return BOX2I( VECTOR2I( fpRect.GetOrigin() ), VECTOR2I( fpRect.GetSize() ) );
+    // Calculate extended area including text fields
+    area.Merge( m_Reference->GetBoundingBox() );
+    area.Merge( m_Value->GetBoundingBox() );
+
+    // Add the Clearance shape size: (shape around the pads when the
+    // clearance is shown.  Not optimized, but the draw cost is small
+    // (perhaps smaller than optimization).
+    BOARD* board = GetBoard();
+    if( board )
+    {
+        int biggest_clearance = board->GetDesignSettings().GetBiggestClearanceValue();
+        area.Inflate( biggest_clearance );
+    }
+
+    return area;
 }
 
 
@@ -905,8 +1029,8 @@ bool MODULE::IsLibNameValid( const wxString & aName )
 
 const wxChar* MODULE::StringLibNameInvalidChars( bool aUserReadable )
 {
-    static const wxChar invalidChars[] = wxT("%$\t \"\\/");
-    static const wxChar invalidCharsReadable[] = wxT("% $ 'tab' 'space' \\ \" /");
+    static const wxChar invalidChars[] = wxT("%$\t\n\r \"\\/:");
+    static const wxChar invalidCharsReadable[] = wxT("% $ 'tab' 'return' 'line feed' 'space' \\ \" / :");
 
     if( aUserReadable )
         return invalidCharsReadable;
@@ -981,8 +1105,9 @@ void MODULE::SetPosition( const wxPoint& newpos )
     wxPoint delta = newpos - m_Pos;
 
     m_Pos += delta;
-    m_Reference->SetTextPosition( m_Reference->GetTextPosition() + delta );
-    m_Value->SetTextPosition( m_Value->GetTextPosition() + delta );
+
+    m_Reference->EDA_TEXT::Offset( delta );
+    m_Value->EDA_TEXT::Offset( delta );
 
     for( D_PAD* pad = m_Pads;  pad;  pad = pad->Next() )
     {
@@ -1003,7 +1128,7 @@ void MODULE::SetPosition( const wxPoint& newpos )
         case PCB_MODULE_TEXT_T:
         {
             TEXTE_MODULE* text = static_cast<TEXTE_MODULE*>( item );
-            text->SetTextPosition( text->GetTextPosition() + delta );
+            text->EDA_TEXT::Offset( delta );
             break;
         }
 
@@ -1039,33 +1164,31 @@ void MODULE::MoveAnchorPosition( const wxPoint& aMoveVector )
     m_Value->SetDrawCoord();
 
     // Update the pad local coordinates.
-    for( D_PAD* pad = Pads(); pad; pad = pad->Next() )
+    for( D_PAD* pad = PadsList(); pad; pad = pad->Next() )
     {
         pad->SetPos0( pad->GetPos0() + moveVector );
         pad->SetDrawCoord();
     }
 
     // Update the draw element coordinates.
-    for( EDA_ITEM* item = GraphicalItems(); item; item = item->Next() )
+    for( EDA_ITEM* item = GraphicalItemsList(); item; item = item->Next() )
     {
         switch( item->Type() )
         {
         case PCB_MODULE_EDGE_T:
-        {
+            {
             EDGE_MODULE* edge = static_cast<EDGE_MODULE*>( item );
-            edge->m_Start0 += moveVector;
-            edge->m_End0   += moveVector;
-            edge->SetDrawCoord();
+            edge->Move( moveVector );
+            }
             break;
-        }
 
         case PCB_MODULE_TEXT_T:
-        {
+            {
             TEXTE_MODULE* text = static_cast<TEXTE_MODULE*>( item );
             text->SetPos0( text->GetPos0() + moveVector );
             text->SetDrawCoord();
+            }
             break;
-        }
 
         default:
             break;
@@ -1124,7 +1247,7 @@ BOARD_ITEM* MODULE::Duplicate( const BOARD_ITEM* aItem,
         new_pad = new D_PAD( *static_cast<const D_PAD*>( aItem ) );
 
         if( aAddToModule )
-            Pads().PushBack( new_pad );
+            PadsList().PushBack( new_pad );
 
         new_item = new_pad;
         break;
@@ -1141,7 +1264,7 @@ BOARD_ITEM* MODULE::Duplicate( const BOARD_ITEM* aItem,
             TEXTE_MODULE* new_text = new TEXTE_MODULE( *old_text );
 
             if( aAddToModule )
-                GraphicalItems().PushBack( new_text );
+                GraphicalItemsList().PushBack( new_text );
 
             new_item = new_text;
         }
@@ -1154,7 +1277,7 @@ BOARD_ITEM* MODULE::Duplicate( const BOARD_ITEM* aItem,
                 *static_cast<const EDGE_MODULE*>(aItem) );
 
         if( aAddToModule )
-            GraphicalItems().PushBack( new_edge );
+            GraphicalItemsList().PushBack( new_edge );
 
         new_item = new_edge;
         break;
@@ -1171,7 +1294,7 @@ BOARD_ITEM* MODULE::Duplicate( const BOARD_ITEM* aItem,
         break;
     }
 
-    if( aIncrementPadNumbers && new_pad )
+    if( aIncrementPadNumbers && new_pad && !new_pad->IsAperturePad() )
     {
         new_pad->IncrementPadName( true, true );
     }
@@ -1185,9 +1308,9 @@ wxString MODULE::GetNextPadName( bool aFillSequenceGaps ) const
     std::set<int> usedNumbers;
 
     // Create a set of used pad numbers
-    for( D_PAD* pad = Pads(); pad; pad = pad->Next() )
+    for( D_PAD* pad = PadsList(); pad; pad = pad->Next() )
     {
-        int padNumber = getTrailingInt( pad->GetPadName() );
+        int padNumber = GetTrailingInt( pad->GetName() );
         usedNumbers.insert( padNumber );
     }
 
@@ -1197,40 +1320,140 @@ wxString MODULE::GetNextPadName( bool aFillSequenceGaps ) const
 }
 
 
-wxString MODULE::GetReferencePrefix() const
+void MODULE::IncrementReference( int aDelta )
 {
-    wxString prefix = GetReference();
-
-    int strIndex = prefix.length() - 1;
-    while( strIndex >= 0 )
-    {
-        const wxUniChar chr = prefix.GetChar( strIndex );
-
-        // numeric suffix
-        if( chr >= '0' && chr <= '9' )
-            break;
-
-        strIndex--;
-    }
-
-    prefix = prefix.Mid( 0, strIndex );
-
-    return prefix;
+    const auto& refdes = GetReference();
+    SetReference( wxString::Format( wxT( "%s%i" ), UTIL::GetReferencePrefix( refdes ),
+            GetTrailingInt( refdes ) + aDelta ) );
 }
 
 
-double MODULE::PadCoverageRatio() const
+// Calculate the area of aPolySet, after fracturation, because
+// polygons with no hole are expected.
+static double polygonArea( SHAPE_POLY_SET& aPolySet )
 {
-    double padArea = 0.0;
+    double area = 0.0;
+    for( int ii = 0; ii < aPolySet.OutlineCount(); ii++ )
+    {
+        SHAPE_LINE_CHAIN& outline = aPolySet.Outline( ii );
+        // Ensure the curr outline is closed, to calculate area
+        outline.SetClosed( true );
+
+        area += outline.Area();
+     }
+
+    return area;
+}
+
+// a helper function to add a rectangular polygon aRect to aPolySet
+static void addRect( SHAPE_POLY_SET& aPolySet, wxRect aRect )
+{
+    aPolySet.NewOutline();
+
+    aPolySet.Append( aRect.GetX(), aRect.GetY() );
+    aPolySet.Append( aRect.GetX()+aRect.width, aRect.GetY() );
+    aPolySet.Append( aRect.GetX()+aRect.width, aRect.GetY()+aRect.height );
+    aPolySet.Append( aRect.GetX(), aRect.GetY()+aRect.height );
+}
+
+double MODULE::CoverageRatio( const GENERAL_COLLECTOR& aCollector ) const
+{
     double moduleArea = GetFootprintRect().GetArea();
+    SHAPE_POLY_SET coveredRegion;
+    addRect( coveredRegion, GetFootprintRect() );
+
+    // build list of holes (covered areas not available for selection)
+    SHAPE_POLY_SET holes;
 
     for( D_PAD* pad = m_Pads; pad; pad = pad->Next() )
-        padArea += pad->GetBoundingBox().GetArea();
+        addRect( holes, pad->GetBoundingBox() );
 
-    if( moduleArea == 0.0 )
-        return 1.0;
+    addRect( holes, m_Reference->GetBoundingBox() );
+    addRect( holes, m_Value->GetBoundingBox() );
 
-    double ratio = padArea / moduleArea;
+    for( int i = 0; i < aCollector.GetCount(); ++i )
+    {
+        BOARD_ITEM* item = aCollector[i];
+
+        switch( item->Type() )
+        {
+        case PCB_TEXT_T:
+        case PCB_MODULE_TEXT_T:
+        case PCB_TRACE_T:
+        case PCB_VIA_T:
+            addRect( holes, item->GetBoundingBox() );
+            break;
+        default:
+            break;
+        }
+    }
+
+    SHAPE_POLY_SET uncoveredRegion;
+    uncoveredRegion.BooleanSubtract( coveredRegion, holes, SHAPE_POLY_SET::PM_STRICTLY_SIMPLE );
+    uncoveredRegion.Simplify( SHAPE_POLY_SET::PM_STRICTLY_SIMPLE );
+    uncoveredRegion.Fracture( SHAPE_POLY_SET::PM_STRICTLY_SIMPLE );
+
+    double uncoveredRegionArea = polygonArea( uncoveredRegion );
+    double coveredArea = moduleArea - uncoveredRegionArea;
+    double ratio = ( coveredArea / moduleArea );
 
     return std::min( ratio, 1.0 );
+}
+
+
+// see convert_drawsegment_list_to_polygon.cpp:
+extern bool ConvertOutlineToPolygon( std::vector<DRAWSEGMENT*>& aSegList, SHAPE_POLY_SET& aPolygons,
+        wxString* aErrorText, unsigned int aTolerance, wxPoint* aErrorLocation = nullptr );
+
+bool MODULE::BuildPolyCourtyard()
+{
+    m_poly_courtyard_front.RemoveAllContours();
+    m_poly_courtyard_back.RemoveAllContours();
+    // Build the courtyard area from graphic items on the courtyard.
+    // Only PCB_MODULE_EDGE_T have meaning, graphic texts are ignored.
+    // Collect items:
+    std::vector< DRAWSEGMENT* > list_front;
+    std::vector< DRAWSEGMENT* > list_back;
+
+    for( BOARD_ITEM* item = GraphicalItemsList(); item; item = item->Next() )
+    {
+        if( item->GetLayer() == B_CrtYd && item->Type() == PCB_MODULE_EDGE_T )
+            list_back.push_back( static_cast< DRAWSEGMENT* > ( item ) );
+
+        if( item->GetLayer() == F_CrtYd && item->Type() == PCB_MODULE_EDGE_T )
+            list_front.push_back( static_cast< DRAWSEGMENT* > ( item ) );
+    }
+
+    // Note: if no item found on courtyard layers, return true.
+    // false is returned only when the shape defined on courtyard layers
+    // is not convertible to a polygon
+    if( !list_front.size() && !list_back.size() )
+        return true;
+
+    wxString error_msg;
+
+    bool success = ConvertOutlineToPolygon( list_front, m_poly_courtyard_front,
+                                            &error_msg, (unsigned) Millimeter2iu( 0.05 ) );
+
+    if( success )
+    {
+        success = ConvertOutlineToPolygon( list_back, m_poly_courtyard_back,
+                                           &error_msg, (unsigned) Millimeter2iu( 0.05 ) );
+    }
+
+    if( !error_msg.IsEmpty() )
+    {
+        wxLogMessage( wxString::Format( _( "Processing courtyard of \"%s\": %s" ),
+                                        GetChars( GetFPID().Format() ),
+                                        error_msg) );
+    }
+
+    return success;
+}
+
+void MODULE::SwapData( BOARD_ITEM* aImage )
+{
+    assert( aImage->Type() == PCB_MODULE_T );
+
+    std::swap( *((MODULE*) this), *((MODULE*) aImage) );
 }

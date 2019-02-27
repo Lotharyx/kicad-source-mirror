@@ -1,7 +1,7 @@
 /*
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
- * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2013-2017 CERN
  * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
@@ -76,6 +76,7 @@ public:
         m_owner = NULL;
         m_marker = 0;
         m_rank = -1;
+        m_routable = true;
     }
 
     ITEM( const ITEM& aOther )
@@ -88,6 +89,7 @@ public:
         m_owner = NULL;
         m_marker = aOther.m_marker;
         m_rank = aOther.m_rank;
+        m_routable = aOther.m_routable;
     }
 
     virtual ~ITEM();
@@ -177,6 +179,11 @@ public:
     int Net() const
     {
         return m_net;
+    }
+
+    bool InAnyNet() const
+    {
+        return m_net != UnusedNet;
     }
 
     /**
@@ -298,12 +305,12 @@ public:
         return NULL;
     }
 
-    virtual void Mark(int aMarker)
+    virtual void Mark( int aMarker )
     {
         m_marker = aMarker;
     }
 
-    virtual void Unmark(int aMarker = -1)
+    virtual void Unmark( int aMarker = -1 )
     {
         m_marker &= ~aMarker;
     }
@@ -338,6 +345,16 @@ public:
         return Marker() & MK_LOCKED;
     }
 
+    void SetRoutable( bool aRoutable )
+    {
+        m_routable = aRoutable;
+    }
+
+    bool IsRoutable() const
+    {
+        return m_routable;
+    }
+
 private:
     bool collideSimple( const ITEM* aOther, int aClearance, bool aNeedMTV,
             VECTOR2I& aMTV, bool aDifferentNetsOnly ) const;
@@ -353,6 +370,7 @@ protected:
     int                     m_net;
     int                     m_marker;
     int                     m_rank;
+    bool                    m_routable;
 };
 
 template< typename T, typename S >

@@ -29,6 +29,9 @@
 
 #include <GL/glew.h>
 #include <climits>
+#include <atomic>
+#include <thread>
+#include <chrono>
 
 #include "c3d_render_raytracing.h"
 #include "mortoncodes.h"
@@ -36,10 +39,11 @@
 #include "3d_fastmath.h"
 #include "3d_math.h"
 #include "../common_ogl/ogl_utils.h"
+#include <profile.h>        // To use GetRunningMicroSecs or another profiling utility
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
+// This should be used in future for the function
+// convertLinearToSRGB
+//#include <glm/gtc/color_space.hpp>
 
 C3D_RENDER_RAYTRACING::C3D_RENDER_RAYTRACING( CINFO3D_VISU &aSettings ) :
                        C3D_RENDER_BASE( aSettings ),
@@ -65,6 +69,8 @@ C3D_RENDER_RAYTRACING::C3D_RENDER_RAYTRACING( CINFO3D_VISU &aSettings ) :
 
     m_isPreview = false;
     m_rt_render_state = RT_RENDER_STATE_MAX; // Set to an initial invalid state
+    m_stats_start_rendering_time = 0;
+    m_nrBlocksRenderProgress = 0;
 }
 
 
@@ -78,7 +84,7 @@ C3D_RENDER_RAYTRACING::~C3D_RENDER_RAYTRACING()
     delete m_outlineBoard2dObjects;
     m_outlineBoard2dObjects = NULL;
 
-    delete m_shaderBuffer;
+    delete[] m_shaderBuffer;
     m_shaderBuffer = NULL;
 
     opengl_delete_pbo();
@@ -130,7 +136,7 @@ void C3D_RENDER_RAYTRACING::restart_render_state()
     // Mark the blocks not processed yet
     std::fill( m_blockPositionsWasProcessed.begin(),
                m_blockPositionsWasProcessed.end(),
-               false );
+               0 );
 }
 
 
@@ -160,6 +166,7 @@ bool C3D_RENDER_RAYTRACING::Redraw( bool aIsMoving, REPORTER *aStatusTextReporte
         initialize_block_positions();
     }
 
+    wxBusyCursor dummy;
 
     // Reload board if it was requested
     // /////////////////////////////////////////////////////////////////////////
@@ -315,6 +322,9 @@ void C3D_RENDER_RAYTRACING::render( GLubyte *ptrPBO , REPORTER *aStatusTextRepor
                 tmp_ptrPBO += 4;                // PBO is RGBA
             }
         }
+
+        m_BgColorTop_LinearRGB = ConvertSRGBToLinear( (SFVEC3F)m_settings.m_BgColorTop );
+        m_BgColorBot_LinearRGB = ConvertSRGBToLinear( (SFVEC3F)m_settings.m_BgColorBot );
     }
 
     switch( m_rt_render_state )
@@ -353,61 +363,58 @@ void C3D_RENDER_RAYTRACING::rt_render_tracing( GLubyte *ptrPBO ,
                                                REPORTER *aStatusTextReporter )
 {
     m_isPreview = false;
-    wxASSERT( m_blockPositions.size() <= LONG_MAX );
 
-    const long nrBlocks = (long) m_blockPositions.size();
-    const unsigned startTime = GetRunningMicroSecs();
+    auto startTime = std::chrono::steady_clock::now();
     bool breakLoop = false;
-    int numBlocksRendered = 0;
 
-    #pragma omp parallel for schedule(dynamic) shared(breakLoop) \
-        firstprivate(ptrPBO, nrBlocks, startTime) reduction(+:numBlocksRendered) default(none)
-    for( long iBlock = 0; iBlock < nrBlocks; iBlock++ )
+    std::atomic<size_t> numBlocksRendered( 0 );
+    std::atomic<size_t> currentBlock( 0 );
+    std::atomic<size_t> threadsFinished( 0 );
+
+    size_t parallelThreadCount = std::min<size_t>(
+            std::max<size_t>( std::thread::hardware_concurrency(), 2 ),
+            m_blockPositions.size() );
+    for( size_t ii = 0; ii < parallelThreadCount; ++ii )
     {
-
-        #pragma omp flush(breakLoop)
-        if( !breakLoop )
+        std::thread t = std::thread( [&]()
         {
-            bool process_block;
-
-            // std::vector<bool> stuffs eight bools to each byte, so access to
-            // them can never be natively atomic.
-            #pragma omp critical(checkProcessBlock)
+            for( size_t iBlock = currentBlock.fetch_add( 1 );
+                        iBlock < m_blockPositions.size() && !breakLoop;
+                        iBlock = currentBlock.fetch_add( 1 ) )
             {
-                process_block = !m_blockPositionsWasProcessed[iBlock];
-                m_blockPositionsWasProcessed[iBlock] = true;
-            }
+                if( !m_blockPositionsWasProcessed[iBlock] )
+                {
+                    rt_render_trace_block( ptrPBO, iBlock );
+                    numBlocksRendered++;
+                    m_blockPositionsWasProcessed[iBlock] = 1;
 
-            if( process_block )
-            {
-                rt_render_trace_block( ptrPBO, iBlock );
-                numBlocksRendered++;
-
-
-                // Check if it spend already some time render and request to exit
-                // to display the progress
-                #ifdef _OPENMP
-                if( omp_get_thread_num() == 0 )
-                #endif
-                    if( (GetRunningMicroSecs() - startTime) > 150000 )
-                    {
+                    // Check if it spend already some time render and request to exit
+                    // to display the progress
+                    if( std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - startTime ).count() > 150 )
                         breakLoop = true;
-                        #pragma omp flush(breakLoop)
-                    }
+                }
             }
-        }
+
+            threadsFinished++;
+        } );
+
+        t.detach();
     }
+
+    while( threadsFinished < parallelThreadCount )
+        std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
 
     m_nrBlocksRenderProgress += numBlocksRendered;
 
     if( aStatusTextReporter )
         aStatusTextReporter->Report( wxString::Format( _( "Rendering: %.0f %%" ),
                                                        (float)(m_nrBlocksRenderProgress * 100) /
-                                                       (float)nrBlocks ) );
+                                                       (float)m_blockPositions.size() ) );
 
     // Check if it finish the rendering and if should continue to a post processing
     // or mark it as finished
-    if( m_nrBlocksRenderProgress >= nrBlocks )
+    if( m_nrBlocksRenderProgress >= m_blockPositions.size() )
     {
         if( m_settings.GetFlag( FL_RENDER_RAYTRACING_POST_PROCESSING ) )
             m_rt_render_state = RT_RENDER_STATE_POST_PROCESS_SHADE;
@@ -418,6 +425,234 @@ void C3D_RENDER_RAYTRACING::rt_render_tracing( GLubyte *ptrPBO ,
     }
 }
 
+#ifdef USE_SRGB_SPACE
+
+// This should be removed in future when the KiCad support a greater version of
+// glm lib.
+
+#define SRGB_GAMA 2.4f
+
+// This function implements the conversion from linear RGB to sRGB
+// https://github.com/g-truc/glm/blob/master/glm/gtc/color_space.inl#L12
+static SFVEC3F convertLinearToSRGB( const SFVEC3F &aRGBcolor )
+{
+    const float gammaCorrection = 1.0f / SRGB_GAMA;
+    const SFVEC3F clampedColor = glm::clamp( aRGBcolor, SFVEC3F(0.0f), SFVEC3F(1.0f) );
+
+    return glm::mix(
+        glm::pow( clampedColor, SFVEC3F(gammaCorrection) ) * 1.055f - 0.055f,
+        clampedColor * 12.92f,
+        glm::lessThan( clampedColor, SFVEC3F(0.0031308f) ) );
+}
+
+// This function implements the conversion from sRGB to linear RGB
+// https://github.com/g-truc/glm/blob/master/glm/gtc/color_space.inl#L35
+SFVEC3F ConvertSRGBToLinear( const SFVEC3F &aSRGBcolor )
+{
+    const float gammaCorrection = SRGB_GAMA;
+
+    return glm::mix(
+                    glm::pow( (aSRGBcolor + SFVEC3F(0.055f)) * SFVEC3F(0.94786729857819905213270142180095f),
+                              SFVEC3F(gammaCorrection) ),
+                    aSRGBcolor * SFVEC3F(0.07739938080495356037151702786378f),
+                    glm::lessThanEqual( aSRGBcolor, SFVEC3F(0.04045f) ) );
+}
+
+#endif
+
+void C3D_RENDER_RAYTRACING::rt_final_color( GLubyte *ptrPBO,
+                                            const SFVEC3F &rgbColor,
+                                            bool applyColorSpaceConversion )
+{
+
+    SFVEC3F color = rgbColor;
+
+#ifdef USE_SRGB_SPACE
+
+    // This should be used in future when the KiCad support a greater version of
+    // glm lib.
+    // if( applyColorSpaceConversion )
+    //    rgbColor = glm::convertLinearToSRGB( rgbColor );
+
+    if( applyColorSpaceConversion )
+        color = convertLinearToSRGB( rgbColor );
+#endif
+
+    ptrPBO[0] = (unsigned int)glm::clamp( (int)(color.r * 255), 0, 255 );
+    ptrPBO[1] = (unsigned int)glm::clamp( (int)(color.g * 255), 0, 255 );
+    ptrPBO[2] = (unsigned int)glm::clamp( (int)(color.b * 255), 0, 255 );
+    ptrPBO[3] = 255;
+}
+
+
+static void HITINFO_PACKET_init( HITINFO_PACKET *aHitPacket )
+{
+    // Initialize hitPacket with a "not hit" information
+    for( unsigned int i = 0; i < RAYPACKET_RAYS_PER_PACKET; ++i )
+    {
+        aHitPacket[i].m_HitInfo.m_tHit = std::numeric_limits<float>::infinity();
+        aHitPacket[i].m_HitInfo.m_acc_node_info = 0;
+        aHitPacket[i].m_hitresult = false;
+        aHitPacket[i].m_HitInfo.m_HitNormal = SFVEC3F( 0.0f );
+        aHitPacket[i].m_HitInfo.m_ShadowFactor = 1.0f;
+    }
+}
+
+
+void C3D_RENDER_RAYTRACING::rt_shades_packet(const SFVEC3F *bgColorY,
+                                              const RAY     *aRayPkt,
+                                              HITINFO_PACKET *aHitPacket,
+                                              bool is_testShadow,
+                                              SFVEC3F *aOutHitColor )
+{
+    for( unsigned int y = 0, i = 0; y < RAYPACKET_DIM; ++y )
+    {
+        for( unsigned int x = 0; x < RAYPACKET_DIM; ++x, ++i )
+        {
+            if( aHitPacket[i].m_hitresult == true )
+            {
+                aOutHitColor[i] = shadeHit( bgColorY[y],
+                                            aRayPkt[i],
+                                            aHitPacket[i].m_HitInfo,
+                                            false,
+                                            0,
+                                            is_testShadow );
+            }
+            else
+            {
+                aOutHitColor[i] = bgColorY[y];
+            }
+        }
+    }
+}
+
+
+void C3D_RENDER_RAYTRACING::rt_trace_AA_packet( const SFVEC3F *aBgColorY,
+                                                const HITINFO_PACKET *aHitPck_X0Y0,
+                                                const HITINFO_PACKET *aHitPck_AA_X1Y1,
+                                                const RAY *aRayPck,
+                                                SFVEC3F *aOutHitColor )
+{
+    const bool is_testShadow =  m_settings.GetFlag( FL_RENDER_RAYTRACING_SHADOWS );
+
+    for( unsigned int y = 0, i = 0; y < RAYPACKET_DIM; ++y )
+    {
+        for( unsigned int x = 0; x < RAYPACKET_DIM; ++x, ++i )
+        {
+            const RAY &rayAA = aRayPck[i];
+
+            HITINFO hitAA;
+            hitAA.m_tHit = std::numeric_limits<float>::infinity();
+            hitAA.m_acc_node_info = 0;
+
+            bool hitted = false;
+
+            const unsigned int idx0y1 = ( x + 0 ) + RAYPACKET_DIM * ( y + 1 );
+            const unsigned int idx1y1 = ( x + 1 ) + RAYPACKET_DIM * ( y + 1 );
+
+            // Gets the node info from the hit.
+            const unsigned int nodex0y0 = aHitPck_X0Y0[ i ].m_HitInfo.m_acc_node_info;
+            const unsigned int node_AA_x0y0 = aHitPck_AA_X1Y1[ i ].m_HitInfo.m_acc_node_info;
+
+            unsigned int nodex1y0 = 0;
+
+            if( x < (RAYPACKET_DIM - 1) )
+                nodex1y0 = aHitPck_X0Y0[ i + 1 ].m_HitInfo.m_acc_node_info;
+
+            unsigned int nodex0y1 = 0;
+
+            if( y < (RAYPACKET_DIM - 1) )
+                    nodex0y1 = aHitPck_X0Y0[ idx0y1 ].m_HitInfo.m_acc_node_info;
+
+            unsigned int nodex1y1 = 0;
+
+            if(  ((x < (RAYPACKET_DIM - 1)) &&
+                  (y < (RAYPACKET_DIM - 1))) )
+                nodex1y1 = aHitPck_X0Y0[ idx1y1 ].m_HitInfo.m_acc_node_info;
+
+
+            if( ((nodex0y0 == nodex1y0) || (nodex1y0 == 0)) &&  // If all notes are equal we assume there was no change on the object hits
+                ((nodex0y0 == nodex0y1) || (nodex0y1 == 0)) &&
+                ((nodex0y0 == nodex1y1) || (nodex1y1 == 0)) &&
+                (nodex0y0 == node_AA_x0y0) )
+            {
+                // Option 1
+                // This option will give a very good quality on reflections (slow)
+                /*
+                if( m_accelerator->Intersect( rayAA, hitAA, nodex0y0 ) )
+                {
+                    aOutHitColor[i] += shadeHit( aBgColorY[y], rayAA, hitAA, false, 0 );
+                }
+                else
+                {
+                    if( m_accelerator->Intersect( rayAA, hitAA ) )
+                        aOutHitColor[i] += shadeHit( aBgColorY[y], rayAA, hitAA, false, 0 );
+                    else
+                        aOutHitColor[i] += hitColor[i];
+                }
+                */
+
+                // Option 2
+                // Trace again with the same node,
+                // then if miss just give the same color as before
+                //if( m_accelerator->Intersect( rayAA, hitAA, nodex0y0 ) )
+                //    aOutHitColor[i] += shadeHit( aBgColorY[y], rayAA, hitAA, false, 0 );
+
+                // Option 3
+                // Use same color
+
+            }
+            else
+            {
+                // Try to intersect the different nodes
+                // It tests the possible combination of hitted or not hitted points
+                // This will try to get the best hit for this ray
+
+                if( nodex0y0 != 0 )
+                    hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex0y0 );
+
+                if( ( nodex1y0 != 0 ) &&
+                    ( nodex0y0 != nodex1y0 ) )
+                    hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex1y0 );
+
+                if( ( nodex0y1 != 0 ) &&
+                    ( nodex0y0 != nodex0y1 ) &&
+                    ( nodex1y0 != nodex0y1 ) )
+                    hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex0y1 );
+
+                if( (nodex1y1 != 0 ) &&
+                    ( nodex0y0 != nodex1y1 ) &&
+                    ( nodex0y1 != nodex1y1 ) &&
+                    ( nodex1y0 != nodex1y1 ) )
+                    hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex1y1 );
+
+                if( (node_AA_x0y0 != 0 ) &&
+                    ( nodex0y0 != node_AA_x0y0 ) &&
+                    ( nodex0y1 != node_AA_x0y0 ) &&
+                    ( nodex1y0 != node_AA_x0y0 ) &&
+                    ( nodex1y1 != node_AA_x0y0 ) )
+                    hitted |= m_accelerator->Intersect( rayAA, hitAA, node_AA_x0y0 );
+
+                if( hitted )
+                {
+                    // If we got any result, shade it
+                    aOutHitColor[i] = shadeHit( aBgColorY[y], rayAA, hitAA, false, 0, is_testShadow );
+                }
+                else
+                {
+                    // Note: There are very few cases that will end on this situation
+                    // so it is not so expensive to trace a single ray from the beginning
+
+                    // It was missed the 'last nodes' so, trace a ray from the beginning
+                    if( m_accelerator->Intersect( rayAA, hitAA ) )
+                        aOutHitColor[i] = shadeHit( aBgColorY[y], rayAA, hitAA, false, 0, is_testShadow );
+                }
+            }
+        }
+    }
+}
+
+#define DISP_FACTOR 0.075f
 
 void C3D_RENDER_RAYTRACING::rt_render_trace_block( GLubyte *ptrPBO ,
                                                    signed int iBlock )
@@ -428,19 +663,14 @@ void C3D_RENDER_RAYTRACING::rt_render_trace_block( GLubyte *ptrPBO ,
     const SFVEC2I blockPosI = SFVEC2I( blockPos.x + m_xoffset,
                                        blockPos.y + m_yoffset );
 
-    RAYPACKET blockPacket( m_settings.CameraGet(), blockPosI );
+    RAYPACKET blockPacket( m_settings.CameraGet(),
+                           (SFVEC2F)blockPosI + SFVEC2F(DISP_FACTOR, DISP_FACTOR),
+                           SFVEC2F(DISP_FACTOR, DISP_FACTOR) // Displacement random factor
+                           );
 
-    HITINFO_PACKET hitPacket[RAYPACKET_RAYS_PER_PACKET];
+    HITINFO_PACKET hitPacket_X0Y0[RAYPACKET_RAYS_PER_PACKET];
 
-    // Initialize hitPacket with a "not hit" information
-    for( unsigned int i = 0; i < RAYPACKET_RAYS_PER_PACKET; ++i )
-    {
-        hitPacket[i].m_HitInfo.m_tHit = std::numeric_limits<float>::infinity();
-        hitPacket[i].m_HitInfo.m_acc_node_info = 0;
-        hitPacket[i].m_hitresult = false;
-        hitPacket[i].m_HitInfo.m_HitNormal = SFVEC3F();
-        hitPacket[i].m_HitInfo.m_ShadowFactor = 1.0f;
-    }
+    HITINFO_PACKET_init( hitPacket_X0Y0 );
 
     // Calculate background gradient color
     // /////////////////////////////////////////////////////////////////////////
@@ -450,13 +680,13 @@ void C3D_RENDER_RAYTRACING::rt_render_trace_block( GLubyte *ptrPBO ,
     {
         const float posYfactor = (float)(blockPosI.y + y) / (float)m_windowSize.y;
 
-        bgColor[y] = (SFVEC3F)m_settings.m_BgColorTop * SFVEC3F(posYfactor) +
-                     (SFVEC3F)m_settings.m_BgColorBot * ( SFVEC3F(1.0f) - SFVEC3F(posYfactor) );
+        bgColor[y] = m_BgColorTop_LinearRGB * SFVEC3F(posYfactor) +
+                     m_BgColorBot_LinearRGB * ( SFVEC3F(1.0f) - SFVEC3F(posYfactor) );
     }
 
     // Intersect ray packets (calculate the intersection with rays and objects)
     // /////////////////////////////////////////////////////////////////////////
-    if( !m_accelerator->Intersect( blockPacket, hitPacket ) )
+    if( !m_accelerator->Intersect( blockPacket, hitPacket_X0Y0 ) )
     {
 
         // If block is empty then set shades and continue
@@ -472,9 +702,9 @@ void C3D_RENDER_RAYTRACING::rt_render_trace_block( GLubyte *ptrPBO ,
                 {
                         m_postshader_ssao.SetPixelData( blockPos.x + x,
                                                         yBlockPos,
-                                                        SFVEC3F(),
+                                                        SFVEC3F( 0.0f ),
                                                         outColor,
-                                                        SFVEC3F(),
+                                                        SFVEC3F( 0.0f ),
                                                         0,
                                                         1.0f );
                 }
@@ -485,6 +715,9 @@ void C3D_RENDER_RAYTRACING::rt_render_trace_block( GLubyte *ptrPBO ,
         // If post processing is enabled, it will not reflect the final result
         // (as the final color will be computed on post processing)
         // but it is used for report progress
+
+        const bool isFinalColor = !m_settings.GetFlag( FL_RENDER_RAYTRACING_POST_PROCESSING );
+
         for( unsigned int y = 0; y < RAYPACKET_DIM; ++y )
         {
             const SFVEC3F &outColor = bgColor[y];
@@ -496,10 +729,7 @@ void C3D_RENDER_RAYTRACING::rt_render_trace_block( GLubyte *ptrPBO ,
             {
                 GLubyte *ptr = &ptrPBO[ (yConst + x) * 4 ];
 
-                ptr[0] = (unsigned int)glm::clamp( (int)(outColor.r * 255), 0, 255 );
-                ptr[1] = (unsigned int)glm::clamp( (int)(outColor.g * 255), 0, 255 );
-                ptr[2] = (unsigned int)glm::clamp( (int)(outColor.b * 255), 0, 255 );
-                ptr[3] = 255;
+                rt_final_color( ptr, outColor, isFinalColor );
             }
         }
 
@@ -509,609 +739,173 @@ void C3D_RENDER_RAYTRACING::rt_render_trace_block( GLubyte *ptrPBO ,
     }
 
 
-    // Shade hits ("paint" the intersected objects)
+    SFVEC3F hitColor_X0Y0[RAYPACKET_RAYS_PER_PACKET];
+
+    // Shade original (0, 0) hits ("paint" the intersected objects)
     // /////////////////////////////////////////////////////////////////////////
-
-    SFVEC3F hitColor[RAYPACKET_RAYS_PER_PACKET];
-
-    for( unsigned int y = 0, i = 0; y < RAYPACKET_DIM; ++y )
-    {
-        for( unsigned int x = 0; x < RAYPACKET_DIM; ++x, ++i )
-        {
-            if( hitPacket[i].m_hitresult == true )
-            {
-                hitColor[i] = shadeHit( bgColor[y],
-                                        blockPacket.m_ray[i],
-                                        hitPacket[i].m_HitInfo,
-                                        false,
-                                        0 );
-            }
-            else
-            {
-                hitColor[i] = bgColor[y];
-            }
-        }
-    }
-
-
-    // This code was a tentative to retrace the block but using small changes
-    // on ray direction (to work as a random anti-aliasing)
-    // but it was not producing good results with low passes,
-    // parked for future use / to be implemented
-    // /////////////////////////////////////////////////////////////////////////
-
-    /*
-    //if( m_settings.GetFlag( FL_RENDER_RAYTRACING_ANTI_ALIASING ) )
-    if(0)
-    {
-        SFVEC3F absDirDiff;
-        absDirDiff.x = glm::abs( blockPacket.m_ray[                1].m_Dir.x - blockPacket.m_ray[0].m_Dir.x ) * 0.45f;
-        absDirDiff.y = glm::abs( blockPacket.m_ray[RAYPACKET_DIM + 0].m_Dir.y - blockPacket.m_ray[0].m_Dir.y ) * 0.45f;
-        absDirDiff.z = glm::abs( blockPacket.m_ray[RAYPACKET_DIM + 1].m_Dir.z - blockPacket.m_ray[0].m_Dir.z ) * 0.45f;
-
-        const unsigned int number_of_passes = 16;
-
-        for( unsigned int aaPasses = 0; aaPasses < number_of_passes; ++aaPasses )
-        {
-
-            HITINFO_PACKET hitPacketAA[RAYPACKET_RAYS_PER_PACKET];
-
-            // Initialize hitPacket with a "not hit" information
-            for( unsigned int i = 0; i < RAYPACKET_RAYS_PER_PACKET; ++i )
-            {
-                hitPacketAA[i].m_HitInfo.m_tHit = std::numeric_limits<float>::infinity();
-                hitPacketAA[i].m_HitInfo.m_acc_node_info = 0;
-                hitPacketAA[i].m_hitresult = false;
-                hitPacketAA[i].m_HitInfo.m_HitNormal = SFVEC3F();
-                hitPacketAA[i].m_HitInfo.m_ShadowFactor = 1.0f;
-            }
-
-            RAYPACKET blockPacketAA( m_settings.CameraGet(), blockPosI, absDirDiff );
-
-            if( m_accelerator->Intersect( blockPacketAA, hitPacketAA ) )
-            {
-                for( unsigned int y = 0, i = 0; y < RAYPACKET_DIM; ++y )
-                {
-                    for( unsigned int x = 0; x < RAYPACKET_DIM; ++x, ++i )
-                    {
-                        if( hitPacketAA[i].m_hitresult == true )
-                        {
-                            hitColor[i] += shadeHit( bgColor[y],
-                                                     blockPacketAA.m_ray[i],
-                                                     hitPacketAA[i].m_HitInfo,
-                                                     false,
-                                                     0 );
-                        }
-                        else
-                        {
-                            hitColor[i] += bgColor[y];
-                        }
-                    }
-                }
-            }
-        }
-
-        const float aaPasses_inv = 1.0f / (float)(number_of_passes + 1);
-
-        for( unsigned int i = 0; i < RAYPACKET_RAYS_PER_PACKET; ++i )
-            hitColor[i] *= aaPasses_inv;
-    }
-    */
-
-    // If anti-aliasing is enabled, trace a new random rays over the hits
-    // already calculated.
-    // On this pass it will calculate pixels near the hitted ray,
-    // so it will reuse the nodes found on that hits
-    // /////////////////////////////////////////////////////////////////////
+    rt_shades_packet( bgColor,
+                      blockPacket.m_ray,
+                      hitPacket_X0Y0,
+                      m_settings.GetFlag( FL_RENDER_RAYTRACING_SHADOWS ),
+                      hitColor_X0Y0 );
 
     if( m_settings.GetFlag( FL_RENDER_RAYTRACING_ANTI_ALIASING ) )
     {
+        SFVEC3F hitColor_AA_X1Y1[RAYPACKET_RAYS_PER_PACKET];
 
-        SFVEC3F hitColorAA[RAYPACKET_RAYS_PER_PACKET];
 
-        for( unsigned int i = 0; i < RAYPACKET_RAYS_PER_PACKET; ++i )
-            hitColorAA[i] = SFVEC3F(0.0f);
+        // Intersect one blockPosI + (0.5, 0.5) used for anti aliasing calculation
+        // /////////////////////////////////////////////////////////////////////////
+        HITINFO_PACKET hitPacket_AA_X1Y1[RAYPACKET_RAYS_PER_PACKET];
+        HITINFO_PACKET_init( hitPacket_AA_X1Y1 );
 
-        // This just get some difference between two pixels
-        // There is not logic on this approach, it trys to guess the xyz increments
-        SFVEC3F absDirDiff;
-        absDirDiff.x = glm::abs( blockPacket.m_ray[RAYPACKET_DIM + 0].m_Dir.x -
-                                 blockPacket.m_ray[0].m_Dir.x ) * 0.55f;
+        RAYPACKET blockPacket_AA_X1Y1( m_settings.CameraGet(),
+                                       (SFVEC2F)blockPosI + SFVEC2F(0.5f, 0.5f),
+                                       SFVEC2F(DISP_FACTOR, DISP_FACTOR) // Displacement random factor
+                                       );
 
-        absDirDiff.y = glm::abs( blockPacket.m_ray[RAYPACKET_DIM + 0].m_Dir.y -
-                                 blockPacket.m_ray[0].m_Dir.y ) * 0.55f;
-
-        absDirDiff.z = glm::abs( blockPacket.m_ray[RAYPACKET_DIM + 0].m_Dir.z -
-                                 blockPacket.m_ray[0].m_Dir.z ) * 0.55f;
-
-        const unsigned int number_of_passes = 3;
-
-        for( unsigned int aaPasses = 0; aaPasses < number_of_passes; ++aaPasses )
+        if( !m_accelerator->Intersect( blockPacket_AA_X1Y1, hitPacket_AA_X1Y1 ) )
         {
+            // Missed all the package
             for( unsigned int y = 0, i = 0; y < RAYPACKET_DIM; ++y )
             {
+                const SFVEC3F &outColor = bgColor[y];
+
                 for( unsigned int x = 0; x < RAYPACKET_DIM; ++x, ++i )
                 {
-                    if( hitPacket[i].m_hitresult == true )
-                    {
-                        const SFVEC3F randVector = SFVEC3F( Fast_RandFloat() * absDirDiff.x,
-                                                            Fast_RandFloat() * absDirDiff.y,
-                                                            Fast_RandFloat() * absDirDiff.z );
-
-                        RAY rayAA;
-                        rayAA.Init( blockPacket.m_ray[i].m_Origin,
-                                    glm::normalize( blockPacket.m_ray[i].m_Dir +
-                                                    randVector ) );
-
-                        HITINFO hitAA;
-                        hitAA.m_tHit = std::numeric_limits<float>::infinity();
-                        hitAA.m_acc_node_info = 0;
-                        hitAA.m_ShadowFactor = 1.0f;
-
-                        bool hitted = false;
-
-                        const unsigned int idx0y1 = ( x + 0 ) + RAYPACKET_DIM * ( y + 1 );
-                        const unsigned int idx1y1 = ( x + 1 ) + RAYPACKET_DIM * ( y + 1 );
-
-                        // Gets the node info from the hit. If there was no hit, return 0
-                        const unsigned int nodex0y0 = (hitPacket[ i ].m_hitresult == false)?0:
-                                                       hitPacket[ i ].m_HitInfo.m_acc_node_info;
-
-                        unsigned int nodex1y0 = 0;
-
-                        if( x < (RAYPACKET_DIM - 1) )
-                            nodex1y0 = (hitPacket[ i + 1 ].m_hitresult == false)?0:
-                                        hitPacket[ i + 1 ].m_HitInfo.m_acc_node_info;
-
-                        unsigned int nodex0y1 = 0;
-
-                        if( y < (RAYPACKET_DIM - 1) )
-                                nodex0y1 = (hitPacket[ idx0y1 ].m_hitresult == false)?0:
-                                            hitPacket[ idx0y1 ].m_HitInfo.m_acc_node_info;
-
-                        unsigned int nodex1y1 = 0;
-
-                        if(  ((x < (RAYPACKET_DIM - 1)) &&
-                              (y < (RAYPACKET_DIM - 1))) )
-                            nodex1y1 = (hitPacket[ idx1y1 ].m_hitresult == false)?0:
-                                        hitPacket[ idx1y1 ].m_HitInfo.m_acc_node_info;
-
-
-                        if( (nodex0y0 == nodex1y0) &&   //
-                            (nodex0y0 == nodex0y1) &&
-                            (nodex0y0 == nodex1y1) )
-                        {
-                            // Option 1
-                            // This option will give a very good quality on reflections (slow)
-                            /*
-                            if( m_accelerator->Intersect( rayAA, hitAA, nodex0y0 ) )
-                            {
-                                hitColorAA[i] += shadeHit( bgColor[y], rayAA, hitAA, false, 0 );
-                            }
-                            else
-                            {
-                                if( m_accelerator->Intersect( rayAA, hitAA ) )
-                                    hitColorAA[i] += shadeHit( bgColor[y], rayAA, hitAA, false, 0 );
-                                else
-                                    hitColorAA[i] += hitColor[i];
-                            }
-                            */
-
-                            // Option 2
-                            // Trace again with the same node,
-                            // then if miss just give the same color as before
-                            //if( m_accelerator->Intersect( rayAA, hitAA, nodex0y0 ) )
-                            //    hitColorAA[i] += shadeHit( bgColor[y], rayAA, hitAA, false, 0 );
-                            //else
-                                // This option will give the same color as the hit before (faster)
-                                hitColorAA[i] += hitColor[i];
-                        }
-                        else
-                        {
-                            // Try to intersect the different nodes
-                            // It tests the possible combination of hitted or not hitted points
-                            // This will try to get the best hit for this ray
-
-                            if( nodex0y0 != 0 )
-                                hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex0y0 );
-
-                            if( nodex1y0 != 0 )
-                                if( ( nodex0y0 != nodex1y0 ) || ( nodex0y0 == 0 ) )
-                                    hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex1y0 );
-
-                            if( nodex0y1 != 0 )
-                                if( ( ( nodex0y0 != nodex0y1 ) || ( nodex0y0 == 0 ) ) &&
-                                    ( ( nodex1y0 != nodex0y1 ) || ( nodex1y0 == 0 ) ) )
-                                    hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex0y1 );
-
-                            if( nodex1y1 != 0 )
-                                if( ( ( nodex0y0 != nodex1y1 ) || ( nodex0y0 == 0 ) ) &&
-                                    ( ( nodex0y1 != nodex1y1 ) || ( nodex0y1 == 0 ) ) &&
-                                    ( ( nodex1y0 != nodex1y1 ) || ( nodex1y0 == 0 ) ) )
-                                    hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex1y1 );
-
-                            if( hitted )
-                            {
-                                // If he got any result, shade it
-                                hitColorAA[i] += shadeHit( bgColor[y], rayAA, hitAA, false, 0 );
-                            }
-                            else
-                            {
-                                // It was missed the 'last nodes' so, trace a ray from the beginning
-                                if( m_accelerator->Intersect( rayAA, hitAA ) )
-                                    hitColorAA[i] += shadeHit( bgColor[y], rayAA, hitAA, false, 0 );
-                                else
-                                    hitColorAA[i] += hitColor[i];
-                            }
-                        }
-                    }
-                    else
-                    {
-                        hitColorAA[i] += hitColor[i];
-                    }
+                    hitColor_AA_X1Y1[i] = outColor;
                 }
             }
         }
+        else
+        {
+            rt_shades_packet( bgColor,
+                              blockPacket_AA_X1Y1.m_ray,
+                              hitPacket_AA_X1Y1,
+                              m_settings.GetFlag( FL_RENDER_RAYTRACING_SHADOWS ),
+                              hitColor_AA_X1Y1
+                              );
+        }
 
-        const float aaPasses_inv = 1.0f / (float)number_of_passes;
+        SFVEC3F hitColor_AA_X1Y0[RAYPACKET_RAYS_PER_PACKET];
+        SFVEC3F hitColor_AA_X0Y1[RAYPACKET_RAYS_PER_PACKET];
+        SFVEC3F hitColor_AA_X0Y1_half[RAYPACKET_RAYS_PER_PACKET];
 
         for( unsigned int i = 0; i < RAYPACKET_RAYS_PER_PACKET; ++i )
-            hitColor[i] = hitColor[i] * 0.40f + (hitColorAA[i] * aaPasses_inv) * 0.60f;
-    }
-
-
-    // Trace adaptative anti-aliasing middle pixels
-    // /////////////////////////////////////////////////////////////////////
-
-    HITINFO_PACKET hitPacketAA[ (RAYPACKET_DIM-1) * (RAYPACKET_DIM-1) ];
-    RAY            raysAA[ (RAYPACKET_DIM-1) * (RAYPACKET_DIM-1) ];
-    SFVEC3F        hitColorAA[ (RAYPACKET_DIM-1) * (RAYPACKET_DIM-1) ];
-    bool           hittedAA[ (RAYPACKET_DIM-1) * (RAYPACKET_DIM-1) ];
-
-    if( m_settings.GetFlag( FL_RENDER_RAYTRACING_ANTI_ALIASING ) )
-    {
-        for( unsigned int y = 0, i = 0; y < (RAYPACKET_DIM - 1); ++y )
         {
-            for( unsigned int x = 0; x < (RAYPACKET_DIM - 1); ++x, ++i )
-            {
-                hitColorAA[i] = bgColor[y];
-                hittedAA[i] = false;
+            const SFVEC3F color_average = ( hitColor_X0Y0[i] +
+                                            hitColor_AA_X1Y1[i] ) * SFVEC3F(0.5f);
 
-                const unsigned int idx0y0 = (x + 0) + RAYPACKET_DIM * (y + 0);
-                const unsigned int idx1y0 = (x + 1) + RAYPACKET_DIM * (y + 0);
-                const unsigned int idx0y1 = (x + 0) + RAYPACKET_DIM * (y + 1);
-                const unsigned int idx1y1 = (x + 1) + RAYPACKET_DIM * (y + 1);
+            hitColor_AA_X1Y0[i] = color_average;
+            hitColor_AA_X0Y1[i] = color_average;
+            hitColor_AA_X0Y1_half[i] = color_average;
+        }
 
-                // Evaluate if we can skip the pixel from trace if the adjacent
-                // pixels are similar (hitted, similar color and normal)
+        RAY blockRayPck_AA_X1Y0[RAYPACKET_RAYS_PER_PACKET];
+        RAY blockRayPck_AA_X0Y1[RAYPACKET_RAYS_PER_PACKET];
+        RAY blockRayPck_AA_X1Y1_half[RAYPACKET_RAYS_PER_PACKET];
 
-                if( hitPacket[ idx0y0 ].m_hitresult &&
-                    hitPacket[ idx1y0 ].m_hitresult &&
-                    hitPacket[ idx0y1 ].m_hitresult &&
-                    hitPacket[ idx1y1 ].m_hitresult )
-                {
-                    // Calc the average gray scale
+        RAYPACKET_InitRays_with2DDisplacement( m_settings.CameraGet(),
+                                               (SFVEC2F)blockPosI + SFVEC2F(0.5f - DISP_FACTOR, DISP_FACTOR),
+                                               SFVEC2F(DISP_FACTOR, DISP_FACTOR), // Displacement random factor
+                                               blockRayPck_AA_X1Y0 );
 
-                    // Average
-                    /*
-                    const float gray_idx0y0 =
-                            (hitColor[idx0y0].r + hitColor[idx0y0].g + hitColor[idx0y0].b ) / 3.0f;
-                    const float gray_idx1y0 =
-                            (hitColor[idx1y0].r + hitColor[idx1y0].g + hitColor[idx1y0].b ) / 3.0f;
-                    const float gray_idx0y1 =
-                            (hitColor[idx0y1].r + hitColor[idx0y1].g + hitColor[idx0y1].b ) / 3.0f;
-                    const float gray_idx1y1 =
-                            (hitColor[idx1y1].r + hitColor[idx1y1].g + hitColor[idx1y1].b ) / 3.0f;
-                    */
+        RAYPACKET_InitRays_with2DDisplacement( m_settings.CameraGet(),
+                                               (SFVEC2F)blockPosI + SFVEC2F(DISP_FACTOR, 0.5f - DISP_FACTOR),
+                                               SFVEC2F(DISP_FACTOR, DISP_FACTOR), // Displacement random factor
+                                               blockRayPck_AA_X0Y1 );
 
+        RAYPACKET_InitRays_with2DDisplacement( m_settings.CameraGet(),
+                                               (SFVEC2F)blockPosI + SFVEC2F(0.25f - DISP_FACTOR, 0.25f - DISP_FACTOR),
+                                               SFVEC2F(DISP_FACTOR, DISP_FACTOR), // Displacement random factor
+                                               blockRayPck_AA_X1Y1_half );
 
-                    // Luminance
-                    const float gray_idx0y0 = (hitColor[idx0y0].r * 0.2126f +
-                                               hitColor[idx0y0].g * 0.7152f +
-                                               hitColor[idx0y0].b * 0.0722f);
+        rt_trace_AA_packet( bgColor,
+                            hitPacket_X0Y0, hitPacket_AA_X1Y1,
+                            blockRayPck_AA_X1Y0,
+                            hitColor_AA_X1Y0 );
 
-                    const float gray_idx1y0 = (hitColor[idx1y0].r * 0.2126f +
-                                               hitColor[idx1y0].g * 0.7152f +
-                                               hitColor[idx1y0].b * 0.0722f);
+        rt_trace_AA_packet( bgColor,
+                            hitPacket_X0Y0, hitPacket_AA_X1Y1,
+                            blockRayPck_AA_X0Y1,
+                            hitColor_AA_X0Y1 );
 
-                    const float gray_idx0y1 = (hitColor[idx0y1].r * 0.2126f +
-                                               hitColor[idx0y1].g * 0.7152f +
-                                               hitColor[idx0y1].b * 0.0722f);
+        rt_trace_AA_packet( bgColor,
+                            hitPacket_X0Y0, hitPacket_AA_X1Y1,
+                            blockRayPck_AA_X1Y1_half,
+                            hitColor_AA_X0Y1_half );
 
-                    const float gray_idx1y1 = (hitColor[idx1y1].r * 0.2126f +
-                                               hitColor[idx1y1].g * 0.7152f +
-                                               hitColor[idx1y1].b * 0.0722f);
-
-                    const float threshould_color = 0.070f;
-
-                    // Check if there are no big difference, if not,
-                    // it will continue and not process anti-aliasing
-                    if( ( glm::abs( gray_idx0y0 - gray_idx1y0) < threshould_color ) &&
-                        ( glm::abs( gray_idx0y0 - gray_idx0y1) < threshould_color ) &&
-                        ( glm::abs( gray_idx0y1 - gray_idx1y1) < threshould_color ) &&
-                        ( glm::abs( gray_idx1y1 - gray_idx1y0) < threshould_color ) )
-                    {
-                            continue;
-                    }
-                }
-
-
-                // Use this code if you want to see (debug) the pixels that are interpolated
-                // hitColorAA[i] = SFVEC3F(1.0f, 0.0f, 1.0f);
-                // hittedAA[i] = true;
-                // continue;
-
-
-
-                // Initialize a ray that is in the middle of the 4 pixeis and
-                // have an average direction of the 4 pixels
-                raysAA[i].Init( ( blockPacket.m_ray[idx0y0].m_Origin +
-                                  blockPacket.m_ray[idx1y0].m_Origin +
-                                  blockPacket.m_ray[idx0y1].m_Origin +
-                                  blockPacket.m_ray[idx1y1].m_Origin ) / 4.0f,
-                                glm::normalize( ( blockPacket.m_ray[idx0y0].m_Dir +
-                                                  blockPacket.m_ray[idx1y0].m_Dir +
-                                                  blockPacket.m_ray[idx0y1].m_Dir +
-                                                  blockPacket.m_ray[idx1y1].m_Dir ) ) );
-
-                hitPacketAA[i].m_HitInfo.m_tHit = std::numeric_limits<float>::infinity();
-                hitPacketAA[i].m_HitInfo.m_acc_node_info = 0;
-                hitPacketAA[i].m_HitInfo.m_ShadowFactor = 1.0f;
-                hitPacketAA[i].m_hitresult = false;
-
-                bool hitted = false;
-
-                // Gets the node info from the hit. If there was no hit, return 0
-                const unsigned int nodex0y0 = (hitPacket[ idx0y0 ].m_hitresult == false)?0:
-                                               hitPacket[ idx0y0 ].m_HitInfo.m_acc_node_info;
-
-                const unsigned int nodex1y0 = (hitPacket[ idx1y0 ].m_hitresult == false)?0:
-                                               hitPacket[ idx1y0 ].m_HitInfo.m_acc_node_info;
-
-                const unsigned int nodex0y1 = (hitPacket[ idx0y1 ].m_hitresult == false)?0:
-                                               hitPacket[ idx0y1 ].m_HitInfo.m_acc_node_info;
-
-                const unsigned int nodex1y1 = (hitPacket[ idx1y1 ].m_hitresult == false)?0:
-                                               hitPacket[ idx1y1 ].m_HitInfo.m_acc_node_info;
-
-                // Try to intersect the different nodes
-                // It tests the possible combination of hitted or not hitted points
-                // This will try to get the best hit for this ray
-
-                if( nodex0y0 != 0 )
-                    hitted |= m_accelerator->Intersect( raysAA[i],
-                                                        hitPacketAA[i].m_HitInfo,
-                                                        nodex0y0 );
-
-                if( nodex1y0 != 0 )
-                    if( ( nodex0y0 != nodex1y0 ) || ( nodex0y0 == 0 ) )
-                        hitted |= m_accelerator->Intersect( raysAA[i],
-                                                            hitPacketAA[i].m_HitInfo,
-                                                            nodex1y0 );
-
-                if( nodex0y1 != 0 )
-                    if( ( ( nodex0y0 != nodex0y1 ) || ( nodex0y0 == 0 ) ) &&
-                        ( ( nodex1y0 != nodex0y1 ) || ( nodex1y0 == 0 ) ) )
-                        hitted |= m_accelerator->Intersect( raysAA[i],
-                                                            hitPacketAA[i].m_HitInfo,
-                                                            nodex0y1 );
-
-                if( nodex1y1 != 0 )
-                    if( ( ( nodex0y0 != nodex1y1 ) || ( nodex0y0 == 0 ) ) &&
-                        ( ( nodex0y1 != nodex1y1 ) || ( nodex0y1 == 0 ) ) &&
-                        ( ( nodex1y0 != nodex1y1 ) || ( nodex1y0 == 0 ) ) )
-                        hitted |= m_accelerator->Intersect( raysAA[i],
-                                                            hitPacketAA[i].m_HitInfo,
-                                                            nodex1y1 );
-
-                if( hitted )
-                {
-                    // If he got any result, shade it
-                    hitColorAA[i] = shadeHit( bgColor[y],
-                                              raysAA[i],
-                                              hitPacketAA[i].m_HitInfo,
-                                              false,
-                                              0 );
-                }
-                else
-                {
-                    // It was missed the 'last nodes' so,
-                    // trace a ray from the beginning
-                    if( m_accelerator->Intersect( raysAA[i], hitPacketAA[i].m_HitInfo ) )
-                        hitColorAA[i] = shadeHit( bgColor[y],
-                                                  raysAA[i],
-                                                  hitPacketAA[i].m_HitInfo,
-                                                  false,
-                                                  0 );
-                }
-
-                hittedAA[i] = true;
-            }
+        // Average the result
+        for( unsigned int i = 0; i < RAYPACKET_RAYS_PER_PACKET; ++i )
+        {
+            hitColor_X0Y0[i] = ( hitColor_X0Y0[i] +
+                                 hitColor_AA_X1Y1[i] +
+                                 hitColor_AA_X1Y0[i] +
+                                 hitColor_AA_X0Y1[i] +
+                                 hitColor_AA_X0Y1_half[i]
+                                 ) * SFVEC3F(1.0f / 5.0f);
         }
     }
 
 
-    // Blend original hitted pixels with anti-alised pixels
+    // Copy results to the next stage
     // /////////////////////////////////////////////////////////////////////
-    for( unsigned int y = 0, i = 0; y < RAYPACKET_DIM; ++y )
+
+    GLubyte *ptr = &ptrPBO[ ( blockPos.x +
+                              (blockPos.y * m_realBufferSize.x) ) * 4 ];
+
+    const uint32_t ptrInc = (m_realBufferSize.x - RAYPACKET_DIM) * 4;
+
+    if( m_settings.GetFlag( FL_RENDER_RAYTRACING_POST_PROCESSING ) )
     {
-        for( unsigned int x = 0; x < RAYPACKET_DIM; ++x, ++i )
+        SFVEC2I bPos;
+        bPos.y = blockPos.y;
+
+        for( unsigned int y = 0, i = 0; y < RAYPACKET_DIM; ++y )
         {
-            SFVEC3F hColor = hitColor[i];
+            bPos.x = blockPos.x;
 
-            if( m_settings.GetFlag( FL_RENDER_RAYTRACING_ANTI_ALIASING ) )
+            for( unsigned int x = 0; x < RAYPACKET_DIM; ++x, ++i )
             {
-                SFVEC3F aaColor = bgColor[y];
+                const SFVEC3F &hColor = hitColor_X0Y0[i];
 
-                if( (x > 0) &&
-                    (y > 0) &&
-                    ( x < (RAYPACKET_DIM - 1) ) &&
-                    ( y < (RAYPACKET_DIM - 1) ) )
-                {
-                    // It makes a blur of the hitColor
-                    const SFVEC3F averageHitColor =
-                             hitColor[ (x - 1) + RAYPACKET_DIM * (y - 1) ] * 0.0625f +
-                             hitColor[ (x + 0) + RAYPACKET_DIM * (y - 1) ] * 0.1250f +
-                             hitColor[ (x + 1) + RAYPACKET_DIM * (y - 1) ] * 0.0625f +
-                             hitColor[ (x - 1) + RAYPACKET_DIM * (y + 0) ] * 0.1250f +
-                             hitColor[ (x + 0) + RAYPACKET_DIM * (y + 0) ] * 0.2500f +
-                             hitColor[ (x + 1) + RAYPACKET_DIM * (y + 0) ] * 0.1250f +
-                             hitColor[ (x - 1) + RAYPACKET_DIM * (y + 1) ] * 0.0625f +
-                             hitColor[ (x + 0) + RAYPACKET_DIM * (y + 1) ] * 0.1250f +
-                             hitColor[ (x + 1) + RAYPACKET_DIM * (y + 1) ] * 0.0625f;
-
-
-                    const unsigned x0y0 = (x - 1) + (RAYPACKET_DIM - 1) * (y - 1);
-                    const unsigned x1y0 = (x - 0) + (RAYPACKET_DIM - 1) * (y - 1);
-                    const unsigned x0y1 = (x - 1) + (RAYPACKET_DIM - 1) * (y - 0);
-                    const unsigned x1y1 = (x - 0) + (RAYPACKET_DIM - 1) * (y - 0);
-
-                    aaColor = (hittedAA[ x0y0 ]? hitColorAA[ x0y0 ]: averageHitColor) +
-                              (hittedAA[ x1y0 ]? hitColorAA[ x1y0 ]: averageHitColor) +
-                              (hittedAA[ x0y1 ]? hitColorAA[ x0y1 ]: averageHitColor) +
-                              (hittedAA[ x1y1 ]? hitColorAA[ x1y1 ]: averageHitColor);
-
-                    aaColor /= 4.0f;
-                }
-                else
-                {
-                    if( (x == 0) && (y == 0) )
-                    {
-                        const unsigned x0y0 = (x - 0) + (RAYPACKET_DIM - 1) * (y - 0);
-                        aaColor = (hittedAA[ x0y0 ]? hitColorAA[ x0y0 ]: hColor);
-                    }
-                    else
-                    {
-                        if( (x == (RAYPACKET_DIM - 1)) && (y == (RAYPACKET_DIM - 1)) )
-                        {
-                            const unsigned x0y0 = (x - 1) + (RAYPACKET_DIM - 1) * (y - 1);
-                            aaColor = (hittedAA[ x0y0 ]? hitColorAA[ x0y0 ]: hColor);
-                        }
-                        else
-                        {
-                            if( (x == (RAYPACKET_DIM - 1)) && (y == 0) )
-                            {
-                                const unsigned x0y0 = (x - 1) + (RAYPACKET_DIM - 1) * (y - 0);
-                                aaColor = (hittedAA[ x0y0 ]? hitColorAA[ x0y0 ]: hColor);
-                            }
-                            else
-                            {
-                                if( (x == 0) && (y == (RAYPACKET_DIM - 1)) )
-                                {
-                                    const unsigned x0y0 = (x - 0) + (RAYPACKET_DIM - 1) * (y - 1);
-                                    aaColor = (hittedAA[ x0y0 ]? hitColorAA[ x0y0 ]: hColor);
-                                }
-                                else
-                                {
-                                    if( ( y == 0 ) && ( x < (RAYPACKET_DIM - 1) ) )
-                                    {
-                                        const unsigned x0y0 = (x - 1) + (RAYPACKET_DIM - 1) *
-                                                              (y - 0);
-                                        const unsigned x1y0 = (x - 0) + (RAYPACKET_DIM - 1) *
-                                                              (y - 0);
-
-                                        aaColor = (hittedAA[ x0y0 ]? hitColorAA[ x0y0 ]: hColor) +
-                                                  (hittedAA[ x1y0 ]? hitColorAA[ x1y0 ]: hColor);
-
-                                        aaColor = aaColor / 2.0f;
-                                    }
-                                    else
-                                    {
-                                        if( ( y == (RAYPACKET_DIM - 1) ) &&
-                                            ( x < (RAYPACKET_DIM - 1) ) )
-                                        {
-                                            const unsigned x0y0 = (x - 1) + (RAYPACKET_DIM - 1) *
-                                                                  (y - 1);
-                                            const unsigned x1y0 = (x - 0) + (RAYPACKET_DIM - 1) *
-                                                                  (y - 1);
-
-                                            aaColor = (hittedAA[ x0y0 ]?hitColorAA[ x0y0 ]:hColor) +
-                                                      (hittedAA[ x1y0 ]?hitColorAA[ x1y0 ]:hColor);
-
-                                            aaColor = aaColor / 2.0f;
-                                        }
-                                        else
-                                        {
-                                            if( ( x == 0 ) && ( y < (RAYPACKET_DIM - 1) ) )
-                                            {
-                                                const unsigned x0y0 = (x - 0) +
-                                                                      (RAYPACKET_DIM - 1) * (y - 1);
-                                                const unsigned x0y1 = (x - 0) +
-                                                                      (RAYPACKET_DIM - 1) * (y - 0);
-
-                                                aaColor = (hittedAA[x0y0]?hitColorAA[x0y0]:hColor) +
-                                                          (hittedAA[x0y1]?hitColorAA[x0y1]:hColor);
-
-                                                aaColor = aaColor / 2.0f;
-                                            }
-                                            else
-                                            {
-                                                if( ( x == (RAYPACKET_DIM - 1) ) &&
-                                                    ( y < (RAYPACKET_DIM - 1) ) )
-                                                {
-                                                    const unsigned x0y0 = (x - 1) +
-                                                                          (RAYPACKET_DIM - 1) *
-                                                                          (y - 1);
-
-                                                    const unsigned x0y1 = (x - 1) +
-                                                                          (RAYPACKET_DIM - 1) *
-                                                                          (y - 0);
-
-                                                    aaColor =
-                                                        (hittedAA[x0y0]?hitColorAA[x0y0]:hColor) +
-                                                        (hittedAA[x0y1]?hitColorAA[x0y1]:hColor);
-
-                                                    aaColor = aaColor / 2.0f;
-                                                }
-                                                else
-                                                {
-                                                    aaColor = SFVEC3F(1.0f, 0.0f, 1.0f ); // Invalid
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Calculate the final blend color. It gives more importance
-                // to the original color
-                hColor = hColor * 0.60f + aaColor * 0.40f;
-            }
-
-            if( m_settings.GetFlag( FL_RENDER_RAYTRACING_POST_PROCESSING ) )
-            {
-                if( hitPacket[i].m_hitresult == true )
-                    m_postshader_ssao.SetPixelData( blockPos.x + x, blockPos.y + y,
-                                                    hitPacket[i].m_HitInfo.m_HitNormal,
+                if( hitPacket_X0Y0[i].m_hitresult == true )
+                    m_postshader_ssao.SetPixelData( bPos.x, bPos.y,
+                                                    hitPacket_X0Y0[i].m_HitInfo.m_HitNormal,
                                                     hColor,
                                                     blockPacket.m_ray[i].at(
-                                                        hitPacket[i].m_HitInfo.m_tHit ),
-                                                    hitPacket[i].m_HitInfo.m_tHit,
-                                                    hitPacket[i].m_HitInfo.m_ShadowFactor );
+                                                        hitPacket_X0Y0[i].m_HitInfo.m_tHit ),
+                                                    hitPacket_X0Y0[i].m_HitInfo.m_tHit,
+                                                    hitPacket_X0Y0[i].m_HitInfo.m_ShadowFactor );
                 else
-                    m_postshader_ssao.SetPixelData( blockPos.x + x, blockPos.y + y,
-                                                    SFVEC3F(),
+                    m_postshader_ssao.SetPixelData( bPos.x, bPos.y,
+                                                    SFVEC3F( 0.0f ),
                                                     hColor,
-                                                    SFVEC3F(),
+                                                    SFVEC3F( 0.0f ),
                                                     0,
                                                     1.0f );
 
+                rt_final_color( ptr, hColor, false );
+
+                bPos.x++;
+                ptr += 4;
             }
 
-            // This will set the output color to be displayed
-            // If post processing is enabled, it will not reflect the final result
-            // (as the final color will be computed on post processing)
-            // but it is used for report progress
-            GLubyte *ptr = &ptrPBO[ ( blockPos.x + x +
-                                      ((y + blockPos.y) * m_realBufferSize.x) ) * 4 ];
+            ptr += ptrInc;
+            bPos.y++;
+        }
+    }
+    else
+    {
+        for( unsigned int y = 0, i = 0; y < RAYPACKET_DIM; ++y )
+        {
+            for( unsigned int x = 0; x < RAYPACKET_DIM; ++x, ++i )
+            {
+                rt_final_color( ptr, hitColor_X0Y0[i], true );
+                ptr += 4;
+            }
 
-            ptr[0] = (unsigned int)glm::clamp( (int)(hColor.r * 255), 0, 255 );
-            ptr[1] = (unsigned int)glm::clamp( (int)(hColor.g * 255), 0, 255 );
-            ptr[2] = (unsigned int)glm::clamp( (int)(hColor.b * 255), 0, 255 );
-            ptr[3] = 255;
+            ptr += ptrInc;
         }
     }
 }
@@ -1127,21 +921,35 @@ void C3D_RENDER_RAYTRACING::rt_render_post_process_shade( GLubyte *ptrPBO,
         if( aStatusTextReporter )
             aStatusTextReporter->Report( _("Rendering: Post processing shader") );
 
-        // Compute the shader value
-        #pragma omp parallel for schedule(dynamic)
-        for( signed int y = 0; y < (int)m_realBufferSize.y; ++y )
-        {
-            SFVEC3F *ptr = &m_shaderBuffer[ y * m_realBufferSize.x ];
+        std::atomic<size_t> nextBlock( 0 );
+        std::atomic<size_t> threadsFinished( 0 );
 
-            for( signed int x = 0; x < (int)m_realBufferSize.x; ++x )
+        size_t parallelThreadCount = std::max<size_t>( std::thread::hardware_concurrency(), 2 );
+        for( size_t ii = 0; ii < parallelThreadCount; ++ii )
+        {
+            std::thread t = std::thread( [&]()
             {
-                *ptr = m_postshader_ssao.Shade( SFVEC2I( x, y ) );
-                ptr++;
-            }
+                for( size_t y = nextBlock.fetch_add( 1 );
+                            y < m_realBufferSize.y;
+                            y = nextBlock.fetch_add( 1 ) )
+                {
+                    SFVEC3F *ptr = &m_shaderBuffer[ y * m_realBufferSize.x ];
+
+                    for( signed int x = 0; x < (int)m_realBufferSize.x; ++x )
+                    {
+                        *ptr = m_postshader_ssao.Shade( SFVEC2I( x, y ) );
+                        ptr++;
+                    }
+                }
+
+                threadsFinished++;
+            } );
+
+            t.detach();
         }
 
-        // Wait for all threads to finish
-        #pragma omp barrier
+        while( threadsFinished < parallelThreadCount )
+            std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
 
         // Set next state
         m_rt_render_state = RT_RENDER_STATE_POST_PROCESS_BLUR_AND_FINISH;
@@ -1162,131 +970,107 @@ void C3D_RENDER_RAYTRACING::rt_render_post_process_blur_finish( GLubyte *ptrPBO,
     if( m_settings.GetFlag( FL_RENDER_RAYTRACING_POST_PROCESSING ) )
     {
         // Now blurs the shader result and compute the final color
-        #pragma omp parallel for schedule(dynamic)
-        for( signed int y = 0; y < (int)m_realBufferSize.y; ++y )
+        std::atomic<size_t> nextBlock( 0 );
+        std::atomic<size_t> threadsFinished( 0 );
+
+        size_t parallelThreadCount = std::max<size_t>( std::thread::hardware_concurrency(), 2 );
+        for( size_t ii = 0; ii < parallelThreadCount; ++ii )
         {
-            GLubyte *ptr = &ptrPBO[ y * m_realBufferSize.x * 4 ];
-
-            SFVEC3F *ptrShaderY0 =
-                    &m_shaderBuffer[ glm::max((int)y - 2, 0) * m_realBufferSize.x ];
-            SFVEC3F *ptrShaderY1 =
-                    &m_shaderBuffer[ glm::max((int)y - 1, 0) * m_realBufferSize.x ];
-            SFVEC3F *ptrShaderY2 =
-                    &m_shaderBuffer[ y * m_realBufferSize.x ];
-            SFVEC3F *ptrShaderY3 =
-                    &m_shaderBuffer[ glm::min((int)y + 1, (int)(m_realBufferSize.y - 1)) *
-                                     m_realBufferSize.x ];
-            SFVEC3F *ptrShaderY4 =
-                    &m_shaderBuffer[ glm::min((int)y + 2, (int)(m_realBufferSize.y - 1)) *
-                                     m_realBufferSize.x ];
-
-            for( signed int x = 0; x < (int)m_realBufferSize.x; ++x )
+            std::thread t = std::thread( [&]()
             {
-// This #if should be 1, it is here that can be used for debug proposes during development
-#if 1
-
-                SFVEC3F bluredShadeColor = (*ptrShaderY0) * 1.0f / 273.0f +
-                                           (*ptrShaderY1) * 4.0f / 273.0f +
-                                           (*ptrShaderY2) * 7.0f / 273.0f +
-                                           (*ptrShaderY3) * 4.0f / 273.0f +
-                                           (*ptrShaderY4) * 1.0f / 273.0f;
-                if( x > 1 )
+                for( size_t y = nextBlock.fetch_add( 1 );
+                            y < m_realBufferSize.y;
+                            y = nextBlock.fetch_add( 1 ) )
                 {
-                    ptrShaderY0++;
-                    ptrShaderY1++;
-                    ptrShaderY2++;
-                    ptrShaderY3++;
-                    ptrShaderY4++;
+                    GLubyte *ptr = &ptrPBO[ y * m_realBufferSize.x * 4 ];
+
+                    const SFVEC3F *ptrShaderY0 =
+                            &m_shaderBuffer[ glm::max((int)y - 2, 0) * m_realBufferSize.x ];
+                    const SFVEC3F *ptrShaderY1 =
+                            &m_shaderBuffer[ glm::max((int)y - 1, 0) * m_realBufferSize.x ];
+                    const SFVEC3F *ptrShaderY2 =
+                            &m_shaderBuffer[ y * m_realBufferSize.x ];
+                    const SFVEC3F *ptrShaderY3 =
+                            &m_shaderBuffer[ glm::min((int)y + 1, (int)(m_realBufferSize.y - 1)) *
+                                             m_realBufferSize.x ];
+                    const SFVEC3F *ptrShaderY4 =
+                            &m_shaderBuffer[ glm::min((int)y + 2, (int)(m_realBufferSize.y - 1)) *
+                                             m_realBufferSize.x ];
+
+                    for( signed int x = 0; x < (int)m_realBufferSize.x; ++x )
+                    {
+        // This #if should be 1, it is here that can be used for debug proposes during development
+        #if 1
+                        int idx = x > 1 ? -2 : 0;
+                        SFVEC3F bluredShadeColor = ptrShaderY0[idx] * 1.0f / 273.0f +
+                                                   ptrShaderY1[idx] * 4.0f / 273.0f +
+                                                   ptrShaderY2[idx] * 7.0f / 273.0f +
+                                                   ptrShaderY3[idx] * 4.0f / 273.0f +
+                                                   ptrShaderY4[idx] * 1.0f / 273.0f;
+
+                        idx = x > 0 ? -1 : 0;
+                        bluredShadeColor += ptrShaderY0[idx] *  4.0f / 273.0f +
+                                            ptrShaderY1[idx] * 16.0f / 273.0f +
+                                            ptrShaderY2[idx] * 26.0f / 273.0f +
+                                            ptrShaderY3[idx] * 16.0f / 273.0f +
+                                            ptrShaderY4[idx] *  4.0f / 273.0f;
+
+                        bluredShadeColor += (*ptrShaderY0) *  7.0f / 273.0f +
+                                            (*ptrShaderY1) * 26.0f / 273.0f +
+                                            (*ptrShaderY2) * 41.0f / 273.0f +
+                                            (*ptrShaderY3) * 26.0f / 273.0f +
+                                            (*ptrShaderY4) *  7.0f / 273.0f;
+
+                        idx = (x < (int)m_realBufferSize.x - 1) ? 1 : 0;
+                        bluredShadeColor += ptrShaderY0[idx] * 4.0f / 273.0f +
+                                            ptrShaderY1[idx] *16.0f / 273.0f +
+                                            ptrShaderY2[idx] *26.0f / 273.0f +
+                                            ptrShaderY3[idx] *16.0f / 273.0f +
+                                            ptrShaderY4[idx] * 4.0f / 273.0f;
+
+                        idx = (x < (int)m_realBufferSize.x - 2) ? 2 : 0;
+                        bluredShadeColor += ptrShaderY0[idx] * 1.0f / 273.0f +
+                                            ptrShaderY1[idx] * 4.0f / 273.0f +
+                                            ptrShaderY2[idx] * 7.0f / 273.0f +
+                                            ptrShaderY3[idx] * 4.0f / 273.0f +
+                                            ptrShaderY4[idx] * 1.0f / 273.0f;
+
+                        // process next pixel
+                        ++ptrShaderY0;
+                        ++ptrShaderY1;
+                        ++ptrShaderY2;
+                        ++ptrShaderY3;
+                        ++ptrShaderY4;
+
+        #ifdef USE_SRGB_SPACE
+                        const SFVEC3F originColor = convertLinearToSRGB( m_postshader_ssao.GetColorAtNotProtected( SFVEC2I( x,y ) ) );
+        #else
+                        const SFVEC3F originColor = m_postshader_ssao.GetColorAtNotProtected( SFVEC2I( x,y ) );
+        #endif
+
+                        const SFVEC3F shadedColor = m_postshader_ssao.ApplyShadeColor( SFVEC2I( x,y ), originColor, bluredShadeColor );
+        #else
+                        // Debug code
+                        //const SFVEC3F shadedColor =  SFVEC3F( 1.0f ) -
+                        //                             m_shaderBuffer[ y * m_realBufferSize.x + x];
+                        const SFVEC3F shadedColor =  m_shaderBuffer[ y * m_realBufferSize.x + x ];
+        #endif
+
+                        rt_final_color( ptr, shadedColor, false );
+
+                        ptr += 4;
+                    }
                 }
 
-                bluredShadeColor += (*ptrShaderY0) * 4.0f / 273.0f +
-                                    (*ptrShaderY1) *16.0f / 273.0f +
-                                    (*ptrShaderY2) *26.0f / 273.0f +
-                                    (*ptrShaderY3) *16.0f / 273.0f +
-                                    (*ptrShaderY4) * 4.0f / 273.0f;
+                threadsFinished++;
+            } );
 
-                if( x > 0 )
-                {
-                    ptrShaderY0++;
-                    ptrShaderY1++;
-                    ptrShaderY2++;
-                    ptrShaderY3++;
-                    ptrShaderY4++;
-                }
-
-                bluredShadeColor += (*ptrShaderY0) * 7.0f / 273.0f +
-                                    (*ptrShaderY1) *26.0f / 273.0f +
-                                    (*ptrShaderY2) *41.0f / 273.0f +
-                                    (*ptrShaderY3) *26.0f / 273.0f +
-                                    (*ptrShaderY4) * 7.0f / 273.0f;
-
-                if( x < ((int)m_realBufferSize.x - 1) )
-                {
-                    ptrShaderY0++;
-                    ptrShaderY1++;
-                    ptrShaderY2++;
-                    ptrShaderY3++;
-                    ptrShaderY4++;
-                }
-
-                bluredShadeColor += (*ptrShaderY0) * 4.0f / 273.0f +
-                                    (*ptrShaderY1) *16.0f / 273.0f +
-                                    (*ptrShaderY2) *26.0f / 273.0f +
-                                    (*ptrShaderY3) *16.0f / 273.0f +
-                                    (*ptrShaderY4) * 4.0f / 273.0f;
-
-                if( x < ((int)m_realBufferSize.x - 2) )
-                {
-                    ptrShaderY0++;
-                    ptrShaderY1++;
-                    ptrShaderY2++;
-                    ptrShaderY3++;
-                    ptrShaderY4++;
-                }
-
-                bluredShadeColor += (*ptrShaderY0) * 1.0f / 273.0f +
-                                    (*ptrShaderY1) * 4.0f / 273.0f +
-                                    (*ptrShaderY2) * 7.0f / 273.0f +
-                                    (*ptrShaderY3) * 4.0f / 273.0f +
-                                    (*ptrShaderY4) * 1.0f / 273.0f;
-
-                ptrShaderY0-= 3;
-                ptrShaderY1-= 3;
-                ptrShaderY2-= 3;
-                ptrShaderY3-= 3;
-                ptrShaderY4-= 3;
-
-                const float grayBluredColor = ( bluredShadeColor.r +
-                                                bluredShadeColor.g +
-                                                bluredShadeColor.b ) / 3.0f;
-
-                const SFVEC3F shadedColor = m_postshader_ssao.GetColorAtNotProtected(
-                                            SFVEC2I( x, y ) ) * ( SFVEC3F(1.0f) -
-                                                                  bluredShadeColor ) -
-                                            ( bluredShadeColor - grayBluredColor * 0.5f );
-
-                // Debug code
-                //const SFVEC3F shadedColor =  ( bluredShadeColor - grayBluredColor * 0.5f);
-                //const SFVEC3F shadedColor =  - glm::min( bluredShadeColor, SFVEC3F(0.0f) );
-                //const SFVEC3F shadedColor =  0.5f * (SFVEC3F(1.0f) - bluredShadeColor) -
-                //                             glm::min( bluredShadeColor, SFVEC3F(0.0f) );
-                //const SFVEC3F shadedColor =  bluredShadeColor;
-#else
-                // Debug code
-                //const SFVEC3F shadedColor =  SFVEC3F( 1.0f ) -
-                //                             m_shaderBuffer[ y * m_realBufferSize.x + x];
-                const SFVEC3F shadedColor =  m_shaderBuffer[ y * m_realBufferSize.x + x ];
-#endif
-                ptr[0] = (unsigned int)glm::clamp( (int)(shadedColor.r * 255), 0, 255 );
-                ptr[1] = (unsigned int)glm::clamp( (int)(shadedColor.g * 255), 0, 255 );
-                ptr[2] = (unsigned int)glm::clamp( (int)(shadedColor.b * 255), 0, 255 );
-                ptr[3] = 255;
-                ptr += 4;
-            }
+            t.detach();
         }
 
-        // Wait for all threads to finish
-        #pragma omp barrier
+        while( threadsFinished < parallelThreadCount )
+            std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
+
 
         // Debug code
         //m_postshader_ssao.DebugBuffersOutputAsImages();
@@ -1301,622 +1085,629 @@ void C3D_RENDER_RAYTRACING::render_preview( GLubyte *ptrPBO )
 {
     m_isPreview = true;
 
-    unsigned int nrBlocks = m_blockPositionsFast.size();
+    std::atomic<size_t> nextBlock( 0 );
+    std::atomic<size_t> threadsFinished( 0 );
 
-    #pragma omp parallel for schedule(dynamic)
-    for( signed int iBlock = 0; iBlock < (int)nrBlocks; iBlock++ )
+    size_t parallelThreadCount = std::min<size_t>(
+            std::max<size_t>( std::thread::hardware_concurrency(), 2 ),
+            m_blockPositions.size() );
+    for( size_t ii = 0; ii < parallelThreadCount; ++ii )
     {
-        const SFVEC2UI &windowPosUI = m_blockPositionsFast[ iBlock ];
-        const SFVEC2I windowsPos = SFVEC2I( windowPosUI.x + m_xoffset,
-                                            windowPosUI.y + m_yoffset );
-
-        RAYPACKET blockPacket( m_settings.CameraGet(), windowsPos, 4 );
-
-        HITINFO_PACKET hitPacket[RAYPACKET_RAYS_PER_PACKET];
-
-        // Initialize hitPacket with a "not hit" information
-        for( unsigned int i = 0; i < RAYPACKET_RAYS_PER_PACKET; ++i )
+        std::thread t = std::thread( [&]()
         {
-            hitPacket[i].m_HitInfo.m_tHit = std::numeric_limits<float>::infinity();
-            hitPacket[i].m_HitInfo.m_acc_node_info = 0;
-            hitPacket[i].m_hitresult = false;
-        }
-
-        //  Intersect packet block
-        m_accelerator->Intersect( blockPacket, hitPacket );
-
-
-        // Calculate background gradient color
-        // /////////////////////////////////////////////////////////////////////
-        SFVEC3F bgColor[RAYPACKET_DIM];
-
-        for( unsigned int y = 0; y < RAYPACKET_DIM; ++y )
-        {
-            const float posYfactor = (float)(windowsPos.y + y * 4.0f) / (float)m_windowSize.y;
-
-            bgColor[y] = (SFVEC3F)m_settings.m_BgColorTop * SFVEC3F(posYfactor) +
-                         (SFVEC3F)m_settings.m_BgColorBot * ( SFVEC3F(1.0f) - SFVEC3F(posYfactor) );
-        }
-
-        CCOLORRGB hitColorShading[RAYPACKET_RAYS_PER_PACKET];
-
-        for( unsigned int i = 0; i < RAYPACKET_RAYS_PER_PACKET; ++i )
-        {
-            const SFVEC3F bhColorY = bgColor[i/RAYPACKET_DIM];
-
-            if( hitPacket[i].m_hitresult == true )
+            for( size_t iBlock = nextBlock.fetch_add( 1 );
+                        iBlock < m_blockPositionsFast.size();
+                        iBlock = nextBlock.fetch_add( 1 ) )
             {
-                const SFVEC3F hitColor = shadeHit( bhColorY,
-                                                   blockPacket.m_ray[i],
-                                                   hitPacket[i].m_HitInfo,
-                                                   false,
-                                                   0 );
+                const SFVEC2UI &windowPosUI = m_blockPositionsFast[ iBlock ];
+                const SFVEC2I windowsPos = SFVEC2I( windowPosUI.x + m_xoffset,
+                                                    windowPosUI.y + m_yoffset );
 
-                hitColorShading[i] = CCOLORRGB( hitColor );
-            }
-            else
-                hitColorShading[i] = bhColorY;
-        }
+                RAYPACKET blockPacket( m_settings.CameraGet(), windowsPos, 4 );
 
-        CCOLORRGB cLRB_old[(RAYPACKET_DIM - 1)];
+                HITINFO_PACKET hitPacket[RAYPACKET_RAYS_PER_PACKET];
 
-        for( unsigned int y = 0; y < (RAYPACKET_DIM - 1); ++y )
-        {
+                // Initialize hitPacket with a "not hit" information
+                for( unsigned int i = 0; i < RAYPACKET_RAYS_PER_PACKET; ++i )
+                {
+                    hitPacket[i].m_HitInfo.m_tHit = std::numeric_limits<float>::infinity();
+                    hitPacket[i].m_HitInfo.m_acc_node_info = 0;
+                    hitPacket[i].m_hitresult = false;
+                }
 
-            const SFVEC3F     bgColorY = bgColor[y];
-            const CCOLORRGB   bgColorYRGB = CCOLORRGB( bgColorY );
-
-            // This stores cRTB from the last block to be reused next time in a cLTB pixel
-            CCOLORRGB cRTB_old;
-
-            //RAY       cRTB_ray;
-            //HITINFO   cRTB_hitInfo;
-
-            for( unsigned int x = 0; x < (RAYPACKET_DIM - 1); ++x )
-            {
-                //      pxl 0  pxl 1  pxl 2  pxl 3  pxl 4
-                //        x0                          x1  ...
-                //     .---------------------------.
-                // y0  | cLT  | cxxx | cLRT | cxxx | cRT  |
-                //     | cxxx | cLTC | cxxx | cRTC | cxxx |
-                //     | cLTB | cxxx | cC   | cxxx | cRTB |
-                //     | cxxx | cLBC | cxxx | cRBC | cxxx |
-                //     '---------------------------'
-                // y1  | cLB  | cxxx | cLRB | cxxx | cRB  |
-
-                const unsigned int iLT = ((x + 0) + RAYPACKET_DIM * (y + 0));
-                const unsigned int iRT = ((x + 1) + RAYPACKET_DIM * (y + 0));
-                const unsigned int iLB = ((x + 0) + RAYPACKET_DIM * (y + 1));
-                const unsigned int iRB = ((x + 1) + RAYPACKET_DIM * (y + 1));
-
-                // !TODO: skip when there are no hits
+                //  Intersect packet block
+                m_accelerator->Intersect( blockPacket, hitPacket );
 
 
-                const CCOLORRGB &cLT = hitColorShading[ iLT ];
-                const CCOLORRGB &cRT = hitColorShading[ iRT ];
-                const CCOLORRGB &cLB = hitColorShading[ iLB ];
-                const CCOLORRGB &cRB = hitColorShading[ iRB ];
+                // Calculate background gradient color
+                // /////////////////////////////////////////////////////////////////////
+                SFVEC3F bgColor[RAYPACKET_DIM];
 
-                // Trace and shade cC
-                // /////////////////////////////////////////////////////////////
-                CCOLORRGB cC = bgColorYRGB;
+                for( unsigned int y = 0; y < RAYPACKET_DIM; ++y )
+                {
+                    const float posYfactor = (float)(windowsPos.y + y * 4.0f) / (float)m_windowSize.y;
 
-                const SFVEC3F &oriLT = blockPacket.m_ray[ iLT ].m_Origin;
-                const SFVEC3F &oriRB = blockPacket.m_ray[ iRB ].m_Origin;
+                    bgColor[y] = (SFVEC3F)m_settings.m_BgColorTop * SFVEC3F(posYfactor) +
+                                 (SFVEC3F)m_settings.m_BgColorBot * ( SFVEC3F(1.0f) - SFVEC3F(posYfactor) );
+                }
 
-                const SFVEC3F &dirLT = blockPacket.m_ray[ iLT ].m_Dir;
-                const SFVEC3F &dirRB = blockPacket.m_ray[ iRB ].m_Dir;
+                CCOLORRGB hitColorShading[RAYPACKET_RAYS_PER_PACKET];
 
-                SFVEC3F oriC;
-                SFVEC3F dirC;
+                for( unsigned int i = 0; i < RAYPACKET_RAYS_PER_PACKET; ++i )
+                {
+                    const SFVEC3F bhColorY = bgColor[i / RAYPACKET_DIM];
 
-                HITINFO centerHitInfo;
-                centerHitInfo.m_tHit = std::numeric_limits<float>::infinity();
+                    if( hitPacket[i].m_hitresult == true )
+                    {
+                        const SFVEC3F hitColor = shadeHit( bhColorY,
+                                                           blockPacket.m_ray[i],
+                                                           hitPacket[i].m_HitInfo,
+                                                           false,
+                                                           0,
+                                                           false );
 
-                bool hittedC = false;
+                        hitColorShading[i] = CCOLORRGB( hitColor );
+                    }
+                    else
+                        hitColorShading[i] = bhColorY;
+                }
 
-                if( (hitPacket[ iLT ].m_hitresult == true) ||
-                    (hitPacket[ iRT ].m_hitresult == true) ||
-                    (hitPacket[ iLB ].m_hitresult == true) ||
-                    (hitPacket[ iRB ].m_hitresult == true) )
+                CCOLORRGB cLRB_old[(RAYPACKET_DIM - 1)];
+
+                for( unsigned int y = 0; y < (RAYPACKET_DIM - 1); ++y )
                 {
 
-                    oriC = ( oriLT + oriRB ) * 0.5f;
-                    dirC = glm::normalize( ( dirLT + dirRB ) * 0.5f );
+                    const SFVEC3F     bgColorY = bgColor[y];
+                    const CCOLORRGB   bgColorYRGB = CCOLORRGB( bgColorY );
 
-                    // Trace the center ray
-                    RAY centerRay;
-                    centerRay.Init( oriC, dirC );
+                    // This stores cRTB from the last block to be reused next time in a cLTB pixel
+                    CCOLORRGB cRTB_old;
 
-                    const unsigned int nodeLT = (hitPacket[ iLT ].m_hitresult == false)?0:
-                                                 hitPacket[ iLT ].m_HitInfo.m_acc_node_info;
+                    //RAY       cRTB_ray;
+                    //HITINFO   cRTB_hitInfo;
 
-                    const unsigned int nodeRT = (hitPacket[ iRT ].m_hitresult == false)?0:
-                                                 hitPacket[ iRT ].m_HitInfo.m_acc_node_info;
-
-                    const unsigned int nodeLB = (hitPacket[ iLB ].m_hitresult == false)?0:
-                                                 hitPacket[ iLB ].m_HitInfo.m_acc_node_info;
-
-                    const unsigned int nodeRB = (hitPacket[ iRB ].m_hitresult == false)?0:
-                                                 hitPacket[ iRB ].m_HitInfo.m_acc_node_info;
-
-                    if( nodeLT != 0 )
-                        hittedC |= m_accelerator->Intersect( centerRay, centerHitInfo, nodeLT );
-
-                    if( nodeRT != 0 )
-                        if( ( nodeRT != nodeLT ) || ( nodeLT == 0 ) )
-                            hittedC |= m_accelerator->Intersect( centerRay, centerHitInfo, nodeRT );
-
-                    if( nodeLB != 0 )
-                        if( ( ( nodeLB != nodeLT ) || ( nodeLT == 0 ) ) &&
-                            ( ( nodeLB != nodeRT ) || ( nodeRT == 0 ) ) )
-                            hittedC |= m_accelerator->Intersect( centerRay, centerHitInfo, nodeLB );
-
-                    if( nodeRB != 0 )
-                        if( ( ( nodeRB != nodeLB ) || ( nodeLB == 0 ) ) &&
-                            ( ( nodeRB != nodeLT ) || ( nodeLT == 0 ) ) &&
-                            ( ( nodeRB != nodeRT ) || ( nodeRT == 0 ) ) )
-                            hittedC |= m_accelerator->Intersect( centerRay, centerHitInfo, nodeRB );
-
-                    if( hittedC )
-                        cC = CCOLORRGB( shadeHit( bgColorY, centerRay, centerHitInfo, false, 0 ) );
-                    else
+                    for( unsigned int x = 0; x < (RAYPACKET_DIM - 1); ++x )
                     {
+                        //      pxl 0  pxl 1  pxl 2  pxl 3  pxl 4
+                        //        x0                          x1  ...
+                        //     .---------------------------.
+                        // y0  | cLT  | cxxx | cLRT | cxxx | cRT  |
+                        //     | cxxx | cLTC | cxxx | cRTC | cxxx |
+                        //     | cLTB | cxxx | cC   | cxxx | cRTB |
+                        //     | cxxx | cLBC | cxxx | cRBC | cxxx |
+                        //     '---------------------------'
+                        // y1  | cLB  | cxxx | cLRB | cxxx | cRB  |
+
+                        const unsigned int iLT = ((x + 0) + RAYPACKET_DIM * (y + 0));
+                        const unsigned int iRT = ((x + 1) + RAYPACKET_DIM * (y + 0));
+                        const unsigned int iLB = ((x + 0) + RAYPACKET_DIM * (y + 1));
+                        const unsigned int iRB = ((x + 1) + RAYPACKET_DIM * (y + 1));
+
+                        // !TODO: skip when there are no hits
+
+
+                        const CCOLORRGB &cLT = hitColorShading[ iLT ];
+                        const CCOLORRGB &cRT = hitColorShading[ iRT ];
+                        const CCOLORRGB &cLB = hitColorShading[ iLB ];
+                        const CCOLORRGB &cRB = hitColorShading[ iRB ];
+
+                        // Trace and shade cC
+                        // /////////////////////////////////////////////////////////////
+                        CCOLORRGB cC = bgColorYRGB;
+
+                        const SFVEC3F &oriLT = blockPacket.m_ray[ iLT ].m_Origin;
+                        const SFVEC3F &oriRB = blockPacket.m_ray[ iRB ].m_Origin;
+
+                        const SFVEC3F &dirLT = blockPacket.m_ray[ iLT ].m_Dir;
+                        const SFVEC3F &dirRB = blockPacket.m_ray[ iRB ].m_Dir;
+
+                        SFVEC3F oriC;
+                        SFVEC3F dirC;
+
+                        HITINFO centerHitInfo;
                         centerHitInfo.m_tHit = std::numeric_limits<float>::infinity();
-                        hittedC = m_accelerator->Intersect( centerRay, centerHitInfo );
 
-                        if( hittedC )
-                            cC = CCOLORRGB( shadeHit( bgColorY,
-                                                      centerRay,
-                                                      centerHitInfo,
-                                                      false,
-                                                      0 ) );
-                    }
-                }
+                        bool hittedC = false;
 
-                // Trace and shade cLRT
-                // /////////////////////////////////////////////////////////////
-                CCOLORRGB cLRT = bgColorYRGB;
-
-                const SFVEC3F &oriRT = blockPacket.m_ray[ iRT ].m_Origin;
-                const SFVEC3F &dirRT = blockPacket.m_ray[ iRT ].m_Dir;
-
-                if( y == 0 )
-                {
-                    // Trace the center ray
-                    RAY rayLRT;
-                    rayLRT.Init( ( oriLT + oriRT ) * 0.5f,
-                                    glm::normalize( ( dirLT + dirRT ) * 0.5f ) );
-
-                    HITINFO hitInfoLRT;
-                    hitInfoLRT.m_tHit = std::numeric_limits<float>::infinity();
-
-                    if( hitPacket[ iLT ].m_hitresult &&
-                        hitPacket[ iRT ].m_hitresult &&
-                        (hitPacket[ iLT ].m_HitInfo.pHitObject == hitPacket[ iRT ].m_HitInfo.pHitObject) )
-                    {
-                        hitInfoLRT.pHitObject = hitPacket[ iLT ].m_HitInfo.pHitObject;
-                        hitInfoLRT.m_tHit = ( hitPacket[ iLT ].m_HitInfo.m_tHit +
-                                              hitPacket[ iRT ].m_HitInfo.m_tHit ) * 0.5f;
-                        hitInfoLRT.m_HitNormal =
-                                glm::normalize( ( hitPacket[ iLT ].m_HitInfo.m_HitNormal +
-                                                  hitPacket[ iRT ].m_HitInfo.m_HitNormal ) * 0.5f );
-
-                        cLRT = CCOLORRGB( shadeHit( bgColorY, rayLRT, hitInfoLRT, false, 0 ) );
-                        cLRT = BlendColor( cLRT, BlendColor( cLT, cRT) );
-                    }
-                    else
-                    {
-                        if( hitPacket[ iLT ].m_hitresult ||
-                            hitPacket[ iRT ].m_hitresult )                  // If any hits
+                        if( (hitPacket[ iLT ].m_hitresult == true) ||
+                            (hitPacket[ iRT ].m_hitresult == true) ||
+                            (hitPacket[ iLB ].m_hitresult == true) ||
+                            (hitPacket[ iRB ].m_hitresult == true) )
                         {
-                            const unsigned int nodeLT = (hitPacket[ iLT ].m_hitresult == false)?0:
-                                                         hitPacket[ iLT ].m_HitInfo.m_acc_node_info;
 
-                            const unsigned int nodeRT = (hitPacket[ iRT ].m_hitresult == false)?0:
-                                                         hitPacket[ iRT ].m_HitInfo.m_acc_node_info;
+                            oriC = ( oriLT + oriRB ) * 0.5f;
+                            dirC = glm::normalize( ( dirLT + dirRB ) * 0.5f );
 
-                            bool hittedLRT = false;
+                            // Trace the center ray
+                            RAY centerRay;
+                            centerRay.Init( oriC, dirC );
+
+                            const unsigned int nodeLT = hitPacket[ iLT ].m_HitInfo.m_acc_node_info;
+                            const unsigned int nodeRT = hitPacket[ iRT ].m_HitInfo.m_acc_node_info;
+                            const unsigned int nodeLB = hitPacket[ iLB ].m_HitInfo.m_acc_node_info;
+                            const unsigned int nodeRB = hitPacket[ iRB ].m_HitInfo.m_acc_node_info;
 
                             if( nodeLT != 0 )
-                                hittedLRT |= m_accelerator->Intersect( rayLRT, hitInfoLRT, nodeLT );
+                                hittedC |= m_accelerator->Intersect( centerRay, centerHitInfo, nodeLT );
 
-                            if( nodeRT != 0 )
-                                if( ( nodeRT != nodeLT ) || ( nodeLT == 0 ) )
-                                    hittedLRT |= m_accelerator->Intersect( rayLRT,
-                                                                           hitInfoLRT,
-                                                                           nodeRT );
+                            if( ( nodeRT != 0 ) &&
+                                ( nodeRT != nodeLT ) )
+                                hittedC |= m_accelerator->Intersect( centerRay, centerHitInfo, nodeRT );
 
-                            if( hittedLRT )
-                                cLRT = CCOLORRGB( shadeHit( bgColorY,
-                                                            rayLRT,
-                                                            hitInfoLRT,
-                                                            false,
-                                                            0 ) );
+                            if( ( nodeLB != 0 ) &&
+                                ( nodeLB != nodeLT ) &&
+                                ( nodeLB != nodeRT ) )
+                                    hittedC |= m_accelerator->Intersect( centerRay, centerHitInfo, nodeLB );
+
+                            if( ( nodeRB != 0 ) &&
+                                ( nodeRB != nodeLB ) &&
+                                ( nodeRB != nodeLT ) &&
+                                ( nodeRB != nodeRT ) )
+                                    hittedC |= m_accelerator->Intersect( centerRay, centerHitInfo, nodeRB );
+
+                            if( hittedC )
+                                cC = CCOLORRGB( shadeHit( bgColorY, centerRay, centerHitInfo, false, 0, false ) );
                             else
                             {
-                                hitInfoLRT.m_tHit = std::numeric_limits<float>::infinity();
+                                centerHitInfo.m_tHit = std::numeric_limits<float>::infinity();
+                                hittedC = m_accelerator->Intersect( centerRay, centerHitInfo );
 
-                                if( m_accelerator->Intersect( rayLRT,hitInfoLRT ) )
-                                    cLRT = CCOLORRGB( shadeHit( bgColorY,
-                                                                rayLRT,
-                                                                hitInfoLRT,
-                                                                false,
-                                                                0 ) );
+                                if( hittedC )
+                                    cC = CCOLORRGB( shadeHit( bgColorY,
+                                                              centerRay,
+                                                              centerHitInfo,
+                                                              false,
+                                                              0,
+                                                              false ) );
                             }
                         }
-                    }
-                }
-                else
-                    cLRT = cLRB_old[x];
 
+                        // Trace and shade cLRT
+                        // /////////////////////////////////////////////////////////////
+                        CCOLORRGB cLRT = bgColorYRGB;
 
-                // Trace and shade cLTB
-                // /////////////////////////////////////////////////////////////
-                CCOLORRGB cLTB = bgColorYRGB;
+                        const SFVEC3F &oriRT = blockPacket.m_ray[ iRT ].m_Origin;
+                        const SFVEC3F &dirRT = blockPacket.m_ray[ iRT ].m_Dir;
 
-                if( x == 0 )
-                {
-                    const SFVEC3F &oriLB = blockPacket.m_ray[ iLB ].m_Origin;
-                    const SFVEC3F &dirLB = blockPacket.m_ray[ iLB ].m_Dir;
-
-                    // Trace the center ray
-                    RAY rayLTB;
-                    rayLTB.Init( ( oriLT + oriLB ) * 0.5f,
-                                    glm::normalize( ( dirLT + dirLB ) * 0.5f ) );
-
-                    HITINFO hitInfoLTB;
-                    hitInfoLTB.m_tHit = std::numeric_limits<float>::infinity();
-
-                    if( hitPacket[ iLT ].m_hitresult &&
-                        hitPacket[ iLB ].m_hitresult &&
-                        ( hitPacket[ iLT ].m_HitInfo.pHitObject ==
-                          hitPacket[ iLB ].m_HitInfo.pHitObject ) )
-                    {
-                        hitInfoLTB.pHitObject = hitPacket[ iLT ].m_HitInfo.pHitObject;
-                        hitInfoLTB.m_tHit = ( hitPacket[ iLT ].m_HitInfo.m_tHit +
-                                              hitPacket[ iLB ].m_HitInfo.m_tHit ) * 0.5f;
-                        hitInfoLTB.m_HitNormal =
-                                glm::normalize( ( hitPacket[ iLT ].m_HitInfo.m_HitNormal +
-                                                  hitPacket[ iLB ].m_HitInfo.m_HitNormal ) * 0.5f );
-                        cLTB = CCOLORRGB( shadeHit( bgColorY, rayLTB, hitInfoLTB, false, 0 ) );
-                        cLTB = BlendColor( cLTB, BlendColor( cLT, cLB) );
-                    }
-                    else
-                    {
-                        if( hitPacket[ iLT ].m_hitresult ||
-                            hitPacket[ iLB ].m_hitresult )                  // If any hits
+                        if( y == 0 )
                         {
-                            const unsigned int nodeLT = (hitPacket[ iLT ].m_hitresult == false)?0:
-                                                         hitPacket[ iLT ].m_HitInfo.m_acc_node_info;
+                            // Trace the center ray
+                            RAY rayLRT;
+                            rayLRT.Init( ( oriLT + oriRT ) * 0.5f,
+                                            glm::normalize( ( dirLT + dirRT ) * 0.5f ) );
 
-                            const unsigned int nodeLB = (hitPacket[ iLB ].m_hitresult == false)?0:
-                                                         hitPacket[ iLB ].m_HitInfo.m_acc_node_info;
+                            HITINFO hitInfoLRT;
+                            hitInfoLRT.m_tHit = std::numeric_limits<float>::infinity();
 
-                            bool hittedLTB = false;
+                            if( hitPacket[ iLT ].m_hitresult &&
+                                hitPacket[ iRT ].m_hitresult &&
+                                (hitPacket[ iLT ].m_HitInfo.pHitObject == hitPacket[ iRT ].m_HitInfo.pHitObject) )
+                            {
+                                hitInfoLRT.pHitObject = hitPacket[ iLT ].m_HitInfo.pHitObject;
+                                hitInfoLRT.m_tHit = ( hitPacket[ iLT ].m_HitInfo.m_tHit +
+                                                      hitPacket[ iRT ].m_HitInfo.m_tHit ) * 0.5f;
+                                hitInfoLRT.m_HitNormal =
+                                        glm::normalize( ( hitPacket[ iLT ].m_HitInfo.m_HitNormal +
+                                                          hitPacket[ iRT ].m_HitInfo.m_HitNormal ) * 0.5f );
 
-                            if( nodeLT != 0 )
-                                hittedLTB |= m_accelerator->Intersect( rayLTB,
-                                                                       hitInfoLTB,
-                                                                       nodeLT );
-
-                            if( nodeLB != 0 )
-                                if( ( nodeLB != nodeLT ) || ( nodeLT == 0 ) )
-                                    hittedLTB |= m_accelerator->Intersect( rayLTB,
-                                                                           hitInfoLTB,
-                                                                           nodeLB );
-
-                            if( hittedLTB )
-                                cLTB = CCOLORRGB( shadeHit( bgColorY,
-                                                            rayLTB,
-                                                            hitInfoLTB,
-                                                            false,
-                                                            0 ) );
+                                cLRT = CCOLORRGB( shadeHit( bgColorY, rayLRT, hitInfoLRT, false, 0, false ) );
+                                cLRT = BlendColor( cLRT, BlendColor( cLT, cRT) );
+                            }
                             else
                             {
-                                hitInfoLTB.m_tHit = std::numeric_limits<float>::infinity();
+                                if( hitPacket[ iLT ].m_hitresult ||
+                                    hitPacket[ iRT ].m_hitresult )                  // If any hits
+                                {
+                                    const unsigned int nodeLT = hitPacket[ iLT ].m_HitInfo.m_acc_node_info;
+                                    const unsigned int nodeRT = hitPacket[ iRT ].m_HitInfo.m_acc_node_info;
 
-                                if( m_accelerator->Intersect( rayLTB, hitInfoLTB ) )
-                                    cLTB = CCOLORRGB( shadeHit( bgColorY,
-                                                                rayLTB,
-                                                                hitInfoLTB,
-                                                                false,
-                                                                0 ) );
+                                    bool hittedLRT = false;
+
+                                    if( nodeLT != 0 )
+                                        hittedLRT |= m_accelerator->Intersect( rayLRT, hitInfoLRT, nodeLT );
+
+                                    if( ( nodeRT != 0 ) &&
+                                        ( nodeRT != nodeLT ) )
+                                        hittedLRT |= m_accelerator->Intersect( rayLRT,
+                                                                               hitInfoLRT,
+                                                                               nodeRT );
+
+                                    if( hittedLRT )
+                                        cLRT = CCOLORRGB( shadeHit( bgColorY,
+                                                                    rayLRT,
+                                                                    hitInfoLRT,
+                                                                    false,
+                                                                    0,
+                                                                    false ) );
+                                    else
+                                    {
+                                        hitInfoLRT.m_tHit = std::numeric_limits<float>::infinity();
+
+                                        if( m_accelerator->Intersect( rayLRT,hitInfoLRT ) )
+                                            cLRT = CCOLORRGB( shadeHit( bgColorY,
+                                                                        rayLRT,
+                                                                        hitInfoLRT,
+                                                                        false,
+                                                                        0,
+                                                                        false ) );
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-                else
-                    cLTB = cRTB_old;
+                        else
+                            cLRT = cLRB_old[x];
 
 
-                // Trace and shade cRTB
-                // /////////////////////////////////////////////////////////////
-                CCOLORRGB cRTB = bgColorYRGB;
+                        // Trace and shade cLTB
+                        // /////////////////////////////////////////////////////////////
+                        CCOLORRGB cLTB = bgColorYRGB;
 
-                // Trace the center ray
-                RAY rayRTB;
-                rayRTB.Init( ( oriRT + oriRB ) * 0.5f,
-                                glm::normalize( ( dirRT + dirRB ) * 0.5f ) );
+                        if( x == 0 )
+                        {
+                            const SFVEC3F &oriLB = blockPacket.m_ray[ iLB ].m_Origin;
+                            const SFVEC3F &dirLB = blockPacket.m_ray[ iLB ].m_Dir;
 
-                HITINFO hitInfoRTB;
-                hitInfoRTB.m_tHit = std::numeric_limits<float>::infinity();
+                            // Trace the center ray
+                            RAY rayLTB;
+                            rayLTB.Init( ( oriLT + oriLB ) * 0.5f,
+                                            glm::normalize( ( dirLT + dirLB ) * 0.5f ) );
 
-                if( hitPacket[ iRT ].m_hitresult &&
-                    hitPacket[ iRB ].m_hitresult &&
-                    ( hitPacket[ iRT ].m_HitInfo.pHitObject ==
-                      hitPacket[ iRB ].m_HitInfo.pHitObject ) )
-                {
-                    hitInfoRTB.pHitObject = hitPacket[ iRT ].m_HitInfo.pHitObject;
+                            HITINFO hitInfoLTB;
+                            hitInfoLTB.m_tHit = std::numeric_limits<float>::infinity();
 
-                    hitInfoRTB.m_tHit = ( hitPacket[ iRT ].m_HitInfo.m_tHit +
-                                          hitPacket[ iRB ].m_HitInfo.m_tHit ) * 0.5f;
+                            if( hitPacket[ iLT ].m_hitresult &&
+                                hitPacket[ iLB ].m_hitresult &&
+                                ( hitPacket[ iLT ].m_HitInfo.pHitObject ==
+                                  hitPacket[ iLB ].m_HitInfo.pHitObject ) )
+                            {
+                                hitInfoLTB.pHitObject = hitPacket[ iLT ].m_HitInfo.pHitObject;
+                                hitInfoLTB.m_tHit = ( hitPacket[ iLT ].m_HitInfo.m_tHit +
+                                                      hitPacket[ iLB ].m_HitInfo.m_tHit ) * 0.5f;
+                                hitInfoLTB.m_HitNormal =
+                                        glm::normalize( ( hitPacket[ iLT ].m_HitInfo.m_HitNormal +
+                                                          hitPacket[ iLB ].m_HitInfo.m_HitNormal ) * 0.5f );
+                                cLTB = CCOLORRGB( shadeHit( bgColorY, rayLTB, hitInfoLTB, false, 0, false ) );
+                                cLTB = BlendColor( cLTB, BlendColor( cLT, cLB) );
+                            }
+                            else
+                            {
+                                if( hitPacket[ iLT ].m_hitresult ||
+                                    hitPacket[ iLB ].m_hitresult )                  // If any hits
+                                {
+                                    const unsigned int nodeLT = hitPacket[ iLT ].m_HitInfo.m_acc_node_info;
+                                    const unsigned int nodeLB = hitPacket[ iLB ].m_HitInfo.m_acc_node_info;
 
-                    hitInfoRTB.m_HitNormal =
-                            glm::normalize( ( hitPacket[ iRT ].m_HitInfo.m_HitNormal +
-                                              hitPacket[ iRB ].m_HitInfo.m_HitNormal ) * 0.5f );
+                                    bool hittedLTB = false;
 
-                    cRTB = CCOLORRGB( shadeHit( bgColorY, rayRTB, hitInfoRTB, false, 0 ) );
-                    cRTB = BlendColor( cRTB, BlendColor( cRT, cRB) );
-                }
-                else
-                {
-                    if( hitPacket[ iRT ].m_hitresult ||
-                        hitPacket[ iRB ].m_hitresult )                  // If any hits
-                    {
-                        const unsigned int nodeRT = (hitPacket[ iRT ].m_hitresult == false)?0:
-                                                     hitPacket[ iRT ].m_HitInfo.m_acc_node_info;
-                        const unsigned int nodeRB = (hitPacket[ iRB ].m_hitresult == false)?0:
-                                                     hitPacket[ iRB ].m_HitInfo.m_acc_node_info;
+                                    if( nodeLT != 0 )
+                                        hittedLTB |= m_accelerator->Intersect( rayLTB,
+                                                                               hitInfoLTB,
+                                                                               nodeLT );
 
-                        bool hittedRTB = false;
+                                    if( ( nodeLB != 0 ) &&
+                                        ( nodeLB != nodeLT ) )
+                                        hittedLTB |= m_accelerator->Intersect( rayLTB,
+                                                                               hitInfoLTB,
+                                                                               nodeLB );
 
-                        if( nodeRT != 0 )
-                            hittedRTB |= m_accelerator->Intersect( rayRTB, hitInfoRTB, nodeRT );
+                                    if( hittedLTB )
+                                        cLTB = CCOLORRGB( shadeHit( bgColorY,
+                                                                    rayLTB,
+                                                                    hitInfoLTB,
+                                                                    false,
+                                                                    0,
+                                                                    false ) );
+                                    else
+                                    {
+                                        hitInfoLTB.m_tHit = std::numeric_limits<float>::infinity();
 
-                        if( nodeRB != 0 )
-                            if( ( nodeRB != nodeRT ) || ( nodeRT == 0 ) )
-                                hittedRTB |= m_accelerator->Intersect( rayRTB, hitInfoRTB, nodeRB );
+                                        if( m_accelerator->Intersect( rayLTB, hitInfoLTB ) )
+                                            cLTB = CCOLORRGB( shadeHit( bgColorY,
+                                                                        rayLTB,
+                                                                        hitInfoLTB,
+                                                                        false,
+                                                                        0,
+                                                                        false ) );
+                                    }
+                                }
+                            }
+                        }
+                        else
+                            cLTB = cRTB_old;
 
-                        if( hittedRTB )
-                            cRTB = CCOLORRGB( shadeHit( bgColorY,
-                                                        rayRTB,
-                                                        hitInfoRTB,
-                                                        false,
-                                                        0 ) );
+
+                        // Trace and shade cRTB
+                        // /////////////////////////////////////////////////////////////
+                        CCOLORRGB cRTB = bgColorYRGB;
+
+                        // Trace the center ray
+                        RAY rayRTB;
+                        rayRTB.Init( ( oriRT + oriRB ) * 0.5f,
+                                        glm::normalize( ( dirRT + dirRB ) * 0.5f ) );
+
+                        HITINFO hitInfoRTB;
+                        hitInfoRTB.m_tHit = std::numeric_limits<float>::infinity();
+
+                        if( hitPacket[ iRT ].m_hitresult &&
+                            hitPacket[ iRB ].m_hitresult &&
+                            ( hitPacket[ iRT ].m_HitInfo.pHitObject ==
+                              hitPacket[ iRB ].m_HitInfo.pHitObject ) )
+                        {
+                            hitInfoRTB.pHitObject = hitPacket[ iRT ].m_HitInfo.pHitObject;
+
+                            hitInfoRTB.m_tHit = ( hitPacket[ iRT ].m_HitInfo.m_tHit +
+                                                  hitPacket[ iRB ].m_HitInfo.m_tHit ) * 0.5f;
+
+                            hitInfoRTB.m_HitNormal =
+                                    glm::normalize( ( hitPacket[ iRT ].m_HitInfo.m_HitNormal +
+                                                      hitPacket[ iRB ].m_HitInfo.m_HitNormal ) * 0.5f );
+
+                            cRTB = CCOLORRGB( shadeHit( bgColorY, rayRTB, hitInfoRTB, false, 0, false ) );
+                            cRTB = BlendColor( cRTB, BlendColor( cRT, cRB) );
+                        }
                         else
                         {
-                            hitInfoRTB.m_tHit = std::numeric_limits<float>::infinity();
+                            if( hitPacket[ iRT ].m_hitresult ||
+                                hitPacket[ iRB ].m_hitresult )                  // If any hits
+                            {
+                                const unsigned int nodeRT = hitPacket[ iRT ].m_HitInfo.m_acc_node_info;
+                                const unsigned int nodeRB = hitPacket[ iRB ].m_HitInfo.m_acc_node_info;
 
-                            if( m_accelerator->Intersect( rayRTB, hitInfoRTB ) )
-                                cRTB = CCOLORRGB( shadeHit( bgColorY,
-                                                            rayRTB,
-                                                            hitInfoRTB,
-                                                            false,
-                                                            0 ) );
+                                bool hittedRTB = false;
+
+                                if( nodeRT != 0 )
+                                    hittedRTB |= m_accelerator->Intersect( rayRTB, hitInfoRTB, nodeRT );
+
+                                if( ( nodeRB != 0 ) &&
+                                    ( nodeRB != nodeRT ) )
+                                    hittedRTB |= m_accelerator->Intersect( rayRTB, hitInfoRTB, nodeRB );
+
+                                if( hittedRTB )
+                                    cRTB = CCOLORRGB( shadeHit( bgColorY,
+                                                                rayRTB,
+                                                                hitInfoRTB,
+                                                                false,
+                                                                0,
+                                                                false) );
+                                else
+                                {
+                                    hitInfoRTB.m_tHit = std::numeric_limits<float>::infinity();
+
+                                    if( m_accelerator->Intersect( rayRTB, hitInfoRTB ) )
+                                        cRTB = CCOLORRGB( shadeHit( bgColorY,
+                                                                    rayRTB,
+                                                                    hitInfoRTB,
+                                                                    false,
+                                                                    0,
+                                                                    false ) );
+                                }
+                            }
                         }
-                    }
-                }
 
-                cRTB_old = cRTB;
+                        cRTB_old = cRTB;
 
 
-                // Trace and shade cLRB
-                // /////////////////////////////////////////////////////////////
-                CCOLORRGB cLRB = bgColorYRGB;
+                        // Trace and shade cLRB
+                        // /////////////////////////////////////////////////////////////
+                        CCOLORRGB cLRB = bgColorYRGB;
 
-                const SFVEC3F &oriLB = blockPacket.m_ray[ iLB ].m_Origin;
-                const SFVEC3F &dirLB = blockPacket.m_ray[ iLB ].m_Dir;
+                        const SFVEC3F &oriLB = blockPacket.m_ray[ iLB ].m_Origin;
+                        const SFVEC3F &dirLB = blockPacket.m_ray[ iLB ].m_Dir;
 
-                // Trace the center ray
-                RAY rayLRB;
-                rayLRB.Init( ( oriLB + oriRB ) * 0.5f,
-                                glm::normalize( ( dirLB + dirRB ) * 0.5f ) );
+                        // Trace the center ray
+                        RAY rayLRB;
+                        rayLRB.Init( ( oriLB + oriRB ) * 0.5f,
+                                        glm::normalize( ( dirLB + dirRB ) * 0.5f ) );
 
-                HITINFO hitInfoLRB;
-                hitInfoLRB.m_tHit = std::numeric_limits<float>::infinity();
+                        HITINFO hitInfoLRB;
+                        hitInfoLRB.m_tHit = std::numeric_limits<float>::infinity();
 
-                if( hitPacket[ iLB ].m_hitresult &&
-                    hitPacket[ iRB ].m_hitresult &&
-                    ( hitPacket[ iLB ].m_HitInfo.pHitObject ==
-                      hitPacket[ iRB ].m_HitInfo.pHitObject ) )
-                {
-                    hitInfoLRB.pHitObject = hitPacket[ iLB ].m_HitInfo.pHitObject;
+                        if( hitPacket[ iLB ].m_hitresult &&
+                            hitPacket[ iRB ].m_hitresult &&
+                            ( hitPacket[ iLB ].m_HitInfo.pHitObject ==
+                              hitPacket[ iRB ].m_HitInfo.pHitObject ) )
+                        {
+                            hitInfoLRB.pHitObject = hitPacket[ iLB ].m_HitInfo.pHitObject;
 
-                    hitInfoLRB.m_tHit = ( hitPacket[ iLB ].m_HitInfo.m_tHit +
-                                          hitPacket[ iRB ].m_HitInfo.m_tHit ) * 0.5f;
+                            hitInfoLRB.m_tHit = ( hitPacket[ iLB ].m_HitInfo.m_tHit +
+                                                  hitPacket[ iRB ].m_HitInfo.m_tHit ) * 0.5f;
 
-                    hitInfoLRB.m_HitNormal =
-                            glm::normalize( ( hitPacket[ iLB ].m_HitInfo.m_HitNormal +
-                                              hitPacket[ iRB ].m_HitInfo.m_HitNormal ) * 0.5f );
+                            hitInfoLRB.m_HitNormal =
+                                    glm::normalize( ( hitPacket[ iLB ].m_HitInfo.m_HitNormal +
+                                                      hitPacket[ iRB ].m_HitInfo.m_HitNormal ) * 0.5f );
 
-                    cLRB = CCOLORRGB( shadeHit( bgColorY, rayLRB, hitInfoLRB, false, 0 ) );
-                    cLRB = BlendColor( cLRB, BlendColor( cLB, cRB) );
-                }
-                else
-                {
-                    if( hitPacket[ iLB ].m_hitresult ||
-                        hitPacket[ iRB ].m_hitresult )                  // If any hits
-                    {
-                        const unsigned int nodeLB = (hitPacket[ iLB ].m_hitresult == false)?0:
-                                                     hitPacket[ iLB ].m_HitInfo.m_acc_node_info;
-                        const unsigned int nodeRB = (hitPacket[ iRB ].m_hitresult == false)?0:
-                                                     hitPacket[ iRB ].m_HitInfo.m_acc_node_info;
-
-                        bool hittedLRB = false;
-
-                        if( nodeLB != 0 )
-                            hittedLRB |= m_accelerator->Intersect( rayLRB, hitInfoLRB, nodeLB );
-
-                        if( nodeRB != 0 )
-                            if( ( nodeRB != nodeLB ) || ( nodeLB == 0 ) )
-                                hittedLRB |= m_accelerator->Intersect( rayLRB, hitInfoLRB, nodeRB );
-
-                        if( hittedLRB )
-                            cLRB = CCOLORRGB( shadeHit( bgColorY, rayLRB, hitInfoLRB, false, 0 ) );
+                            cLRB = CCOLORRGB( shadeHit( bgColorY, rayLRB, hitInfoLRB, false, 0, false ) );
+                            cLRB = BlendColor( cLRB, BlendColor( cLB, cRB) );
+                        }
                         else
                         {
-                            hitInfoLRB.m_tHit = std::numeric_limits<float>::infinity();
+                            if( hitPacket[ iLB ].m_hitresult ||
+                                hitPacket[ iRB ].m_hitresult )                  // If any hits
+                            {
+                                const unsigned int nodeLB = hitPacket[ iLB ].m_HitInfo.m_acc_node_info;
+                                const unsigned int nodeRB = hitPacket[ iRB ].m_HitInfo.m_acc_node_info;
 
-                            if( m_accelerator->Intersect( rayLRB, hitInfoLRB ) )
-                                cLRB = CCOLORRGB( shadeHit( bgColorY,
-                                                            rayLRB,
-                                                            hitInfoLRB,
-                                                            false,
-                                                            0 ) );
+                                bool hittedLRB = false;
+
+                                if( nodeLB != 0 )
+                                    hittedLRB |= m_accelerator->Intersect( rayLRB, hitInfoLRB, nodeLB );
+
+                                if( ( nodeRB != 0 ) &&
+                                    ( nodeRB != nodeLB ) )
+                                    hittedLRB |= m_accelerator->Intersect( rayLRB, hitInfoLRB, nodeRB );
+
+                                if( hittedLRB )
+                                    cLRB = CCOLORRGB( shadeHit( bgColorY, rayLRB, hitInfoLRB, false, 0, false ) );
+                                else
+                                {
+                                    hitInfoLRB.m_tHit = std::numeric_limits<float>::infinity();
+
+                                    if( m_accelerator->Intersect( rayLRB, hitInfoLRB ) )
+                                        cLRB = CCOLORRGB( shadeHit( bgColorY,
+                                                                    rayLRB,
+                                                                    hitInfoLRB,
+                                                                    false,
+                                                                    0,
+                                                                    false ) );
+                                }
+                            }
                         }
+
+                        cLRB_old[x] = cLRB;
+
+
+                        // Trace and shade cLTC
+                        // /////////////////////////////////////////////////////////////
+                        CCOLORRGB cLTC = BlendColor( cLT , cC );
+
+                        if( hitPacket[ iLT ].m_hitresult || hittedC )
+                        {
+                            // Trace the center ray
+                            RAY rayLTC;
+                            rayLTC.Init( ( oriLT + oriC ) * 0.5f,
+                                         glm::normalize( ( dirLT + dirC ) * 0.5f ) );
+
+                            HITINFO hitInfoLTC;
+                            hitInfoLTC.m_tHit = std::numeric_limits<float>::infinity();
+
+                            bool hitted = false;
+
+                            if( hittedC )
+                                hitted = centerHitInfo.pHitObject->Intersect( rayLTC, hitInfoLTC );
+                            else
+                                if( hitPacket[ iLT ].m_hitresult )
+                                    hitted = hitPacket[ iLT ].m_HitInfo.pHitObject->Intersect( rayLTC,
+                                                                                               hitInfoLTC );
+
+                            if( hitted )
+                                cLTC = CCOLORRGB( shadeHit( bgColorY, rayLTC, hitInfoLTC, false, 0, false ) );
+                        }
+
+
+                        // Trace and shade cRTC
+                        // /////////////////////////////////////////////////////////////
+                        CCOLORRGB cRTC = BlendColor( cRT , cC );
+
+                        if( hitPacket[ iRT ].m_hitresult || hittedC )
+                        {
+                            // Trace the center ray
+                            RAY rayRTC;
+                            rayRTC.Init( ( oriRT + oriC ) * 0.5f,
+                                         glm::normalize( ( dirRT + dirC ) * 0.5f ) );
+
+                            HITINFO hitInfoRTC;
+                            hitInfoRTC.m_tHit = std::numeric_limits<float>::infinity();
+
+                            bool hitted = false;
+
+                            if( hittedC )
+                                hitted = centerHitInfo.pHitObject->Intersect( rayRTC, hitInfoRTC );
+                            else
+                                if( hitPacket[ iRT ].m_hitresult )
+                                    hitted = hitPacket[ iRT ].m_HitInfo.pHitObject->Intersect( rayRTC,
+                                                                                               hitInfoRTC );
+
+                            if( hitted )
+                                cRTC = CCOLORRGB( shadeHit( bgColorY, rayRTC, hitInfoRTC, false, 0, false ) );
+                        }
+
+
+                        // Trace and shade cLBC
+                        // /////////////////////////////////////////////////////////////
+                        CCOLORRGB cLBC = BlendColor( cLB , cC );
+
+                        if( hitPacket[ iLB ].m_hitresult || hittedC )
+                        {
+                            // Trace the center ray
+                            RAY rayLBC;
+                            rayLBC.Init( ( oriLB + oriC ) * 0.5f,
+                                         glm::normalize( ( dirLB + dirC ) * 0.5f ) );
+
+                            HITINFO hitInfoLBC;
+                            hitInfoLBC.m_tHit = std::numeric_limits<float>::infinity();
+
+                            bool hitted = false;
+
+                            if( hittedC )
+                                hitted = centerHitInfo.pHitObject->Intersect( rayLBC, hitInfoLBC );
+                            else
+                                if( hitPacket[ iLB ].m_hitresult )
+                                    hitted = hitPacket[ iLB ].m_HitInfo.pHitObject->Intersect( rayLBC,
+                                                                                               hitInfoLBC );
+
+                            if( hitted )
+                                cLBC = CCOLORRGB( shadeHit( bgColorY, rayLBC, hitInfoLBC, false, 0, false ) );
+                        }
+
+
+                        // Trace and shade cRBC
+                        // /////////////////////////////////////////////////////////////
+                        CCOLORRGB cRBC = BlendColor( cRB , cC );
+
+                        if( hitPacket[ iRB ].m_hitresult || hittedC )
+                        {
+                            // Trace the center ray
+                            RAY rayRBC;
+                            rayRBC.Init( ( oriRB + oriC ) * 0.5f,
+                                         glm::normalize( ( dirRB + dirC ) * 0.5f ) );
+
+                            HITINFO hitInfoRBC;
+                            hitInfoRBC.m_tHit = std::numeric_limits<float>::infinity();
+
+                            bool hitted = false;
+
+                            if( hittedC )
+                                hitted = centerHitInfo.pHitObject->Intersect( rayRBC, hitInfoRBC );
+                            else
+                                if( hitPacket[ iRB ].m_hitresult )
+                                    hitted = hitPacket[ iRB ].m_HitInfo.pHitObject->Intersect( rayRBC,
+                                                                                               hitInfoRBC );
+
+                            if( hitted )
+                                cRBC = CCOLORRGB( shadeHit( bgColorY, rayRBC, hitInfoRBC, false, 0, false ) );
+                        }
+
+
+                        // Set pixel colors
+                        // /////////////////////////////////////////////////////////////
+
+                        GLubyte *ptr = &ptrPBO[ (4 * x + m_blockPositionsFast[iBlock].x +
+                                                 m_realBufferSize.x *
+                                                 (m_blockPositionsFast[iBlock].y + 4 * y)) * 4 ];
+                        SetPixel( ptr +  0, cLT );
+                        SetPixel( ptr +  4, BlendColor( cLT, cLRT, cLTC ) );
+                        SetPixel( ptr +  8, cLRT );
+                        SetPixel( ptr + 12, BlendColor( cLRT, cRT, cRTC ) );
+
+                        ptr += m_realBufferSize.x * 4;
+                        SetPixel( ptr +  0, BlendColor( cLT , cLTB, cLTC ) );
+                        SetPixel( ptr +  4, BlendColor( cLTC, BlendColor( cLT , cC ) ) );
+                        SetPixel( ptr +  8, BlendColor( cC, BlendColor( cLRT, cLTC, cRTC ) ) );
+                        SetPixel( ptr + 12, BlendColor( cRTC, BlendColor( cRT , cC ) ) );
+
+                        ptr += m_realBufferSize.x * 4;
+                        SetPixel( ptr +  0, cLTB );
+                        SetPixel( ptr +  4, BlendColor( cC, BlendColor( cLTB, cLTC, cLBC ) ) );
+                        SetPixel( ptr +  8, cC );
+                        SetPixel( ptr + 12, BlendColor( cC, BlendColor( cRTB, cRTC, cRBC ) ) );
+
+                        ptr += m_realBufferSize.x * 4;
+                        SetPixel( ptr +  0, BlendColor( cLB , cLTB, cLBC ) );
+                        SetPixel( ptr +  4, BlendColor( cLBC, BlendColor( cLB , cC ) ) );
+                        SetPixel( ptr +  8, BlendColor( cC, BlendColor( cLRB, cLBC, cRBC ) ) );
+                        SetPixel( ptr + 12, BlendColor( cRBC, BlendColor( cRB , cC ) ) );
                     }
                 }
-
-                cLRB_old[x] = cLRB;
-
-
-                // Trace and shade cLTC
-                // /////////////////////////////////////////////////////////////
-                CCOLORRGB cLTC = BlendColor( cLT , cC );
-
-                if( hitPacket[ iLT ].m_hitresult || hittedC )
-                {
-                    // Trace the center ray
-                    RAY rayLTC;
-                    rayLTC.Init( ( oriLT + oriC ) * 0.5f,
-                                 glm::normalize( ( dirLT + dirC ) * 0.5f ) );
-
-                    HITINFO hitInfoLTC;
-                    hitInfoLTC.m_tHit = std::numeric_limits<float>::infinity();
-
-                    bool hitted = false;
-
-                    if( hittedC )
-                        hitted = centerHitInfo.pHitObject->Intersect( rayLTC, hitInfoLTC );
-                    else
-                        if( hitPacket[ iLT ].m_hitresult )
-                            hitted = hitPacket[ iLT ].m_HitInfo.pHitObject->Intersect( rayLTC,
-                                                                                       hitInfoLTC );
-
-                    if( hitted )
-                        cLTC = CCOLORRGB( shadeHit( bgColorY, rayLTC, hitInfoLTC, false, 0 ) );
-                }
-
-
-                // Trace and shade cRTC
-                // /////////////////////////////////////////////////////////////
-                CCOLORRGB cRTC = BlendColor( cRT , cC );
-
-                if( hitPacket[ iRT ].m_hitresult || hittedC )
-                {
-                    // Trace the center ray
-                    RAY rayRTC;
-                    rayRTC.Init( ( oriRT + oriC ) * 0.5f,
-                                 glm::normalize( ( dirRT + dirC ) * 0.5f ) );
-
-                    HITINFO hitInfoRTC;
-                    hitInfoRTC.m_tHit = std::numeric_limits<float>::infinity();
-
-                    bool hitted = false;
-
-                    if( hittedC )
-                        hitted = centerHitInfo.pHitObject->Intersect( rayRTC, hitInfoRTC );
-                    else
-                        if( hitPacket[ iRT ].m_hitresult )
-                            hitted = hitPacket[ iRT ].m_HitInfo.pHitObject->Intersect( rayRTC,
-                                                                                       hitInfoRTC );
-
-                    if( hitted )
-                        cRTC = CCOLORRGB( shadeHit( bgColorY, rayRTC, hitInfoRTC, false, 0 ) );
-                }
-
-
-                // Trace and shade cLBC
-                // /////////////////////////////////////////////////////////////
-                CCOLORRGB cLBC = BlendColor( cLB , cC );
-
-                if( hitPacket[ iLB ].m_hitresult || hittedC )
-                {
-                    // Trace the center ray
-                    RAY rayLBC;
-                    rayLBC.Init( ( oriLB + oriC ) * 0.5f,
-                                 glm::normalize( ( dirLB + dirC ) * 0.5f ) );
-
-                    HITINFO hitInfoLBC;
-                    hitInfoLBC.m_tHit = std::numeric_limits<float>::infinity();
-
-                    bool hitted = false;
-
-                    if( hittedC )
-                        hitted = centerHitInfo.pHitObject->Intersect( rayLBC, hitInfoLBC );
-                    else
-                        if( hitPacket[ iLB ].m_hitresult )
-                            hitted = hitPacket[ iLB ].m_HitInfo.pHitObject->Intersect( rayLBC,
-                                                                                       hitInfoLBC );
-
-                    if( hitted )
-                        cLBC = CCOLORRGB( shadeHit( bgColorY, rayLBC, hitInfoLBC, false, 0 ) );
-                }
-
-
-                // Trace and shade cRBC
-                // /////////////////////////////////////////////////////////////
-                CCOLORRGB cRBC = BlendColor( cRB , cC );
-
-                if( hitPacket[ iRB ].m_hitresult || hittedC )
-                {
-                    // Trace the center ray
-                    RAY rayRBC;
-                    rayRBC.Init( ( oriRB + oriC ) * 0.5f,
-                                 glm::normalize( ( dirRB + dirC ) * 0.5f ) );
-
-                    HITINFO hitInfoRBC;
-                    hitInfoRBC.m_tHit = std::numeric_limits<float>::infinity();
-
-                    bool hitted = false;
-
-                    if( hittedC )
-                        hitted = centerHitInfo.pHitObject->Intersect( rayRBC, hitInfoRBC );
-                    else
-                        if( hitPacket[ iRB ].m_hitresult )
-                            hitted = hitPacket[ iRB ].m_HitInfo.pHitObject->Intersect( rayRBC,
-                                                                                       hitInfoRBC );
-
-                    if( hitted )
-                        cRBC = CCOLORRGB( shadeHit( bgColorY, rayRBC, hitInfoRBC, false, 0 ) );
-                }
-
-
-                // Set pixel colors
-                // /////////////////////////////////////////////////////////////
-
-                GLubyte *ptr = &ptrPBO[ (4 * x + m_blockPositionsFast[iBlock].x +
-                                         m_realBufferSize.x *
-                                         (m_blockPositionsFast[iBlock].y + 4 * y)) * 4 ];
-                SetPixel( ptr +  0, cLT );
-                SetPixel( ptr +  4, BlendColor( cLT, cLRT, cLTC ) );
-                SetPixel( ptr +  8, cLRT );
-                SetPixel( ptr + 12, BlendColor( cLRT, cRT, cRTC ) );
-
-                ptr += m_realBufferSize.x * 4;
-                SetPixel( ptr +  0, BlendColor( cLT , cLTB, cLTC ) );
-                SetPixel( ptr +  4, BlendColor( cLTC, BlendColor( cLT , cC ) ) );
-                SetPixel( ptr +  8, BlendColor( cC, BlendColor( cLRT, cLTC, cRTC ) ) );
-                SetPixel( ptr + 12, BlendColor( cRTC, BlendColor( cRT , cC ) ) );
-
-                ptr += m_realBufferSize.x * 4;
-                SetPixel( ptr +  0, cLTB );
-                SetPixel( ptr +  4, BlendColor( cC, BlendColor( cLTB, cLTC, cLBC ) ) );
-                SetPixel( ptr +  8, cC );
-                SetPixel( ptr + 12, BlendColor( cC, BlendColor( cRTB, cRTC, cRBC ) ) );
-
-                ptr += m_realBufferSize.x * 4;
-                SetPixel( ptr +  0, BlendColor( cLB , cLTB, cLBC ) );
-                SetPixel( ptr +  4, BlendColor( cLBC, BlendColor( cLB , cC ) ) );
-                SetPixel( ptr +  8, BlendColor( cC, BlendColor( cLRB, cLBC, cRBC ) ) );
-                SetPixel( ptr + 12, BlendColor( cRBC, BlendColor( cRB , cC ) ) );
             }
-        }
+
+            threadsFinished++;
+        } );
+
+        t.detach();
     }
 
-    // Wait for all threads to finish (not sure if this is need)
-    #pragma omp barrier
+    while( threadsFinished < parallelThreadCount )
+        std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
 }
 
 
@@ -1926,20 +1717,16 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
                                          const RAY &aRay,
                                          HITINFO &aHitInfo,
                                          bool aIsInsideObject,
-                                         unsigned int aRecursiveLevel ) const
+                                         unsigned int aRecursiveLevel,
+                                         bool is_testShadow ) const
 {
     if( aRecursiveLevel > 2 )
         return SFVEC3F( 0.0f );
 
-    SFVEC3F hitPoint;
+    SFVEC3F hitPoint = aHitInfo.m_HitPoint;
 
-    if( m_isPreview )
-        hitPoint = aRay.at( aHitInfo.m_tHit );
-    else
-        hitPoint = aRay.at( aHitInfo.m_tHit ) +
-                   aHitInfo.m_HitNormal * ( 0.5f * m_settings.GetNonCopperLayerThickness3DU() *
-                                            glm::abs(Fast_RandFloat()) +
-                                            0.5f * m_settings.GetNonCopperLayerThickness3DU() );
+    if( !m_isPreview )
+        hitPoint += aHitInfo.m_HitNormal * m_settings.GetNonCopperLayerThickness3DU() * 1.0f;
 
     const CMATERIAL *objMaterial = aHitInfo.pHitObject->GetMaterial();
     wxASSERT( objMaterial != NULL );
@@ -1949,9 +1736,6 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
     SFVEC3F outColor = objMaterial->GetEmissiveColor();
 
     const LIST_LIGHT &lightList = m_lights.GetList();
-
-    const bool is_testShadow = m_settings.GetFlag( FL_RENDER_RAYTRACING_SHADOWS ) &&
-                               (!m_isPreview);
 
 #if USE_EXPERIMENTAL_SOFT_SHADOWS
     const bool is_aa_enabled = m_settings.GetFlag( FL_RENDER_RAYTRACING_ANTI_ALIASING ) &&
@@ -1991,7 +1775,7 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
         // otherwise it is in the shadow
         if( NdotL >= FLT_EPSILON )
         {
-            float   shadow_att_factor_light = 1.0f;
+            float shadow_att_factor_light = 1.0f;
 
             if( is_testShadow && light->GetCastShadows() )
             {
@@ -2022,10 +1806,10 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
                 else
                 {
 
-                    const unsigned int shadow_number_of_samples = 2;
+                    const unsigned int shadow_number_of_samples = 3;
                     const float shadow_inc_factor = 1.0f / (float)(shadow_number_of_samples);
 
-                    for( unsigned int i=0; i < shadow_number_of_samples; ++i )
+                    for( unsigned int i = 0; i < shadow_number_of_samples; ++i )
                     {
                         const SFVEC3F unifVector = UniformRandomHemisphereDirection();
                         const SFVEC3F disturbed_vector_to_light = glm::normalize( vectorToLight +
@@ -2061,8 +1845,8 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
             }
             else
             {
-                // This is a render hack in order to compensate for the lake of
-                // ambient and too much darkness when using post process shadeer
+                // This is a render hack in order to compensate for the lack of
+                // ambient and too much darkness when using post process shader
                 // It will calculate as it was not in shadow
                 outColor += objMaterial->Shade( aRay,
                                                 aHitInfo,
@@ -2070,23 +1854,32 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
                                                 diffuseColorObj,
                                                 vectorToLight,
                                                 colorOfLight,
-                                                1.0f );
+                                                // The sampled point will be darkshaded by the post
+                                                // processing, so here it compensates to not shadow
+                                                // so much
+                                                glm::min( shadow_att_factor_light + (3.0f / 6.0f), 1.0f )
+                                                );
             }
-        }
-
-        if( nr_lights_that_can_cast_shadows > 0 )
-        {
-            aHitInfo.m_ShadowFactor = shadow_att_factor_sum /
-                                      (float)(nr_lights_that_can_cast_shadows * 1.0f);
         }
         else
         {
-            aHitInfo.m_ShadowFactor = 1.0f;
+            outColor += objMaterial->GetAmbientColor();
         }
 
         // Only use the headlight for preview
         if( m_isPreview )
             break;
+    }
+
+    // Improvement: this is not taking in account the lightcolor
+    if( nr_lights_that_can_cast_shadows > 0 )
+    {
+        aHitInfo.m_ShadowFactor = glm::max( shadow_att_factor_sum /
+                                  (float)(nr_lights_that_can_cast_shadows * 1.0f), 0.0f );
+    }
+    else
+    {
+        aHitInfo.m_ShadowFactor = 1.0f;
     }
 
     // Clamp color to not be brighter than 1.0f
@@ -2101,7 +1894,7 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
             (objMaterial->GetReflection() > 0.0f) &&
             m_settings.GetFlag( FL_RENDER_RAYTRACING_REFLECTIONS ) )
         {
-            const unsigned int reflection_number_of_samples = 3;
+            const unsigned int reflection_number_of_samples = objMaterial->GetNrReflectionsSamples();
 
             SFVEC3F sum_color = SFVEC3F(0.0f);
 
@@ -2111,11 +1904,11 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
 
             for( unsigned int i = 0; i < reflection_number_of_samples; ++i )
             {
-                // If we want to apply some randomize to the reflected vector
-                const SFVEC3F random_reflectVector =
-                        glm::normalize( reflectVector +
-                                        UniformRandomHemisphereDirection() *
-                                        0.02f );
+                // Apply some randomize to the reflected vector
+                 const SFVEC3F random_reflectVector =
+                         glm::normalize( reflectVector +
+                                         UniformRandomHemisphereDirection() *
+                                         0.025f );
 
                 RAY reflectedRay;
                 reflectedRay.Init( hitPoint, random_reflectVector );
@@ -2125,14 +1918,17 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
 
                 if( m_accelerator->Intersect( reflectedRay, reflectedHit ) )
                 {
-                    sum_color += objMaterial->GetReflection() *
+                    sum_color += ( diffuseColorObj + objMaterial->GetSpecularColor() ) *
                                  shadeHit( aBgColor,
                                            reflectedRay,
                                            reflectedHit,
                                            false,
-                                           aRecursiveLevel + 1 ) *
-                                 (1.0f / ( 1.0f + 0.75f * reflectedHit.m_tHit *
-                                                          reflectedHit.m_tHit) ); // Falloff factor
+                                           aRecursiveLevel + 1,
+                                           is_testShadow ) *
+                                 SFVEC3F( objMaterial->GetReflection() *
+                                          // Falloff factor
+                                          (1.0f / ( 1.0f + 0.75f * reflectedHit.m_tHit *
+                                                    reflectedHit.m_tHit) ) );
                 }
             }
 
@@ -2151,7 +1947,7 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
             const float air_over_glass = airIndex / glassIndex;
             const float glass_over_air = glassIndex / airIndex;
 
-            float refractionRatio = aIsInsideObject?glass_over_air:air_over_glass;
+            const float refractionRatio = aIsInsideObject?glass_over_air:air_over_glass;
 
             SFVEC3F refractedVector;
 
@@ -2160,9 +1956,7 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
                          refractionRatio,
                          refractedVector ) )
             {
-                // If we want to apply some randomize to the refracted vector
-                //refractedVector = refractedVector + UniformRandomHemisphereDirection() * 0.01f;
-                refractedVector = glm::normalize( refractedVector );
+                const float objTransparency = objMaterial->GetTransparency();
 
                 // This increase the start point by a "fixed" factor so it will work the
                 // same for all distances
@@ -2170,41 +1964,62 @@ SFVEC3F C3D_RENDER_RAYTRACING::shadeHit( const SFVEC3F &aBgColor,
                                                     NextFloatUp(
                                                     NextFloatUp( aHitInfo.m_tHit ) ) ) );
 
-                RAY refractedRay;
-                refractedRay.Init( startPoint, refractedVector );
+                const unsigned int refractions_number_of_samples = objMaterial->GetNrRefractionsSamples();
 
-                HITINFO refractedHit;
-                refractedHit.m_tHit = std::numeric_limits<float>::infinity();
+                SFVEC3F sum_color = SFVEC3F(0.0f);
 
-                SFVEC3F refractedColor = aBgColor;
-
-                float objTransparency = objMaterial->GetTransparency();
-
-                if( m_accelerator->Intersect( refractedRay, refractedHit ) )
+                for( unsigned int i = 0; i < refractions_number_of_samples; ++i )
                 {
-                    refractedColor = shadeHit( aBgColor,
-                                               refractedRay,
-                                               refractedHit,
-                                               true,
-                                               aRecursiveLevel + 1 );
+                    RAY refractedRay;
 
-                    const SFVEC3F absorbance = ( SFVEC3F(1.0f) - diffuseColorObj ) *
-                                               (1.0f - objTransparency ) *
-                                               1.0000f *  // Adjust falloff factor
-                                               -refractedHit.m_tHit;
+                    if( refractions_number_of_samples > 1 )
+                    {
+                        // apply some randomize to the refracted vector
+                        const SFVEC3F randomizeRefractedVector = glm::normalize( refractedVector +
+                                                                                 UniformRandomHemisphereDirection() *
+                                                                                 0.15f *
+                                                                                 (1.0f - objTransparency) );
 
-                    const SFVEC3F transparency = SFVEC3F( expf( absorbance.r ),
-                                                          expf( absorbance.g ),
-                                                          expf( absorbance.b ) );
+                        refractedRay.Init( startPoint, randomizeRefractedVector );
+                    }
+                    else
+                    {
+                        refractedRay.Init( startPoint, refractedVector );
+                    }
 
-                    outColor = outColor * (1.0f - objTransparency) +
-                               refractedColor * transparency * objTransparency;
+                    HITINFO refractedHit;
+                    refractedHit.m_tHit = std::numeric_limits<float>::infinity();
+
+                    SFVEC3F refractedColor = objMaterial->GetAmbientColor();
+
+                    if( m_accelerator->Intersect( refractedRay, refractedHit ) )
+                    {
+                        refractedColor = shadeHit( aBgColor,
+                                                   refractedRay,
+                                                   refractedHit,
+                                                   true,
+                                                   aRecursiveLevel + 1,
+                                                   false );
+
+                        const SFVEC3F absorbance = ( SFVEC3F(1.0f) - diffuseColorObj ) *
+                                                   (1.0f - objTransparency ) *
+                                                   objMaterial->GetAbsorvance() *   // Adjust falloff factor
+                                                   -refractedHit.m_tHit;
+
+                        const SFVEC3F transparency = SFVEC3F( expf( absorbance.r ),
+                                                              expf( absorbance.g ),
+                                                              expf( absorbance.b ) );
+
+                        sum_color += refractedColor * transparency * objTransparency;
+                    }
+                    else
+                    {
+                        sum_color += refractedColor * objTransparency;
+                    }
                 }
-                else
-                {
-                    outColor = outColor * (1.0f - objTransparency) +
-                               refractedColor * objTransparency;
-                }
+
+                outColor = outColor * (1.0f - objTransparency) +
+                           (sum_color / SFVEC3F( (float)refractions_number_of_samples) );
             }
         }
     }
@@ -2262,7 +2077,7 @@ bool C3D_RENDER_RAYTRACING::initializeOpenGL()
 void C3D_RENDER_RAYTRACING::initialize_block_positions()
 {
 
-    m_realBufferSize = SFVEC2UI();
+    m_realBufferSize = SFVEC2UI( 0 );
 
     // Calc block positions for fast preview mode
     // /////////////////////////////////////////////////////////////////////
@@ -2330,7 +2145,7 @@ void C3D_RENDER_RAYTRACING::initialize_block_positions()
     }
 
     // Create m_shader buffer
-    delete m_shaderBuffer;
+    delete[] m_shaderBuffer;
     m_shaderBuffer = new SFVEC3F[m_realBufferSize.x * m_realBufferSize.y];
 
     opengl_init_pbo();

@@ -5,7 +5,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 1992-2010 Lorenzo Marcantonio
- * Copyright (C) 1992-2016 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,9 +26,8 @@
  */
 
 #include <fctsys.h>
-#include <plot_common.h>
-#include <class_sch_screen.h>
-#include <schframe.h>
+#include <plotter.h>
+#include <sch_edit_frame.h>
 #include <sch_sheet_path.h>
 #include <project.h>
 
@@ -77,12 +76,12 @@ void DIALOG_PLOT_SCHEMATIC::CreateDXFFile( bool aPlotAll, bool aPlotFrameRef )
             if( PlotOneSheetDXF( plotFileName.GetFullPath(), screen, plot_offset, 1.0,
                                  aPlotFrameRef ) )
             {
-                msg.Printf( _( "Plot: '%s' OK.\n" ), GetChars( plotFileName.GetFullPath() ) );
+                msg.Printf( _( "Plot: \"%s\" OK.\n" ), GetChars( plotFileName.GetFullPath() ) );
                 reporter.Report( msg, REPORTER::RPT_ACTION );
             }
             else    // Error
             {
-                msg.Printf( _( "Unable to create file '%s'.\n" ),
+                msg.Printf( _( "Unable to create file \"%s\".\n" ),
                             GetChars( plotFileName.GetFullPath() ) );
                 reporter.Report( msg, REPORTER::RPT_ERROR );
             }

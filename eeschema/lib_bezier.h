@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2004-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2017 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -43,7 +43,7 @@ class LIB_BEZIER : public LIB_ITEM
     std::vector<wxPoint> m_PolyPoints;     // list of points (>= 2)
 
     void drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                      EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
+                      COLOR4D aColor, GR_DRAWMODE aDrawMode, void* aData,
                       const TRANSFORM& aTransform ) override;
 
 public:
@@ -58,19 +58,26 @@ public:
         return wxT( "LIB_BEZIER" );
     }
 
+    wxString GetTypeName() override
+    {
+        return _( "Bezier" );
+    }
 
-    bool Save( OUTPUTFORMATTER& aFormatter ) override;
-
-    bool Load( LINE_READER& aLineReader, wxString& aErrorMsg ) override;
-
+    void Reserve( size_t aCount ) { m_BezierPoints.reserve( aCount ); }
     void AddPoint( const wxPoint& aPoint ) { m_BezierPoints.push_back( aPoint ); }
 
     void SetOffset( const wxPoint& aOffset ) override;
+    const wxPoint GetOffset() const;
 
     /**
      * @return the number of corners
      */
     unsigned GetCornerCount() const { return m_PolyPoints.size(); }
+
+    const std::vector< wxPoint >& GetPoints() const
+    {
+        return m_BezierPoints;
+    }
 
     bool HitTest( const wxPoint& aPosition ) const override;
 
@@ -82,7 +89,7 @@ public:
 
     void Move( const wxPoint& aPosition ) override;
 
-    wxPoint GetPosition() const override { return m_PolyPoints[0]; }
+    wxPoint GetPosition() const override; 
 
     void MirrorHorizontal( const wxPoint& aCenter ) override;
 
@@ -99,7 +106,7 @@ public:
 
     int GetPenSize( ) const override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
     EDA_ITEM* Clone() const override;
 

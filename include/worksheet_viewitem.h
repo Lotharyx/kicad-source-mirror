@@ -39,15 +39,18 @@ class WS_DRAW_ITEM_LINE;
 class WS_DRAW_ITEM_RECT;
 class WS_DRAW_ITEM_POLYGON;
 class WS_DRAW_ITEM_TEXT;
+class WS_DRAW_ITEM_BITMAP;
 
 namespace KIGFX
 {
+class VIEW;
 class GAL;
 
 class WORKSHEET_VIEWITEM : public EDA_ITEM
 {
 public:
-    WORKSHEET_VIEWITEM( const PAGE_INFO* aPageInfo, const TITLE_BLOCK* aTitleBlock );
+    WORKSHEET_VIEWITEM( int aMils2IUscalefactor,
+                        const PAGE_INFO* aPageInfo, const TITLE_BLOCK* aTitleBlock );
 
     /**
      * Function SetFileName()
@@ -58,7 +61,6 @@ public:
     void SetFileName( const std::string& aFileName )
     {
         m_fileName = aFileName;
-        ViewUpdate( GEOMETRY );
     }
 
     /**
@@ -70,7 +72,6 @@ public:
     void SetSheetName( const std::string& aSheetName )
     {
         m_sheetName = aSheetName;
-        ViewUpdate( GEOMETRY );
     }
 
     /**
@@ -98,8 +99,6 @@ public:
     void SetSheetNumber( int aSheetNumber )
     {
         m_sheetNumber = aSheetNumber;
-        ViewUpdate( GEOMETRY );
-
     }
 
     /**
@@ -111,14 +110,13 @@ public:
     void SetSheetCount( int aSheetCount )
     {
         m_sheetCount = aSheetCount;
-        ViewUpdate( GEOMETRY );
     }
 
     /// @copydoc VIEW_ITEM::ViewBBox()
     const BOX2I ViewBBox() const override;
 
     /// @copydoc VIEW_ITEM::ViewDraw()
-    void ViewDraw( int aLayer, GAL* aGal ) const override;
+    void ViewDraw( int aLayer, VIEW* aView ) const override;
 
     /// @copydoc VIEW_ITEM::ViewGetLayers()
     void ViewGetLayers( int aLayers[], int& aCount ) const override;
@@ -139,6 +137,10 @@ public:
     }
 
 protected:
+    /// the factor between mils (units used in worksheet and internal units)
+    /// it is the value IU_PER_MILS used in the caller
+    int m_mils2IUscalefactor;
+
     /// File name displayed in the title block
     std::string m_fileName;
 
@@ -162,6 +164,7 @@ protected:
     void draw( const WS_DRAW_ITEM_RECT* aItem, GAL* aGal ) const;
     void draw( const WS_DRAW_ITEM_POLYGON* aItem, GAL* aGal ) const;
     void draw( const WS_DRAW_ITEM_TEXT* aItem, GAL* aGal ) const;
+    void draw( const WS_DRAW_ITEM_BITMAP* aItem, GAL* aGal ) const;
 
     /// Draws a border that determines the page size.
     void drawBorder( GAL* aGal ) const;

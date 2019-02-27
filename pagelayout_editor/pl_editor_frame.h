@@ -34,8 +34,8 @@
 #include <config_params.h>
 #include <draw_frame.h>
 #include <class_drawpanel.h>
-#include <class_pl_editor_screen.h>
-#include <class_pl_editor_layout.h>
+#include <pl_editor_screen.h>
+#include <pl_editor_layout.h>
 
 class PROPERTIES_FRAME;
 class DESIGN_TREE_FRAME;
@@ -46,7 +46,6 @@ class WORKSHEET_DATAITEM;
  * Class PL_EDITOR_FRAME
  * is the main window used in the page layout editor.
  */
-#define PL_EDITOR_FRAME_NAME wxT( "PlEditorFrame" )
 
 class PL_EDITOR_FRAME : public EDA_DRAW_FRAME
 {
@@ -178,7 +177,7 @@ public:
 
     /**
      * Page layout editor can show the title block using a page number
-     * 1 or an other number.
+     * 1 or another number.
      * This is because some items can be shown (or not) only on page 1
      * (a feature  which look like word processing option
      * "page 1 differs from other pages".
@@ -359,7 +358,7 @@ public:
      * @return the page layout item found at position aPosition
      * @param aPosition = the position (in user units) of the reference point
      */
-    WORKSHEET_DATAITEM *Locate( const wxPoint& aPosition );
+    WORKSHEET_DATAITEM *Locate( wxDC* aDC, const wxPoint& aPosition );
 
     /**
      * Initialize a move item command
@@ -388,13 +387,13 @@ public:
      */
     void SaveCopyInUndoList();
 
-    /** Redo the last edition:
+    /** Redo the last edit:
      * - Place the current edited layout in undo list
      * - Get the previous version of the current edited layput
      */
     void GetLayoutFromRedoList( wxCommandEvent& event );
 
-    /** Undo the last edition:
+    /** Undo the last edit:
      * - Place the current layout in Redo list
      * - Get the previous version of the current edited layout
      */
@@ -405,6 +404,9 @@ public:
      * Used to clean the Undo stack after a cancel command
      */
     void RemoveLastCommandInUndoList();
+
+protected:
+    bool saveCurrentPageLayout();
 
     DECLARE_EVENT_TABLE()
 };

@@ -30,7 +30,7 @@
 
 #include <fctsys.h>
 #include <class_drawpanel.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <kicad_device_context.h>
 
 #include <class_board.h>
@@ -56,8 +56,12 @@ int PCB_EDIT_FRAME::SelectHighLight( wxDC* DC )
 
     // optionally, modify the "guide" here as needed using its member functions
 
-    m_Collector->Collect( GetBoard(), GENERAL_COLLECTOR::PadsTracksOrZones,
+    m_Collector->Collect( GetBoard(), GENERAL_COLLECTOR::PadsOrTracks,
                           RefPos( true ), guide );
+
+    if( m_Collector->GetCount() == 0 )
+        m_Collector->Collect( GetBoard(), GENERAL_COLLECTOR::Zones,
+                              RefPos( true ), guide );
 
     BOARD_ITEM* item = (*m_Collector)[0];
 
@@ -72,7 +76,7 @@ int PCB_EDIT_FRAME::SelectHighLight( wxDC* DC )
 
         case PCB_TRACE_T:
         case PCB_VIA_T:
-        case PCB_ZONE_T:
+        case PCB_SEGZONE_T:
             // since these classes are all derived from TRACK, use a common
             // GetNet() function:
             netcode = ( (TRACK*) item )->GetNetCode();
@@ -106,18 +110,4 @@ void PCB_EDIT_FRAME::HighLight( wxDC* DC )
         GetBoard()->HighLightON();
 
     GetBoard()->DrawHighLight( m_canvas, DC, GetBoard()->GetHighLightNetCode() );
-}
-
-void PCB_EDIT_FRAME::HighlightUnconnectedPads( wxDC* DC )
-{
-    for( unsigned ii = 0; ii < GetBoard()->GetRatsnestsCount(); ii++ )
-    {
-        RATSNEST_ITEM* net = &GetBoard()->m_FullRatsnest[ii];
-
-        if( (net->m_Status & CH_ACTIF) == 0 )
-            continue;
-
-        net->m_PadStart->Draw( m_canvas, DC, GR_OR | GR_HIGHLIGHT );
-        net->m_PadEnd->Draw( m_canvas, DC, GR_OR | GR_HIGHLIGHT );
-    }
 }

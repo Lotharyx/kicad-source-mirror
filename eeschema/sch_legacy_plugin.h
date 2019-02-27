@@ -5,7 +5,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2016 CERN
- * Copyright (C) 2016 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2016-2017 KiCad Developers, see change_log.txt for contributors.
  *
  * @author Wayne Stambaugh <stambaughw@gmail.com>
  *
@@ -24,6 +24,7 @@
  */
 
 #include <sch_io_mgr.h>
+#include <stack>
 
 
 class KIWAY;
@@ -46,10 +47,8 @@ class LIB_ALIAS;
 
 
 /**
- * Class SCH_LEGACY_PLUGIN
- *
- * is a #SCH_PLUGIN derivation for loading schematic files created before the new
- * s-expression file format.
+ * A #SCH_PLUGIN derivation for loading schematic files created before the new s-expression
+ * file format.
  *
  * The legacy parser and formatter attempt to be compatible with the legacy file format.
  * The original parser was very forgiving in that it would parse only part of a keyword.
@@ -63,7 +62,7 @@ class SCH_LEGACY_PLUGIN : public SCH_PLUGIN
 public:
 
     SCH_LEGACY_PLUGIN();
-    virtual ~SCH_LEGACY_PLUGIN() {}
+    virtual ~SCH_LEGACY_PLUGIN();
 
     const wxString GetName() const override
     {
@@ -75,6 +74,25 @@ public:
         return wxT( "sch" );
     }
 
+    /**
+     * const char* PropBuffering
+     *
+     * is a property used internally by the plugin to enable cache buffering which prevents
+     * the library file from being written every time the cache is changed.  This is useful
+     * when writing the schematic cache library file or saving a library to a new file name.
+     */
+    static const char* PropBuffering;
+
+    /**
+     * const char* PropBuffering
+     *
+     * is a property used internally by the plugin to disable writing the library
+     * documentation (.dcm) file when saving the library cache.
+     */
+    static const char* PropNoDocFile;
+
+    int GetModifyHash() const override;
+
     SCH_SHEET* Load( const wxString& aFileName, KIWAY* aKiway,
                      SCH_SHEET* aAppendToMe = NULL, const PROPERTIES* aProperties = NULL ) override;
 
@@ -83,7 +101,12 @@ public:
 
     void Format( SCH_SCREEN* aScreen );
 
+    size_t GetSymbolLibCount( const wxString&   aLibraryPath,
+                              const PROPERTIES* aProperties = NULL ) override;
     void EnumerateSymbolLib( wxArrayString&    aAliasNameList,
+                             const wxString&   aLibraryPath,
+                             const PROPERTIES* aProperties = NULL ) override;
+    void EnumerateSymbolLib( std::vector<LIB_ALIAS*>& aAliasList,
                              const wxString&   aLibraryPath,
                              const PROPERTIES* aProperties = NULL ) override;
     LIB_ALIAS* LoadSymbol( const wxString& aLibraryPath, const wxString& aAliasName,
@@ -92,12 +115,18 @@ public:
                      const PROPERTIES* aProperties = NULL ) override;
     void DeleteAlias( const wxString& aLibraryPath, const wxString& aAliasName,
                       const PROPERTIES* aProperties = NULL ) override;
-
     void DeleteSymbol( const wxString& aLibraryPath, const wxString& aAliasName,
                        const PROPERTIES* aProperties = NULL ) override;
+    void CreateSymbolLib( const wxString& aLibraryPath,
+                          const PROPERTIES* aProperties = NULL ) override;
+    bool DeleteSymbolLib( const wxString& aLibraryPath,
+                          const PROPERTIES* aProperties = NULL ) override;
+    void SaveLibrary( const wxString& aLibraryPath, const PROPERTIES* aProperties = NULL ) override;
 
-    // Temporary for testing using PART_LIB instead of SCH_PLUGIN.
-    void TransferCache( PART_LIB& aTarget ) override;
+    bool CheckHeader( const wxString& aFileName ) override;
+    bool IsSymbolLibWritable( const wxString& aLibraryPath ) override;
+
+    const wxString& GetError() const override { return m_error; }
 
 private:
     void loadHierarchy( SCH_SHEET* aSheet );
@@ -124,11 +153,17 @@ private:
     void saveText( SCH_TEXT* aText );
 
     void cacheLib( const wxString& aLibraryFileName );
+    bool writeDocFile( const PROPERTIES* aProperties );
+    bool isBuffering( const PROPERTIES* aProperties );
 
 protected:
     int               m_version;    ///< Version of file being loaded.
-    wxString          m_error;      ///< For throwing exceptions
+
+    /** For throwing exceptions or errors on partial schematic loads. */
+    wxString          m_error;
+
     wxString          m_path;       ///< Root project path for loading child sheets.
+    std::stack<wxString>  m_currentPath;    ///< Stack to maintain nested sheet paths
     const PROPERTIES* m_props;      ///< Passed via Save() or Load(), no ownership, may be NULL.
     KIWAY*            m_kiway;      ///< Required for path to legacy component libraries.
     SCH_SHEET*        m_rootSheet;  ///< The root sheet of the schematic being loaded..

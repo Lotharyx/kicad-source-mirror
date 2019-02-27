@@ -1,8 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version Jan  1 2016)
+// C++ code generated with wxFormBuilder (version Dec 30 2017)
 // http://www.wxformbuilder.org/
 //
-// PLEASE DO "NOT" EDIT THIS FILE!
+// PLEASE DO *NOT* EDIT THIS FILE!
 ///////////////////////////////////////////////////////////////////////////
 
 #ifndef __DIALOG_LAYER_SELECTION_BASE_H__
@@ -47,7 +47,7 @@ class DIALOG_LAYER_SELECTION_BASE : public wxDialog
 	
 	public:
 		
-		DIALOG_LAYER_SELECTION_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Select Layer:"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( 337,183 ), long style = wxDEFAULT_DIALOG_STYLE ); 
+		DIALOG_LAYER_SELECTION_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Select Layer"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( -1,-1 ), long style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER ); 
 		~DIALOG_LAYER_SELECTION_BASE();
 	
 };
@@ -72,13 +72,11 @@ class DIALOG_COPPER_LAYER_PAIR_SELECTION_BASE : public wxDialog
 		// Virtual event handlers, overide them in your derived class
 		virtual void OnLeftGridCellClick( wxGridEvent& event ) { event.Skip(); }
 		virtual void OnRightGridCellClick( wxGridEvent& event ) { event.Skip(); }
-		virtual void OnCancelClick( wxCommandEvent& event ) { event.Skip(); }
-		virtual void OnOKClick( wxCommandEvent& event ) { event.Skip(); }
 		
 	
 	public:
 		
-		DIALOG_COPPER_LAYER_PAIR_SELECTION_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Select Copper Layer Pair:"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( 400,175 ), long style = wxDEFAULT_DIALOG_STYLE ); 
+		DIALOG_COPPER_LAYER_PAIR_SELECTION_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Select Copper Layer Pair"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( -1,-1 ), long style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER ); 
 		~DIALOG_COPPER_LAYER_PAIR_SELECTION_BASE();
 	
 };

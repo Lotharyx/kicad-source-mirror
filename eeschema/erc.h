@@ -31,9 +31,9 @@
 #define _ERC_H
 
 
-//class EDA_DRAW_PANEL;
 class NETLIST_OBJECT;
 class NETLIST_OBJECT_LIST;
+class SCH_SHEET_LIST;
 
 /* For ERC markers: error types (used in diags, and to set the color):
 */
@@ -53,13 +53,17 @@ extern const wxString CommentERC_V[];
 #define ERCE_DUPLICATE_SHEET_NAME 1    // duplicate sheet names within a given sheet
 #define ERCE_PIN_NOT_CONNECTED    2    // pin not connected and not no connect symbol
 #define ERCE_PIN_NOT_DRIVEN       3    // pin connected to some others pins but no pin to drive it
-#define ERCE_PIN_TO_PIN_WARNING   4    // pin connected to an other pin: warning level
-#define ERCE_PIN_TO_PIN_ERROR     5    // pin connected to an other pin: error level
+#define ERCE_PIN_TO_PIN_WARNING   4    // pin connected to another pin: warning level
+#define ERCE_PIN_TO_PIN_ERROR     5    // pin connected to another pin: error level
 #define ERCE_HIERACHICAL_LABEL    6    // mismatch between hierarchical labels and pins sheets
 #define ERCE_NOCONNECT_CONNECTED  7    // a no connect symbol is connected to more than 1 pin
 #define ERCE_GLOBLABEL            8    // global label not connected to any other global label
 #define ERCE_SIMILAR_LABELS       9    // 2 labels are equal fir case insensitive comparisons
 #define ERCE_SIMILAR_GLBL_LABELS  10   // 2 labels are equal fir case insensitive comparisons
+#define ERCE_DIFFERENT_UNIT_FP    11   // different units of the same component have different
+                                       // footprints assigned
+#define ERCE_DIFFERENT_UNIT_NET   12   // a shared pin in a multi-unit component is connected
+                                       // to more than one net
 
 /* Minimal connection table */
 #define NPI    4  // Net with Pin isolated, this pin has type Not Connected and must be left N.C.
@@ -75,7 +79,7 @@ extern const wxString CommentERC_V[];
  *
  * @param aFullFileName A wxString object containing the file name and path.
  */
-bool WriteDiagnosticERC( const wxString& aFullFileName );
+bool WriteDiagnosticERC( EDA_UNITS_T aUnits, const wxString& aFullFileName );
 
 /**
  * Performs ERC testing and creates an ERC marker to show the ERC problem for aNetItemRef
@@ -107,6 +111,13 @@ void TestOthersItems( NETLIST_OBJECT_LIST* aList,
  *                       false = calculate error count only
  */
 int TestDuplicateSheetNames( bool aCreateMarker );
+
+/**
+ * Test if all units of each multiunit component have the same footprint assigned.
+ * @param aSheetList contains components to be validated.
+ * @return The error count.
+ */
+int TestMultiunitFootprints( SCH_SHEET_LIST& aSheetList );
 
 
 #endif  // _ERC_H

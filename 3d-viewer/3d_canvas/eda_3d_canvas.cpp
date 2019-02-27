@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2015-2016 Mario Luzeiro <mrluzeiro@ua.pt>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,6 +28,7 @@
  */
 
 #include <GL/glew.h>    // Must be included first
+#include <wx/tokenzr.h>
 
 #include "../common_ogl/openGL_includes.h"
 #include "../common_ogl/ogl_utils.h"
@@ -39,12 +40,18 @@
 #include <class_board.h>
 #include "status_text_reporter.h"
 #include <gl_context_mgr.h>
+#include <profile.h>        // To use GetRunningMicroSecs or another profiling utility
+#include <bitmaps.h>
+#include <hotkeys_basic.h>
+#include <menus_helpers.h>
+
 
 /**
- *  Trace mask used to enable or disable the trace output of this class.
- *  The debug output can be turned on by setting the WXTRACE environment variable to
- *  "KI_TRACE_EDA_3D_CANVAS".  See the wxWidgets documentation on wxLogTrace for
- *  more information.
+ * Flag to enable 3D canvas debug tracing.
+ *
+ * Use "KI_TRACE_EDA_3D_CANVAS" to enable.
+ *
+ * @ingroup trace_env_vars
  */
 const wxChar * EDA_3D_CANVAS::m_logTrace = wxT( "KI_TRACE_EDA_3D_CANVAS" );
 
@@ -57,16 +64,16 @@ BEGIN_EVENT_TABLE( EDA_3D_CANVAS, wxGLCanvas )
     EVT_CHAR_HOOK( EDA_3D_CANVAS::OnCharHook )
 
     // mouse events
-    EVT_LEFT_DOWN(   EDA_3D_CANVAS::OnLeftDown )
-    EVT_LEFT_UP(     EDA_3D_CANVAS::OnLeftUp )
-    EVT_MIDDLE_UP(   EDA_3D_CANVAS::OnMiddleUp )
+    EVT_LEFT_DOWN( EDA_3D_CANVAS::OnLeftDown )
+    EVT_LEFT_UP( EDA_3D_CANVAS::OnLeftUp )
+    EVT_MIDDLE_UP( EDA_3D_CANVAS::OnMiddleUp )
     EVT_MIDDLE_DOWN( EDA_3D_CANVAS::OnMiddleDown)
-    EVT_RIGHT_DOWN(  EDA_3D_CANVAS::OnRightClick )
-    EVT_MOUSEWHEEL(  EDA_3D_CANVAS::OnMouseWheel )
-    EVT_MOTION(      EDA_3D_CANVAS::OnMouseMove )
+    EVT_RIGHT_DOWN( EDA_3D_CANVAS::OnRightClick )
+    EVT_MOUSEWHEEL( EDA_3D_CANVAS::OnMouseWheel )
+    EVT_MOTION( EDA_3D_CANVAS::OnMouseMove )
 
-#ifdef USE_OSX_MAGNIFY_EVENT
-    EVT_MAGNIFY(     EDA_3D_CANVAS::OnMagnify )
+#if wxCHECK_VERSION( 3, 1, 0 ) || defined( USE_OSX_MAGNIFY_EVENT )
+    EVT_MAGNIFY( EDA_3D_CANVAS::OnMagnify )
 #endif
 
     // other events
@@ -75,6 +82,7 @@ BEGIN_EVENT_TABLE( EDA_3D_CANVAS, wxGLCanvas )
                     ID_POPUP_3D_VIEW_END, EDA_3D_CANVAS::OnPopUpMenu )
 
     EVT_CLOSE( EDA_3D_CANVAS::OnCloseWindow )
+    EVT_SIZE(  EDA_3D_CANVAS::OnResize )
 END_EVENT_TABLE()
 
 
@@ -82,8 +90,7 @@ EDA_3D_CANVAS::EDA_3D_CANVAS( wxWindow *aParent,
                               const int *aAttribList,
                               BOARD *aBoard,
                               CINFO3D_VISU &aSettings , S3D_CACHE *a3DCachePointer ) :
-
-                  wxGLCanvas( aParent,
+                  HIDPI_GL_CANVAS( aParent,
                               wxID_ANY,
                               aAttribList,
                               wxDefaultPosition,
@@ -93,9 +100,8 @@ EDA_3D_CANVAS::EDA_3D_CANVAS( wxWindow *aParent,
                 m_settings( aSettings )
 {
     // Run test cases in debug mode, once.
-    //DBG( Run_3d_viewer_test_cases() );
 
-    wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::EDA_3D_CANVAS" ) );
+    wxLogTrace( m_logTrace, "EDA_3D_CANVAS::EDA_3D_CANVAS" );
 
     m_editing_timeout_timer.SetOwner( this );
     Connect( m_editing_timeout_timer.GetId(),
@@ -122,6 +128,7 @@ EDA_3D_CANVAS::EDA_3D_CANVAS( wxWindow *aParent,
     m_is_opengl_initialized = false;
 
     m_render_raytracing_was_requested = false;
+    m_opengl_supports_raytracing = false;
 
     m_parentStatusBar = NULL;
     m_glRC = NULL;
@@ -146,7 +153,7 @@ EDA_3D_CANVAS::EDA_3D_CANVAS( wxWindow *aParent,
 
 EDA_3D_CANVAS::~EDA_3D_CANVAS()
 {
-    wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::~EDA_3D_CANVAS" ) );
+    wxLogTrace( m_logTrace, "EDA_3D_CANVAS::~EDA_3D_CANVAS" );
 
     releaseOpenGL();
 }
@@ -164,7 +171,7 @@ void EDA_3D_CANVAS::releaseOpenGL()
         delete m_3d_render_ogl_legacy;
         m_3d_render_ogl_legacy = NULL;
 
-        // This is just a copy of a pointer, can safelly be set to NULL
+        // This is just a copy of a pointer, can safely be set to NULL
         m_3d_render = NULL;
 
         GL_CONTEXT_MANAGER::Get().UnlockCtx( m_glRC );
@@ -182,9 +189,15 @@ void EDA_3D_CANVAS::OnCloseWindow( wxCloseEvent &event )
 }
 
 
+void EDA_3D_CANVAS::OnResize( wxSizeEvent &event )
+{
+    this->Request_refresh();
+}
+
+
 bool  EDA_3D_CANVAS::initializeOpenGL()
 {
-    wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::initializeOpenGL" ) );
+    wxLogTrace( m_logTrace, "EDA_3D_CANVAS::initializeOpenGL" );
 
     const GLenum err = glewInit();
 
@@ -198,9 +211,51 @@ bool  EDA_3D_CANVAS::initializeOpenGL()
     }
     else
     {
-        wxLogTrace( m_logTrace,
-                    wxString( wxT( "EDA_3D_CANVAS::initializeOpenGL Using GLEW " ) ) +
+        wxLogTrace( m_logTrace, "EDA_3D_CANVAS::initializeOpenGL Using GLEW version %s",
                     FROM_UTF8( (char*) glewGetString( GLEW_VERSION ) ) );
+    }
+
+    wxString version = FROM_UTF8( (char *) glGetString( GL_VERSION ) );
+
+    wxLogTrace( m_logTrace, "EDA_3D_CANVAS::%s OpenGL version string %s.",
+                __WXFUNCTION__, version );
+
+    // Extract OpenGL version from string.  This method is used because prior to OpenGL 2,
+    // getting the OpenGL major and minor version as integers didn't exist.
+    wxString tmp;
+
+    wxStringTokenizer tokenizer( version );
+
+    m_opengl_supports_raytracing = true;
+
+    if( tokenizer.HasMoreTokens() )
+    {
+        long major = 0;
+        long minor = 0;
+
+        tmp = tokenizer.GetNextToken();
+
+        tokenizer.SetString( tmp, wxString( "." ) );
+
+        if( tokenizer.HasMoreTokens() )
+            tokenizer.GetNextToken().ToLong( &major );
+
+        if( tokenizer.HasMoreTokens() )
+            tokenizer.GetNextToken().ToLong( &minor );
+
+        if( major < 2 || ( (major == 2 ) && (minor < 1) ) )
+        {
+            wxLogTrace( m_logTrace, "EDA_3D_CANVAS::%s OpenGL ray tracing not supported.",
+                        __WXFUNCTION__ );
+
+            if( GetParent() )
+            {
+                wxCommandEvent evt( wxEVT_MENU, ID_DISABLE_RAY_TRACING );
+                GetParent()->ProcessWindowEvent( evt );
+            }
+
+            m_opengl_supports_raytracing = false;
+        }
     }
 
     m_is_opengl_initialized = true;
@@ -248,14 +303,11 @@ void EDA_3D_CANVAS::DisplayStatus()
     {
         wxString msg;
 
-        msg.Printf( wxT( "dx %3.2f" ), m_settings.CameraGet().GetCameraPos().x );
+        msg.Printf( "dx %3.2f", m_settings.CameraGet().GetCameraPos().x );
         m_parentStatusBar->SetStatusText( msg, 1 );
 
-        msg.Printf( wxT( "dy %3.2f" ), m_settings.CameraGet().GetCameraPos().y );
+        msg.Printf( "dy %3.2f", m_settings.CameraGet().GetCameraPos().y );
         m_parentStatusBar->SetStatusText( msg, 2 );
-
-        //msg.Printf( _( "Zoom: %3.1f" ), 50 * m_settings.CameraGet().ZoomGet() );
-        //m_parentStatusBar->SetStatusText( msg, 3 );
     }
 }
 
@@ -270,7 +322,7 @@ void EDA_3D_CANVAS::OnPaint( wxPaintEvent &event )
     // SwapBuffer requires the window to be shown before calling
     if( !IsShownOnScreen() )
     {
-        wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::OnPaint !IsShown" ) );
+        wxLogTrace( m_logTrace, "EDA_3D_CANVAS::OnPaint !IsShown" );
         return;
     }
 
@@ -278,7 +330,7 @@ void EDA_3D_CANVAS::OnPaint( wxPaintEvent &event )
     // ensure this parent is still alive. When it is closed before the viewer
     // frame, a paint event can be generated after the parent is closed,
     // therefore with invalid board.
-    // This is dependant of the platform.
+    // This is dependent of the platform.
     // Especially on OSX, but also on Windows, it frequently happens
     if( !GetParent()->GetParent()->IsShown() )
         return; // The parent board editor frame is no more alive
@@ -288,7 +340,6 @@ void EDA_3D_CANVAS::OnPaint( wxPaintEvent &event )
     // !TODO: implement error reporter
     //WX_STRING_REPORTER errorReporter( &err_messages );
     STATUS_TEXT_REPORTER activityReporter( m_parentStatusBar, 0 );
-
 
     unsigned strtime = GetRunningMicroSecs();
 
@@ -308,10 +359,9 @@ void EDA_3D_CANVAS::OnPaint( wxPaintEvent &event )
     // multiple canvases: If we updated the viewport in the wxSizeEvent
     // handler, changing the size of one canvas causes a viewport setting that
     // is wrong when next another canvas is repainted.
-    wxSize clientSize = GetClientSize();
+    wxSize clientSize = GetNativePixelSize();
 
     const bool windows_size_changed = m_settings.CameraGet().SetCurWindowSize( clientSize );
-
 
     // Initialize openGL if need
     // /////////////////////////////////////////////////////////////////////////
@@ -325,8 +375,15 @@ void EDA_3D_CANVAS::OnPaint( wxPaintEvent &event )
         }
     }
 
+    // Don't attend to ray trace if OpenGL doesn't support it.
+    if( !m_opengl_supports_raytracing )
+    {
+        m_3d_render = m_3d_render_ogl_legacy;
+        m_render_raytracing_was_requested = false;
+        m_settings.RenderEngineSet( RENDER_ENGINE_OPENGL_LEGACY );
+    }
 
-    // Check if a raytacing was requented and need to switch to raytracing mode
+    // Check if a raytacing was requested and need to switch to raytracing mode
     if( m_settings.RenderEngineGet() == RENDER_ENGINE_OPENGL_LEGACY )
     {
         const bool was_camera_changed = m_settings.CameraGet().ParametersChanged();
@@ -343,7 +400,6 @@ void EDA_3D_CANVAS::OnPaint( wxPaintEvent &event )
             m_3d_render = m_3d_render_ogl_legacy;
         }
     }
-
 
     float curtime_delta_s = 0.0f;
 
@@ -367,7 +423,6 @@ void EDA_3D_CANVAS::OnPaint( wxPaintEvent &event )
             Request_refresh();
         }
     }
-
 
     // It will return true if the render request a new redraw
     bool requested_redraw = false;
@@ -397,7 +452,7 @@ void EDA_3D_CANVAS::OnPaint( wxPaintEvent &event )
     {
         if( m_mouse_was_moved || m_camera_is_moving )
         {
-            // Calculation time in miliseconds
+            // Calculation time in milliseconds
             const double calculation_time = (double)( GetRunningMicroSecs() - strtime) / 1e3;
 
             activityReporter.Report( wxString::Format( _( "Render time %.0f ms ( %.1f fps)" ),
@@ -421,7 +476,7 @@ void EDA_3D_CANVAS::OnPaint( wxPaintEvent &event )
 
 void EDA_3D_CANVAS::OnEraseBackground( wxEraseEvent &event )
 {
-    wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::OnEraseBackground" ) );
+    wxLogTrace( m_logTrace, "EDA_3D_CANVAS::OnEraseBackground" );
     // Do nothing, to avoid flashing.
 }
 
@@ -430,7 +485,7 @@ void EDA_3D_CANVAS::OnMouseWheel( wxMouseEvent &event )
 {
     bool mouseActivity = false;
 
-    wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::OnMouseWheel" ) );
+    wxLogTrace( m_logTrace, "EDA_3D_CANVAS::OnMouseWheel" );
 
     if( m_camera_is_moving )
         return;
@@ -438,40 +493,42 @@ void EDA_3D_CANVAS::OnMouseWheel( wxMouseEvent &event )
     float delta_move = m_delta_move_step_factor * m_settings.CameraGet().ZoomGet();
 
     if( m_settings.GetFlag( FL_MOUSEWHEEL_PANNING ) )
-        delta_move *= (0.05f * event.GetWheelRotation());
+        delta_move *= (0.01f * event.GetWheelRotation());
     else
         if( event.GetWheelRotation() < 0 )
             delta_move = -delta_move;
 
-    if( m_settings.GetFlag( FL_MOUSEWHEEL_PANNING ) )
+    // mousewheel_panning enabled:
+    //      wheel           -> pan;
+    //      wheel + shift   -> horizontal scrolling;
+    //      wheel + ctrl    -> zooming;
+    // mousewheel_panning disabled:
+    //      wheel + shift   -> vertical scrolling;
+    //      wheel + ctrl    -> horizontal scrolling;
+    //      wheel           -> zooming.
+
+    if( m_settings.GetFlag( FL_MOUSEWHEEL_PANNING ) && !event.ControlDown() )
     {
-        if( event.GetWheelAxis() == wxMOUSE_WHEEL_HORIZONTAL )
+        if( event.GetWheelAxis() == wxMOUSE_WHEEL_HORIZONTAL || event.ShiftDown() )
             m_settings.CameraGet().Pan( SFVEC3F( -delta_move, 0.0f, 0.0f ) );
         else
             m_settings.CameraGet().Pan( SFVEC3F( 0.0f, -delta_move, 0.0f ) );
 
         mouseActivity = true;
     }
-    else if( event.ShiftDown() )
+    else if( event.ShiftDown() && !m_settings.GetFlag( FL_MOUSEWHEEL_PANNING ) )
     {
         m_settings.CameraGet().Pan( SFVEC3F( 0.0f, -delta_move, 0.0f ) );
         mouseActivity = true;
     }
-    else if( event.ControlDown() )
+    else if( event.ControlDown() && !m_settings.GetFlag( FL_MOUSEWHEEL_PANNING ) )
     {
         m_settings.CameraGet().Pan( SFVEC3F( delta_move, 0.0f, 0.0f ) );
         mouseActivity = true;
     }
     else
     {
-        if( event.GetWheelRotation() > 0 )
-        {
-            mouseActivity = m_settings.CameraGet().ZoomIn( 1.1f );
-        }
-        else
-        {
-            mouseActivity = m_settings.CameraGet().ZoomOut( 1.1f );
-        }
+        mouseActivity = m_settings.CameraGet().Zoom( event.GetWheelRotation() > 0 ? 1.1f : 1/1.1f );
     }
 
     // If it results on a camera movement
@@ -494,6 +551,8 @@ void EDA_3D_CANVAS::OnMouseWheel( wxMouseEvent &event )
 #if wxCHECK_VERSION( 3, 1, 0 ) || defined( USE_OSX_MAGNIFY_EVENT )
 void EDA_3D_CANVAS::OnMagnify( wxMouseEvent& event )
 {
+    SetFocus();
+
     if( m_camera_is_moving )
         return;
 
@@ -502,13 +561,10 @@ void EDA_3D_CANVAS::OnMagnify( wxMouseEvent& event )
 
     float magnification = ( event.GetMagnification() + 1.0f );
 
-    m_settings.CameraGet().ZoomIn( magnification );
+    m_settings.CameraGet().Zoom( magnification );
 
     DisplayStatus();
     Request_refresh();
-
-    // Please someone test if this is need
-    //m_settings.CameraGet().SetCurMousePosition( event.GetPosition() );
 }
 #endif
 
@@ -520,7 +576,7 @@ void EDA_3D_CANVAS::OnMouseMove( wxMouseEvent &event )
     if( m_camera_is_moving )
         return;
 
-    m_settings.CameraGet().SetCurWindowSize( GetClientSize() );
+    m_settings.CameraGet().SetCurWindowSize( GetNativePixelSize() );
 
     if( event.Dragging() )
     {
@@ -544,6 +600,7 @@ void EDA_3D_CANVAS::OnMouseMove( wxMouseEvent &event )
 
 void EDA_3D_CANVAS::OnLeftDown( wxMouseEvent &event )
 {
+    SetFocus();
     stop_editingTimeOut_Timer();
 }
 
@@ -563,6 +620,7 @@ void EDA_3D_CANVAS::OnLeftUp( wxMouseEvent &event )
 
 void EDA_3D_CANVAS::OnMiddleDown( wxMouseEvent &event )
 {
+    SetFocus();
     stop_editingTimeOut_Timer();
 }
 
@@ -586,68 +644,88 @@ void EDA_3D_CANVAS::OnMiddleUp( wxMouseEvent &event )
 
 void EDA_3D_CANVAS::OnRightClick( wxMouseEvent &event )
 {
-    wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::OnRightClick" ) );
+    wxLogTrace( m_logTrace, "EDA_3D_CANVAS::OnRightClick" );
+
+    SetFocus();
 
     if( m_camera_is_moving )
         return;
 
     wxPoint     pos;
     wxMenu      PopUpMenu;
+    wxString msg;
 
     pos.x = event.GetX();
     pos.y = event.GetY();
 
-    wxMenuItem* item = new wxMenuItem( &PopUpMenu, ID_POPUP_ZOOMIN, _( "Zoom +" ) );
-    item->SetBitmap( KiBitmap( zoom_in_xpm ));
-    PopUpMenu.Append( item );
+    msg = AddHotkeyName( _( "Zoom +" ), GetHotkeyConfig(),
+                         ID_POPUP_ZOOMIN );
+    AddMenuItem( &PopUpMenu, ID_POPUP_ZOOMIN,
+                 msg, KiBitmap( zoom_in_xpm ) );
 
-    item = new wxMenuItem( &PopUpMenu, ID_POPUP_ZOOMOUT, _( "Zoom -" ) );
-    item->SetBitmap( KiBitmap( zoom_out_xpm ));
-    PopUpMenu.Append( item );
 
-    PopUpMenu.AppendSeparator();
-    item = new wxMenuItem( &PopUpMenu, ID_POPUP_VIEW_ZPOS, _( "Top View" ) );
-    item->SetBitmap( KiBitmap( axis3d_top_xpm ));
-    PopUpMenu.Append( item );
-
-    item = new wxMenuItem( &PopUpMenu, ID_POPUP_VIEW_ZNEG, _( "Bottom View" ) );
-    item->SetBitmap( KiBitmap( axis3d_bottom_xpm ));
-    PopUpMenu.Append( item );
+    msg = AddHotkeyName( _( "Zoom -" ), GetHotkeyConfig(),
+                         ID_POPUP_ZOOMOUT );
+    AddMenuItem( &PopUpMenu, ID_POPUP_ZOOMOUT,
+                 msg, KiBitmap( zoom_out_xpm ) );
 
     PopUpMenu.AppendSeparator();
-    item = new wxMenuItem( &PopUpMenu, ID_POPUP_VIEW_XPOS, _( "Right View" ) );
-    item->SetBitmap( KiBitmap( axis3d_right_xpm ));
-    PopUpMenu.Append( item );
 
-    item = new wxMenuItem( &PopUpMenu, ID_POPUP_VIEW_XNEG, _( "Left View" ) );
-    item->SetBitmap( KiBitmap( axis3d_left_xpm ));
-    PopUpMenu.Append( item );
+    msg = AddHotkeyName( _( "Top View" ), GetHotkeyConfig(),
+                         ID_POPUP_VIEW_ZPOS );
+    AddMenuItem( &PopUpMenu, ID_POPUP_VIEW_ZPOS,
+                 msg, KiBitmap( axis3d_top_xpm ) );
 
-    PopUpMenu.AppendSeparator();
-    item = new wxMenuItem( &PopUpMenu, ID_POPUP_VIEW_YPOS, _( "Front View" ) );
-    item->SetBitmap( KiBitmap( axis3d_front_xpm ));
-    PopUpMenu.Append( item );
-
-    item = new wxMenuItem( &PopUpMenu, ID_POPUP_VIEW_YNEG, _( "Back View" ) );
-    item->SetBitmap( KiBitmap( axis3d_back_xpm ));
-    PopUpMenu.Append( item );
+    msg = AddHotkeyName( _( "Bottom View" ), GetHotkeyConfig(),
+                         ID_POPUP_VIEW_ZNEG );
+    AddMenuItem( &PopUpMenu, ID_POPUP_VIEW_ZNEG,
+                 msg, KiBitmap( axis3d_bottom_xpm ) );
 
     PopUpMenu.AppendSeparator();
-    item = new wxMenuItem( &PopUpMenu, ID_POPUP_MOVE3D_LEFT, _( "Move left <-" ) );
-    item->SetBitmap( KiBitmap( left_xpm ));
-    PopUpMenu.Append( item );
 
-    item = new wxMenuItem( &PopUpMenu, ID_POPUP_MOVE3D_RIGHT, _( "Move right ->" ) );
-    item->SetBitmap( KiBitmap( right_xpm ));
-    PopUpMenu.Append( item );
+    msg = AddHotkeyName( _( "Right View" ), GetHotkeyConfig(),
+                         ID_POPUP_VIEW_XPOS );
+    AddMenuItem( &PopUpMenu, ID_POPUP_VIEW_XPOS,
+                 msg, KiBitmap( axis3d_right_xpm ) );
 
-    item = new wxMenuItem( &PopUpMenu, ID_POPUP_MOVE3D_UP, _( "Move Up ^" ) );
-    item->SetBitmap( KiBitmap( up_xpm ));
-    PopUpMenu.Append( item );
+    msg = AddHotkeyName( _( "Left View" ), GetHotkeyConfig(),
+                         ID_POPUP_VIEW_XNEG );
+    AddMenuItem( &PopUpMenu, ID_POPUP_VIEW_XNEG,
+                 msg, KiBitmap( axis3d_left_xpm ) );
 
-    item = new wxMenuItem( &PopUpMenu, ID_POPUP_MOVE3D_DOWN, _( "Move Down" ) );
-    item->SetBitmap( KiBitmap( down_xpm ));
-    PopUpMenu.Append( item );
+    PopUpMenu.AppendSeparator();
+
+    msg = AddHotkeyName( _( "Front View" ), GetHotkeyConfig(),
+                         ID_POPUP_VIEW_YPOS );
+    AddMenuItem( &PopUpMenu, ID_POPUP_VIEW_YPOS,
+                 msg, KiBitmap( axis3d_front_xpm ) );
+
+    msg = AddHotkeyName( _( "Back View" ), GetHotkeyConfig(),
+                         ID_POPUP_VIEW_YNEG );
+    AddMenuItem( &PopUpMenu, ID_POPUP_VIEW_YNEG,
+                 msg, KiBitmap( axis3d_back_xpm ) );
+
+    PopUpMenu.AppendSeparator();
+
+    msg = AddHotkeyName( _( "Move Left <-" ), GetHotkeyConfig(),
+                         ID_POPUP_MOVE3D_LEFT );
+    AddMenuItem( &PopUpMenu, ID_POPUP_MOVE3D_LEFT,
+                 msg, KiBitmap( left_xpm ) );
+
+    msg = AddHotkeyName( _( "Move Right ->" ), GetHotkeyConfig(),
+                         ID_POPUP_MOVE3D_RIGHT );
+    AddMenuItem( &PopUpMenu, ID_POPUP_MOVE3D_RIGHT,
+                 msg, KiBitmap( right_xpm ) );
+
+    msg = AddHotkeyName( _( "Move Up ^" ), GetHotkeyConfig(),
+                         ID_POPUP_MOVE3D_UP );
+    AddMenuItem( &PopUpMenu, ID_POPUP_MOVE3D_UP,
+                 msg, KiBitmap( up_xpm ) );
+
+    msg = AddHotkeyName( _( "Move Down" ), GetHotkeyConfig(),
+                         ID_POPUP_MOVE3D_DOWN );
+    AddMenuItem( &PopUpMenu, ID_POPUP_MOVE3D_DOWN,
+                 msg, KiBitmap( down_xpm ) );
 
     PopupMenu( &PopUpMenu, pos );
 }
@@ -657,7 +735,7 @@ void EDA_3D_CANVAS::OnPopUpMenu( wxCommandEvent &event )
 {
     int id = event.GetId();
 
-    wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::OnPopUpMenu id:%d" ), id );
+    wxLogTrace( m_logTrace, "EDA_3D_CANVAS::OnPopUpMenu id:%d", id );
 
     int key = 0;
 
@@ -672,27 +750,27 @@ void EDA_3D_CANVAS::OnPopUpMenu( wxCommandEvent &event )
         break;
 
     case ID_POPUP_VIEW_XPOS:
-        key = 'x';
-        break;
-
-    case ID_POPUP_VIEW_XNEG:
         key = 'X';
         break;
 
-    case ID_POPUP_VIEW_YPOS:
-        key = 'y';
+    case ID_POPUP_VIEW_XNEG:
+        key = GR_KB_SHIFT + 'X';
         break;
 
-    case ID_POPUP_VIEW_YNEG:
+    case ID_POPUP_VIEW_YPOS:
         key = 'Y';
         break;
 
+    case ID_POPUP_VIEW_YNEG:
+        key = GR_KB_SHIFT + 'Y';
+        break;
+
     case ID_POPUP_VIEW_ZPOS:
-        key = 'z';
+        key = 'Z';
         break;
 
     case ID_POPUP_VIEW_ZNEG:
-        key = 'Z';
+        key = GR_KB_SHIFT + 'Z';
         break;
 
     case ID_POPUP_MOVE3D_LEFT:
@@ -721,20 +799,35 @@ void EDA_3D_CANVAS::OnPopUpMenu( wxCommandEvent &event )
 
 void EDA_3D_CANVAS::OnCharHook( wxKeyEvent &event )
 {
-    //wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::OnCharHook" ) );
+    //wxLogTrace( m_logTrace, "EDA_3D_CANVAS::OnCharHook" );
     event.Skip();
 }
 
 
 void EDA_3D_CANVAS::OnKeyEvent( wxKeyEvent& event )
 {
-    //wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::OnKeyEvent" ) );
+    //wxLogTrace( m_logTrace, "EDA_3D_CANVAS::OnKeyEvent" );
+    int localkey = event.GetKeyCode();
+
+    // Use only upper char values in comparisons
+    // (the Shift modifier is a separate attribute)
+    if( (localkey >= 'a') && (localkey <= 'z') )
+        localkey += 'A' - 'a';
 
     if( m_camera_is_moving )
         return;
 
-    SetView3D( event.GetKeyCode() );
-    event.Skip();
+    if( event.ShiftDown() )
+        localkey |= GR_KB_SHIFT;
+
+    if( event.ControlDown() )
+        localkey |= GR_KB_CTRL;
+
+    if( event.AltDown() )
+        localkey |= GR_KB_ALT;
+
+    if( !SetView3D( localkey ) )
+        event.Skip();
 }
 
 
@@ -846,54 +939,55 @@ void EDA_3D_CANVAS::move_pivot_based_on_cur_mouse_position()
 }
 
 
-void EDA_3D_CANVAS::SetView3D( int keycode )
+bool EDA_3D_CANVAS::SetView3D( int aKeycode )
 {
     if( m_camera_is_moving )
-        return;
+        return false;
 
     const float delta_move = m_delta_move_step_factor * m_settings.CameraGet().ZoomGet();
     const float arrow_moving_time_speed = 8.0f;
+    bool handled = false;
 
-    switch( keycode )
+    switch( aKeycode )
     {
     case WXK_SPACE:
         move_pivot_based_on_cur_mouse_position();
-        return;
+        return true;
 
     case WXK_LEFT:
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_LINEAR );
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().Pan_T1( SFVEC3F( -delta_move, 0.0f, 0.0f ) );
         request_start_moving_camera( arrow_moving_time_speed, false );
-        return;
+        return true;
 
     case WXK_RIGHT:
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_LINEAR );
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().Pan_T1( SFVEC3F( +delta_move, 0.0f, 0.0f ) );
         request_start_moving_camera( arrow_moving_time_speed, false );
-        return;
+        return true;
 
     case WXK_UP:
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_LINEAR );
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().Pan_T1( SFVEC3F( 0.0f, +delta_move, 0.0f ) );
         request_start_moving_camera( arrow_moving_time_speed, false );
-        return;
+        return true;
 
     case WXK_DOWN:
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_LINEAR );
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().Pan_T1( SFVEC3F( 0.0f, -delta_move, 0.0f ) );
         request_start_moving_camera( arrow_moving_time_speed, false );
-        return;
+        return true;
 
     case WXK_HOME:
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_BEZIER );
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().Reset_T1();
         request_start_moving_camera( glm::min( glm::max( m_settings.CameraGet().ZoomGet(), 0.5f ), 1.125f ) );
-        return;
+        return true;
 
     case WXK_END:
         break;
@@ -903,25 +997,28 @@ void EDA_3D_CANVAS::SetView3D( int keycode )
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().RotateZ_T1( glm::radians( 45.0f ) );
         request_start_moving_camera();
+        handled = true;
         break;
 
     case WXK_F1:
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_BEZIER );
         m_settings.CameraGet().SetT0_and_T1_current_T();
-        if( m_settings.CameraGet().ZoomIn_T1( 1.4f ) )
+
+        if( m_settings.CameraGet().Zoom_T1( 1.4f ) )
             request_start_moving_camera( 3.0f );
-        return;
+
+        return true;
 
     case WXK_F2:
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_BEZIER );
         m_settings.CameraGet().SetT0_and_T1_current_T();
-        if( m_settings.CameraGet().ZoomOut_T1( 1.4f ) )
+
+        if( m_settings.CameraGet().Zoom_T1( 1/1.4f ) )
             request_start_moving_camera( 3.0f );
-        return;
+
+        return true;
 
     case '+':
-        break;
-
     case '-':
         break;
 
@@ -930,6 +1027,7 @@ void EDA_3D_CANVAS::SetView3D( int keycode )
         m_settings.SetFlag( FL_MODULE_ATTRIBUTES_NORMAL,
                             !m_settings.GetFlag( FL_MODULE_ATTRIBUTES_NORMAL ) );
         ReloadRequest();
+        handled = true;
         break;
 
     case 's':
@@ -937,6 +1035,7 @@ void EDA_3D_CANVAS::SetView3D( int keycode )
         m_settings.SetFlag( FL_MODULE_ATTRIBUTES_NORMAL_INSERT,
                             !m_settings.GetFlag( FL_MODULE_ATTRIBUTES_NORMAL_INSERT ) );
         ReloadRequest();
+        handled = true;
         break;
 
     case 'v':
@@ -944,6 +1043,7 @@ void EDA_3D_CANVAS::SetView3D( int keycode )
         m_settings.SetFlag( FL_MODULE_ATTRIBUTES_VIRTUAL,
                             !m_settings.GetFlag( FL_MODULE_ATTRIBUTES_VIRTUAL ) );
         ReloadRequest();
+        handled = true;
         break;
 
     case 'r':
@@ -952,62 +1052,62 @@ void EDA_3D_CANVAS::SetView3D( int keycode )
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().Reset_T1();
         request_start_moving_camera( glm::min( glm::max( m_settings.CameraGet().ZoomGet(), 0.5f ), 1.125f ) );
-        return;
+        return true;
 
-    case 'x':
+    case 'X':
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_BEZIER );
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().Reset_T1();
         m_settings.CameraGet().RotateZ_T1( glm::radians( -90.0f ) );
         m_settings.CameraGet().RotateX_T1( glm::radians( -90.0f ) );
         request_start_moving_camera();
-        return;
+        return true;
 
-    case 'X':
+    case GR_KB_SHIFT + 'X':
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_BEZIER );
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().Reset_T1();
         m_settings.CameraGet().RotateZ_T1( glm::radians(  90.0f ) );
         m_settings.CameraGet().RotateX_T1( glm::radians( -90.0f ) );
         request_start_moving_camera();
-        return;
+        return true;
 
-    case 'y':
+    case 'Y':
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_BEZIER );
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().Reset_T1();
         m_settings.CameraGet().RotateX_T1( glm::radians( -90.0f ) );
         request_start_moving_camera();
-        return;
+        return true;
 
-    case 'Y':
+    case GR_KB_SHIFT + 'Y':
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_BEZIER );
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().Reset_T1();
         m_settings.CameraGet().RotateX_T1( glm::radians(  -90.0f ) );
         m_settings.CameraGet().RotateZ_T1( glm::radians( -180.0f ) );
         request_start_moving_camera();
-        return;
-
-    case 'z':
-        m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_BEZIER );
-        m_settings.CameraGet().SetT0_and_T1_current_T();
-        m_settings.CameraGet().Reset_T1();
-        request_start_moving_camera(
-                    glm::min( glm::max( m_settings.CameraGet().ZoomGet(), 0.5f ), 1.125f ) );
-        return;
+        return true;
 
     case 'Z':
         m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_BEZIER );
         m_settings.CameraGet().SetT0_and_T1_current_T();
         m_settings.CameraGet().Reset_T1();
-        m_settings.CameraGet().RotateX_T1( glm::radians( -180.0f ) );
         request_start_moving_camera(
                     glm::min( glm::max( m_settings.CameraGet().ZoomGet(), 0.5f ), 1.125f ) );
-        return;
+        return true;
+
+    case GR_KB_SHIFT + 'Z':
+        m_settings.CameraGet().SetInterpolateMode( INTERPOLATION_BEZIER );
+        m_settings.CameraGet().SetT0_and_T1_current_T();
+        m_settings.CameraGet().Reset_T1();
+        m_settings.CameraGet().RotateY_T1( glm::radians( 180.0f ) );
+        request_start_moving_camera(
+                    glm::min( glm::max( m_settings.CameraGet().ZoomGet(), 0.5f ), 1.125f ) );
+        return true;
 
     default:
-        return;
+        return false;
     }
 
     m_mouse_was_moved = true;
@@ -1016,6 +1116,8 @@ void EDA_3D_CANVAS::SetView3D( int keycode )
 
     DisplayStatus();
     Request_refresh();
+
+    return handled;
 }
 
 

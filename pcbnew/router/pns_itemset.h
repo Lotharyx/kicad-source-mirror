@@ -110,7 +110,7 @@ public:
 
     ~ITEM_SET();
 
-    const ITEM_SET& operator=( const ITEM_SET& aOther )
+    ITEM_SET& operator=( const ITEM_SET& aOther )
     {
         m_items = aOther.m_items;
         return *this;
@@ -119,6 +119,9 @@ public:
     int Count( int aKindMask = -1 ) const
     {
         int n = 0;
+
+        if( aKindMask == -1 || aKindMask == ITEM::ANY_T )
+            return m_items.size();
 
         for( ITEM* item : m_items )
         {

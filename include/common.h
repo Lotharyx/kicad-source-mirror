@@ -1,10 +1,10 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2014-2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2014-2017 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2007-2015 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2008-2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2008 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -33,22 +33,38 @@
 #define INCLUDE__COMMON_H_
 
 #include <vector>
-#include <boost/cstdint.hpp>
 
 #include <wx/wx.h>
 #include <wx/confbase.h>
 #include <wx/fileconf.h>
+#include <wx/dir.h>
 
 #include <richio.h>
-#include <colors.h>
+#include <gal/color4d.h>
 
 #include <atomic>
+#include <memory>
 
+// C++11 "polyfill" for the C++14 std::make_unique function
+#include "make_unique.h"
 
 class wxAboutDialogInfo;
 class SEARCH_STACK;
-class wxSingleInstanceChecker;
 class REPORTER;
+
+
+/**
+ * timestamp_t is our type to represent unique IDs for all kinds of elements;
+ * historically simply the timestamp when they were created.
+ *
+ * Long term, this type might be renamed to something like unique_id_t
+ * (and then rename all the methods from {Get,Set}TimeStamp()
+ * to {Get,Set}Id()) ?
+ *
+ * The type should be at least 32 bit and simple to map via swig; swig does
+ * have issues with types such as 'int32_t', so we choose 'long'.
+ */
+typedef long timestamp_t;
 
 
 // Flag for special keys
@@ -85,38 +101,16 @@ enum pseudokeys {
 
 #define ESC 27
 
-// TODO Executable names TODO
-#ifdef __WINDOWS__
-#define CVPCB_EXE           wxT( "cvpcb.exe" )
-#define PCBNEW_EXE          wxT( "pcbnew.exe" )
-#define EESCHEMA_EXE        wxT( "eeschema.exe" )
-#define GERBVIEW_EXE        wxT( "gerbview.exe" )
-#define BITMAPCONVERTER_EXE wxT( "bitmap2component.exe" )
-#define PCB_CALCULATOR_EXE  wxT( "pcb_calculator.exe" )
-#define PL_EDITOR_EXE       wxT( "pl_editor.exe" )
-#else
-#define CVPCB_EXE           wxT( "cvpcb" )
-#define PCBNEW_EXE          wxT( "pcbnew" )
-#define EESCHEMA_EXE        wxT( "eeschema" )
-#define GERBVIEW_EXE        wxT( "gerbview" )
-#define BITMAPCONVERTER_EXE wxT( "bitmap2component" )
-#define PCB_CALCULATOR_EXE  wxT( "pcb_calculator" )
-#define PL_EDITOR_EXE       wxT( "pl_editor" )
-#endif
-
-
-// Graphic Texts Orientation in 0.1 degree
-#define TEXT_ORIENT_HORIZ 0
-#define TEXT_ORIENT_VERT  900
-
-
+/// Frequent text rotations, used with {Set,Get}TextAngle(),
+/// in 0.1 degrees for now, hoping to migrate to degrees eventually.
+#define TEXT_ANGLE_HORIZ    0
+#define TEXT_ANGLE_VERT     900
 
 //-----<KiROUND KIT>------------------------------------------------------------
 
 /**
- * KiROUND
- * rounds a floating point number to an int using
- * "round halfway cases away from zero".
+ * Round a floating point number to an integer using "round halfway cases away from zero".
+ *
  * In Debug build an assert fires if will not fit into an int.
  */
 
@@ -142,11 +136,13 @@ static inline int kiRound_( double v, int line, const char* filename )
     v = v < 0 ? v - 0.5 : v + 0.5;
     if( v > INT_MAX + 0.5 )
     {
-        printf( "%s: in file %s on line %d, val: %.16g too ' > 0 ' for int\n", __FUNCTION__, filename, line, v );
+        printf( "%s: in file %s on line %d, val: %.16g too ' > 0 ' for int\n",
+                __FUNCTION__, filename, line, v );
     }
     else if( v < INT_MIN - 0.5 )
     {
-        printf( "%s: in file %s on line %d, val: %.16g too ' < 0 ' for int\n", __FUNCTION__, filename, line, v );
+        printf( "%s: in file %s on line %d, val: %.16g too ' < 0 ' for int\n",
+                __FUNCTION__, filename, line, v );
     }
     return int( v );
 }
@@ -161,14 +157,6 @@ static inline int kiRound_( double v, int line, const char* filename )
 //-----</KiROUND KIT>-----------------------------------------------------------
 
 
-
-/// Convert mm to mils.
-inline int Mm2mils( double x ) { return KiROUND( x * 1000./25.4 ); }
-
-/// Convert mils to mm.
-inline int Mils2mm( double x ) { return KiROUND( x * 25.4 / 1000. ); }
-
-
 enum EDA_UNITS_T {
     INCHES = 0,
     MILLIMETRES = 1,
@@ -177,19 +165,17 @@ enum EDA_UNITS_T {
 };
 
 
-extern EDA_UNITS_T  g_UserUnit;     ///< display units
-
 /// Draw color for moving objects.
-extern EDA_COLOR_T  g_GhostColor;
+extern KIGFX::COLOR4D  g_GhostColor;
 
 
 /**
- * Class LOCALE_IO
- * is a class that can be instantiated within a scope in which you are expecting
- * exceptions to be thrown.  Its constructor set a "C" laguage locale option,
- * to read/print files with fp numbers.
- * Its destructor insures that the default locale is restored if an exception
- * is thrown, or not.
+ * Instantiate the current locale within a scope in which you are expecting
+ * exceptions to be thrown.
+ *
+ * The constructor sets a "C" language locale option, to read/print files with floating
+ * point  numbers.  The destructor insures that the default locale is restored if an
+ * exception is thrown or not.
  */
 class LOCALE_IO
 {
@@ -198,8 +184,6 @@ public:
     ~LOCALE_IO();
 
 private:
-    void setUserLocale( const char* aUserLocale );
-
     // allow for nesting of LOCALE_IO instantiations
     static std::atomic<unsigned int> m_c_count;
 
@@ -208,21 +192,20 @@ private:
     std::string m_user_locale;
 };
 
-
 /**
- * Function GetTextSize
- * returns the size of @a aSingleLine of text when it is rendered in @a aWindow
+ * Return the size of @a aSingleLine of text when it is rendered in @a aWindow
  * using whatever font is currently set in that window.
  */
 wxSize GetTextSize( const wxString& aSingleLine, wxWindow* aWindow );
 
 /**
- * Function EnsureTextCtrlWidth
- * sets the minimum pixel width on a text control in order to make a text
- * string be fully visible within it. The current font within the text
- * control is considered.
- * The text can come either from the control or be given as an argument.
- * If the text control is larger than needed, then nothing is done.
+ * Set the minimum pixel width on a text control in order to make a text
+ * string be fully visible within it.
+ *
+ * The current font within the text control is considered.  The text can come either from
+ * the control or be given as an argument.  If the text control is larger than needed, then
+ * nothing is done.
+ *
  * @param aCtrl the text control to potentially make wider.
  * @param aString the text that is used in sizing the control's pixel width.
  * If NULL, then
@@ -231,10 +214,14 @@ wxSize GetTextSize( const wxString& aSingleLine, wxWindow* aWindow );
  */
 bool EnsureTextCtrlWidth( wxTextCtrl* aCtrl, const wxString* aString = NULL );
 
+/**
+ * Select the number (or "?") in a reference for ease of editing.
+ */
+void SelectReferenceNumber( wxTextEntry* aTextEntry );
 
 /**
- * Function ProcessExecute
- * runs a child process.
+ * Run a command in a child process.
+ *
  * @param aCommandLine The process and any arguments to it all in a single
  *                     string.
  * @param aFlags The same args as allowed for wxExecute()
@@ -246,44 +233,14 @@ bool EnsureTextCtrlWidth( wxTextCtrl* aCtrl, const wxString* aString = NULL );
 int ProcessExecute( const wxString& aCommandLine, int aFlags = wxEXEC_ASYNC,
                     wxProcess *callback = NULL );
 
-
-/**************/
-/* common.cpp */
-/**************/
-
 /**
  * @return an unique time stamp that changes after each call
  */
-time_t GetNewTimeStamp();
+timestamp_t GetNewTimeStamp();
 
 int GetCommandOptions( const int argc, const char** argv,
                        const char* stringtst, const char** optarg,
                        int* optind );
-
-/**
- * Returns the units symbol.
- *
- * @param aUnits - Units type, default is current units setting.
- * @param aFormatString - A formatting string to embed the units symbol into.  Note:
- *                        the format string must contain the %s format specifier.
- * @return The formatted units symbol.
- */
-wxString ReturnUnitSymbol( EDA_UNITS_T aUnits = g_UserUnit,
-                           const wxString& aFormatString = _( " (%s):" ) );
-
-/**
- * Get a human readable units string.
- *
- * The strings returned are full text name and not abbreviations or symbolic
- * representations of the units.  Use ReturnUnitSymbol() for that.
- *
- * @param aUnits - The units text to return.
- * @return The human readable units string.
- */
-wxString GetUnitsLabel( EDA_UNITS_T aUnits );
-wxString GetAbbreviatedUnitsLabel( EDA_UNITS_T aUnit = g_UserUnit );
-
-void AddUnitSymbol( wxStaticText& Stext, EDA_UNITS_T aUnit = g_UserUnit );
 
 /**
  * Round to the nearest precision.
@@ -296,8 +253,8 @@ void AddUnitSymbol( wxStaticText& Stext, EDA_UNITS_T aUnit = g_UserUnit );
 double RoundTo0( double x, double precision );
 
 /**
- * Function wxStringSplit
- * splits \a aString to a string list separated at \a aSplitter.
+ * Split \a aString to a string list separated at \a aSplitter.
+ *
  * @param aText is the text to split
  * @param aStrings will contain the splitted lines
  * @param aSplitter is the 'split' character
@@ -305,26 +262,7 @@ double RoundTo0( double x, double precision );
 void wxStringSplit( const wxString& aText, wxArrayString& aStrings, wxChar aSplitter );
 
 /**
- * Function GetRunningMicroSecs
- * returns an ever increasing indication of elapsed microseconds.  Use this
- * by computing differences between two calls.
- * @author Dick Hollenbeck
- */
-unsigned GetRunningMicroSecs();
-
-
-/**
- * Function SystemDirsAppend
- * appends system places to aSearchStack in a platform specific way, and pertinent
- * to KiCad programs.  It seems to be a place to collect bad ideas and keep them
- * out of view.
- */
-void SystemDirsAppend( SEARCH_STACK* aSearchStack );
-
-
-/**
- * Function SearchHelpFileFullPath
- * returns the help file's full path.
+ * Return the help file's full path.
  * <p>
  * Return the KiCad help file with path and extension.
  * Help files can be html (.html ext) or pdf (.pdf ext) files.
@@ -345,35 +283,26 @@ void SystemDirsAppend( SEARCH_STACK* aSearchStack );
 wxString SearchHelpFileFullPath( const SEARCH_STACK& aSearchStack, const wxString& aBaseName );
 
 /**
- * Helper function EnsureFileDirectoryExists
- * make \a aTargetFullFileName absolute and creates the path of this file if it doesn't yet exist.
- * @param aTargetFullFileName  the wxFileName containing the full path and file name to modify.  The path
- *                    may be absolute or relative to \a aBaseFilename .
+ * Make \a aTargetFullFileName absolute and create the path of this file if it doesn't yet exist.
+ *
+ * @param aTargetFullFileName the wxFileName containing the full path and file name to modify.
+ *                            The path may be absolute or relative to \a aBaseFilename .
  * @param aBaseFilename a full filename. Only its path is used to set the aTargetFullFileName path.
  * @param aReporter a point to a REPORTER object use to show messages (can be NULL)
  * @return true if \a aOutputDir already exists or was successfully created.
  */
 bool EnsureFileDirectoryExists( wxFileName*     aTargetFullFileName,
-                                  const wxString& aBaseFilename,
-                                  REPORTER*       aReporter = NULL );
-
-/**
- * Function LockFile
- * tests to see if aFileName can be locked (is not already locked) and only then
- * returns a wxSingleInstanceChecker protecting aFileName.  Caller owns the return value.
- */
-wxSingleInstanceChecker* LockFile( const wxString& aFileName );
-
+                                const wxString& aBaseFilename,
+                                REPORTER*       aReporter = NULL );
 
 /// Put aPriorityPath in front of all paths in the value of aEnvVar.
 const wxString PrePendPath( const wxString& aEnvVar, const wxString& aPriorityPath );
 
 /**
- * Function GetNewConfig
+ * Create a new wxConfig so we can put configuration files in a more proper place for each
+ * platform.
  *
- * Use this function instead of creating a new wxConfig so we can put config files in
- * a more proper place for each platform. This is generally $HOME/.config/kicad/ in Linux
- * according to the FreeDesktop specification at
+ * This is generally $HOME/.config/kicad/ in Linux according to the FreeDesktop specification at
  * http://standards.freedesktop.org/basedir-spec/basedir-spec-0.6.html
  * The config object created here should be destroyed by the caller.
  *
@@ -382,27 +311,34 @@ const wxString PrePendPath( const wxString& aEnvVar, const wxString& aPriorityPa
  * @return A pointer to a new wxConfigBase derived object is returned.  The caller is in charge
  *  of deleting it.
  */
-wxConfigBase* GetNewConfig( const wxString& aProgName );
+std::unique_ptr<wxConfigBase> GetNewConfig( const wxString& aProgName );
 
 /**
- * Function GetKicadLockFilePath
- * @return A wxString containing the path for lockfiles in Kicad
- */
-wxString GetKicadLockFilePath();
-
-/**
- * Function GetKicadConfigPath
+ * Return the user configuration path used to store KiCad's configuration files.
+ *
+ * The configuration path order of precedence is determined by the following criteria:
+ *
+ * - The value of the KICAD_CONFIG_HOME environment variable
+ * - The value of the XDG_CONFIG_HOME environment variable.
+ * - The result of the call to wxStandardPaths::GetUserConfigDir() with ".config" appended
+ *   as required on Linux builds.
+ *
  * @return A wxString containing the config path for Kicad
  */
 wxString GetKicadConfigPath();
 
 /**
- * Function ExpandEnvVarSubstitutions
- * replaces any environment variable references with their values
+ * Replace any environment variable references with their values.
+ *
  * @param aString = a string containing (perhaps) references to env var
  * @return a string where env var are replaced by their value
  */
 const wxString ExpandEnvVarSubstitutions( const wxString& aString );
+
+/**
+ * Replace any environment variables in file-path uris (leaving network-path URIs alone).
+ */
+const wxString ResolveUriByEnvVars( const wxString& aUri );
 
 
 #ifdef __WXMAC__
@@ -424,5 +360,63 @@ wxString GetOSXKicadMachineDataDir();
  */
 wxString GetOSXKicadDataDir();
 #endif
+
+// Some wxWidgets versions (for instance before 3.1.0) do not include
+// this function, so add it if missing
+#if !wxCHECK_VERSION( 3, 1, 0 )
+#define USE_KICAD_WXSTRING_HASH     // for common.cpp
+///> Template specialization to enable wxStrings for certain containers (e.g. unordered_map)
+namespace std
+{
+    template<> struct hash<wxString>
+    {
+        size_t operator()( const wxString& s ) const;
+    };
+}
+#endif
+
+/// Required to use wxPoint as key type in maps
+#define USE_KICAD_WXPOINT_LESS     // for common.cpp
+namespace std
+{
+    template<> struct less<wxPoint>
+    {
+        bool operator()( const wxPoint& aA, const wxPoint& aB ) const;
+    };
+}
+
+
+/**
+ * A wrapper around a wxFileName which is much more performant with a subset of the API.
+ */
+class WX_FILENAME
+{
+public:
+    WX_FILENAME( const wxString& aPath, const wxString& aFilename );
+
+    void SetFullName( const wxString& aFileNameAndExtension );
+
+    wxString GetName() const;
+    wxString GetFullName() const;
+    wxString GetPath() const;
+    wxString GetFullPath() const;
+
+    // Avoid multiple calls to stat() on POSIX kernels.
+    long long GetTimestamp();
+
+private:
+    // Write cached values to the wrapped wxFileName.  MUST be called before using m_fn.
+    void resolve();
+
+    wxFileName m_fn;
+    wxString   m_path;
+    wxString   m_fullName;
+};
+
+
+long long TimestampDir( const wxString& aDirPath, const wxString& aFilespec );
+
+
+
 
 #endif  // INCLUDE__COMMON_H_

@@ -4,7 +4,7 @@
  * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2015 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
  * Copyright (C) 2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -37,28 +37,30 @@
 #include <eda_doc.h>
 #include <gestfich.h>
 #include <kicad_device_context.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 
 #include <pcbnew_id.h>
 #include <pcbnew.h>
-#include <module_editor_frame.h>
+#include <footprint_edit_frame.h>
 
 #include <class_board.h>
 #include <class_module.h>
 #include <class_track.h>
 #include <class_zone.h>
 #include <class_pcb_text.h>
-#include <modview_frame.h>
-#include <class_pcb_layer_box_selector.h>
+#include <footprint_viewer_frame.h>
+#include <pcb_layer_box_selector.h>
 #include <dialog_drc.h>
-#include <dialog_global_edit_tracks_and_vias.h>
 #include <invoke_pcb_dialog.h>
 #include <array_creator.h>
+#include <connectivity/connectivity_data.h>
+
+#include <zone_filler.h>
 
 #include <dialog_move_exact.h>
 
 #include <tool/tool_manager.h>
-#include <tools/common_actions.h>
+#include <tools/pcb_actions.h>
 
 // Handles the selection of command events.
 void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
@@ -67,7 +69,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
 
     INSTALL_UNBUFFERED_DC( dc, m_canvas );
     MODULE* module;
-    DISPLAY_OPTIONS* displ_opts = (DISPLAY_OPTIONS*)GetDisplayOptions();
+    auto displ_opts = (PCB_DISPLAY_OPTIONS*)GetDisplayOptions();
 
     m_canvas->CrossHairOff( &dc );
 
@@ -75,14 +77,13 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
     {
     case wxID_CUT:
     case wxID_COPY:
-    case ID_PCB_USER_GRID_SETUP:
     case ID_TOOLBARH_PCB_SELECT_LAYER:
     case ID_AUX_TOOLBAR_PCB_SELECT_LAYER_PAIR:
     case ID_POPUP_PCB_ROTATE_TEXTEPCB:
     case ID_POPUP_PCB_FLIP_TEXTEPCB:
     case ID_POPUP_PCB_COPY_TEXTEPCB:
     case ID_POPUP_PCB_EDIT_TEXTEPCB:
-    case ID_POPUP_PCB_EDIT_MIRE:
+    case ID_POPUP_PCB_EDIT_PCB_TARGET:
     case ID_POPUP_PCB_ROTATE_TEXTMODULE:
     case ID_POPUP_PCB_ROTATE_MODULE_CLOCKWISE:
     case ID_POPUP_PCB_ROTATE_MODULE_COUNTERCLOCKWISE:
@@ -99,8 +100,8 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
     case ID_POPUP_PCB_SELECT_CU_LAYER_AND_PLACE_BLIND_BURIED_VIA:
     case ID_POPUP_PCB_PLACE_MICROVIA:
     case ID_POPUP_PCB_SWITCH_TRACK_POSTURE:
-    case ID_POPUP_PCB_IMPORT_PAD_SETTINGS:
-    case ID_POPUP_PCB_EXPORT_PAD_SETTINGS:
+    case ID_POPUP_PCB_APPLY_PAD_SETTINGS:
+    case ID_POPUP_PCB_COPY_PAD_SETTINGS:
     case ID_POPUP_PCB_GLOBAL_IMPORT_PAD_SETTINGS:
     case ID_POPUP_PCB_STOP_CURRENT_EDGE_ZONE:
     case ID_POPUP_PCB_DELETE_ZONE_LAST_CREATED_CORNER:
@@ -146,14 +147,14 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
     case ID_POPUP_ZOOM_BLOCK:
     case ID_POPUP_FLIP_BLOCK:
     case ID_POPUP_ROTATE_BLOCK:
-    case ID_POPUP_COPY_BLOCK:
+    case ID_POPUP_DUPLICATE_BLOCK:
     case ID_POPUP_PCB_EDIT_DRAWING:
     case ID_POPUP_PCB_GETINFO_MARKER:
     case ID_POPUP_PCB_MOVE_TEXT_DIMENSION_REQUEST:
     case ID_POPUP_PCB_DRAG_MODULE_REQUEST:
     case ID_POPUP_PCB_MOVE_MODULE_REQUEST:
     case ID_POPUP_PCB_MOVE_TEXTMODULE_REQUEST:
-    case ID_POPUP_PCB_MOVE_MIRE_REQUEST:
+    case ID_POPUP_PCB_MOVE_PCB_TARGET_REQUEST:
         break;
 
     case ID_POPUP_CANCEL_CURRENT_COMMAND:
@@ -171,7 +172,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         }
 
         if( GetToolId() == ID_NO_TOOL_SELECTED )
-            SetToolID( ID_NO_TOOL_SELECTED, m_canvas->GetDefaultCursor(), wxEmptyString );
+            SetNoToolSelected();
         else
             SetCursor( (wxStockCursor) m_canvas->GetDefaultCursor() );
 
@@ -186,7 +187,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
             if( m_lastDrawToolId != GetToolId() )
                 m_lastDrawToolId = GetToolId();
 
-            SetToolID( ID_NO_TOOL_SELECTED, m_canvas->GetDefaultCursor(), wxEmptyString );
+            SetNoToolSelected();
         }
         break;
     }
@@ -231,7 +232,6 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
             if( !viewer )
             {
                 viewer = (FOOTPRINT_VIEWER_FRAME*) Kiway().Player( FRAME_PCB_MODULE_VIEWER, true );
-                viewer->Zoom_Automatique( false );
             }
             else
             {
@@ -262,8 +262,8 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         HandleBlockPlace( &dc );
         break;
 
-    case ID_POPUP_COPY_BLOCK:
-        GetScreen()->m_BlockLocate.SetCommand( BLOCK_COPY );
+    case ID_POPUP_DUPLICATE_BLOCK:
+        GetScreen()->m_BlockLocate.SetCommand( BLOCK_DUPLICATE );
         GetScreen()->m_BlockLocate.SetMessageBlock( this );
         m_canvas->SetAutoPanRequest( false );
         HandleBlockPlace( &dc );
@@ -294,7 +294,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         break;
 
     case ID_DRC_CONTROL:
-        // Shows the DRC dialog in non modal mode, to allows board edition
+        // Shows the DRC dialog in non modal mode, to allows board editing
         // with the DRC dialog opened and showing errors.
         m_drc->ShowDRCDialog();
         break;
@@ -308,7 +308,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         break;
 
     case ID_POPUP_CLOSE_CURRENT_TOOL:
-        SetToolID( ID_NO_TOOL_SELECTED, m_canvas->GetDefaultCursor(), wxEmptyString );
+        SetNoToolSelected();
         break;
 
     case ID_POPUP_CANCEL_CURRENT_COMMAND:
@@ -337,18 +337,9 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         break;
 
     case ID_POPUP_PCB_EDIT_ALL_VIAS_AND_TRACK_SIZE:
-        if( GetCurItem() == NULL )
-            break;
         {
-        int type = GetCurItem()->Type();
-
-        if( type == PCB_TRACE_T || type == PCB_VIA_T )
-        {
-            BOARD_CONNECTED_ITEM*item = (BOARD_CONNECTED_ITEM*) GetCurItem();
-            DIALOG_GLOBAL_EDIT_TRACKS_AND_VIAS dlg( this, item->GetNetCode() );
-            dlg.ShowModal();
-        }
-
+            wxCommandEvent dummy;
+            OnEditTracksAndVias( dummy );
         }
         m_canvas->MoveCursorToCrossHair();
         break;
@@ -432,7 +423,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
 
                 wxGetMousePosition( &dlgPosition.x, &dlgPosition.y );
 
-                LAYER_ID layer = SelectLayer( GetActiveLayer(), LSET::AllNonCuMask(), dlgPosition );
+                PCB_LAYER_ID layer = SelectLayer( GetActiveLayer(), LSET::AllNonCuMask(), dlgPosition );
 
                 m_canvas->SetIgnoreMouseEvents( false );
                 m_canvas->MoveCursorToCrossHair();
@@ -456,21 +447,22 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         break;
 
     case ID_POPUP_PCB_DELETE_TRACKSEG:
-        if( GetCurItem() == NULL )
-            break;
-
-        m_canvas->MoveCursorToCrossHair();
-        SetCurItem( Delete_Segment( &dc, (TRACK*) GetCurItem() ) );
-        OnModify();
+        if( GetCurItem() )
+        {
+            m_canvas->MoveCursorToCrossHair();
+            SetCurItem( Delete_Segment( &dc, (TRACK*) GetCurItem() ) );
+            OnModify();
+        }
         break;
 
     case ID_POPUP_PCB_DELETE_TRACK:
-        if( GetCurItem() == NULL )
-            break;
-        m_canvas->MoveCursorToCrossHair();
-        Delete_Track( &dc, (TRACK*) GetCurItem() );
-        SetCurItem( NULL );
-        OnModify();
+        if( GetCurItem() )
+        {
+            m_canvas->MoveCursorToCrossHair();
+            Delete_Track( &dc, (TRACK*) GetCurItem() );
+            SetCurItem( NULL );
+            OnModify();
+        }
         break;
 
     case ID_POPUP_PCB_DELETE_TRACKNET:
@@ -510,9 +502,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
     case ID_POPUP_PCB_DELETE_ZONE:
         m_canvas->MoveCursorToCrossHair();
 
-        if( GetCurItem() == NULL )
-            break;
-
+        if( GetCurItem() )
         {
             SEGZONE* zsegm   = (SEGZONE*) GetCurItem();
             int      netcode = zsegm->GetNetCode();
@@ -606,7 +596,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
              * and start move the new corner
              */
             zone_cont->Draw( m_canvas, &dc, GR_XOR );
-            zone_cont->Outline()->InsertCorner( zone_cont->GetSelectedCorner(), pos.x, pos.y );
+            zone_cont->Outline()->InsertVertex( zone_cont->GetSelectedCorner(), pos );
             zone_cont->SetSelectedCorner( zone_cont->GetSelectedCorner() + 1 );
             zone_cont->Draw( m_canvas, &dc, GR_XOR );
             m_canvas->SetAutoPanRequest( true );
@@ -637,39 +627,44 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         {
             ZONE_CONTAINER* zone_container = (ZONE_CONTAINER*) GetCurItem();
             zone_container->UnFill();
-            TestNetConnection( NULL, zone_container->GetNetCode() );
+            GetBoard()->GetConnectivity()->Update( zone_container );
             OnModify();
             SetMsgPanel( GetBoard() );
             m_canvas->Refresh();
         }
+
+        Compile_Ratsnest( &dc, false );
         SetCurItem( NULL );
         break;
 
     case ID_POPUP_PCB_REMOVE_FILLED_AREAS_IN_ALL_ZONES: // Remove all zones :
-        GetBoard()->m_Zone.DeleteAll();                 // remove zone segments used to fill zones.
+        GetBoard()->m_SegZoneDeprecated.DeleteAll();    // remove deprecated zone segments used
+                                                        // to fill zones in very old boards.
 
         for( int ii = 0; ii < GetBoard()->GetAreaCount(); ii++ )
         {
             // Remove filled areas in zone
             ZONE_CONTAINER* zone_container = GetBoard()->GetArea( ii );
             zone_container->UnFill();
+            GetBoard()->GetConnectivity()->Update( zone_container );
         }
 
+        Compile_Ratsnest( &dc, false );
         SetCurItem( NULL );        // CurItem might be deleted by this command, clear the pointer
-        TestConnections();
-        TestForActiveLinksInRatsnest( 0 );   // Recalculate the active ratsnest, i.e. the unconnected links
         OnModify();
         SetMsgPanel( GetBoard() );
         m_canvas->Refresh();
         break;
 
     case ID_POPUP_PCB_FILL_ZONE:
+    {
         m_canvas->MoveCursorToCrossHair();
-        Fill_Zone( (ZONE_CONTAINER*) GetCurItem() );
-        TestNetConnection( NULL, ( (ZONE_CONTAINER*) GetCurItem() )->GetNetCode() );
+        ZONE_FILLER filler( GetBoard() );
+        filler.Fill( { (ZONE_CONTAINER*) GetCurItem() } );
         SetMsgPanel( GetBoard() );
         m_canvas->Refresh();
         break;
+    }
 
     case ID_POPUP_PCB_MOVE_TEXTEPCB_REQUEST:
         StartMoveTextePcb( (TEXTE_PCB*) GetCurItem(), &dc );
@@ -838,14 +833,20 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         Change_Side_Module( (MODULE*) GetCurItem(), &dc );
         break;
 
-    case ID_POPUP_PCB_EXCHANGE_FOOTPRINTS:
-        if( !GetCurItem() || GetCurItem()->Type() != PCB_MODULE_T )
-            break;
+    case ID_POPUP_PCB_UPDATE_FOOTPRINTS:
+        if( GetCurItem() && GetCurItem()->Type() == PCB_MODULE_T )
+        {
+            InstallExchangeModuleFrame( dynamic_cast<MODULE*>( GetCurItem() ), true, true );
+            m_canvas->MoveCursorToCrossHair();
+        }
+        break;
 
-        InstallExchangeModuleFrame( (MODULE*) GetCurItem() );
-        // Warning: the current item can be deleted by exchange module
-        SetCurItem( NULL );
-        m_canvas->MoveCursorToCrossHair();
+    case ID_POPUP_PCB_EXCHANGE_FOOTPRINTS:
+        if( GetCurItem() && GetCurItem()->Type() == PCB_MODULE_T )
+        {
+            InstallExchangeModuleFrame( dynamic_cast<MODULE*>( GetCurItem() ), false, true );
+            m_canvas->MoveCursorToCrossHair();
+        }
         break;
 
     case ID_POPUP_PCB_EDIT_MODULE_PRMS:
@@ -856,7 +857,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         if( !GetCurItem() || GetCurItem()->Type() != PCB_MODULE_T )
             break;
 
-        InstallModuleOptionsFrame( (MODULE*) GetCurItem(), &dc );
+        InstallFootprintPropertiesDialog( (MODULE*) GetCurItem(), &dc );
         m_canvas->MoveCursorToCrossHair();
         break;
 
@@ -931,7 +932,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         m_canvas->MoveCursorToCrossHair();
         break;
 
-    case ID_POPUP_PCB_IMPORT_PAD_SETTINGS:
+    case ID_POPUP_PCB_APPLY_PAD_SETTINGS:
         m_canvas->MoveCursorToCrossHair();
         SaveCopyInUndoList( GetCurItem()->GetParent(), UR_CHANGED );
         Import_Pad_Settings( (D_PAD*) GetCurItem(), true );
@@ -939,10 +940,10 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
 
     case ID_POPUP_PCB_GLOBAL_IMPORT_PAD_SETTINGS:
         m_canvas->MoveCursorToCrossHair();
-        DlgGlobalChange_PadSettings( (D_PAD*) GetCurItem(), true );
+        PushPadProperties((D_PAD*) GetCurItem() );
         break;
 
-    case ID_POPUP_PCB_EXPORT_PAD_SETTINGS:
+    case ID_POPUP_PCB_COPY_PAD_SETTINGS:
         m_canvas->MoveCursorToCrossHair();
         Export_Pad_Settings( (D_PAD*) GetCurItem() );
         break;
@@ -955,8 +956,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         break;
 
     case ID_POPUP_PCB_EDIT_TEXTMODULE:
-        InstallTextModOptionsFrame( static_cast<TEXTE_MODULE*>( GetCurItem() ), &dc );
-        m_canvas->MoveCursorToCrossHair();
+        InstallTextOptionsFrame( GetCurItem(), &dc );
         break;
 
     case ID_POPUP_PCB_RESET_TEXT_SIZE:
@@ -981,7 +981,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
 
     case ID_POPUP_PCB_SELECT_LAYER:
         {
-            LAYER_ID itmp = SelectLayer( GetActiveLayer() );
+            PCB_LAYER_ID itmp = SelectLayer( GetActiveLayer() );
 
             if( itmp >= 0 )
             {
@@ -1004,7 +1004,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
 
     case ID_POPUP_PCB_SELECT_NO_CU_LAYER:
         {
-            LAYER_ID itmp = SelectLayer( GetActiveLayer(), LSET::AllCuMask() );
+            PCB_LAYER_ID itmp = SelectLayer( GetActiveLayer(), LSET::AllCuMask() );
 
             if( itmp >= 0 )
                 SetActiveLayer( itmp );
@@ -1015,7 +1015,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
 
     case ID_POPUP_PCB_SELECT_CU_LAYER:
         {
-            LAYER_ID itmp = SelectLayer( GetActiveLayer(), LSET::AllNonCuMask() );
+            PCB_LAYER_ID itmp = SelectLayer( GetActiveLayer(), LSET::AllNonCuMask() );
 
             if( itmp >= 0 )
                 SetActiveLayer( itmp );
@@ -1035,8 +1035,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         break;
 
     case ID_POPUP_PCB_EDIT_TEXTEPCB:
-        InstallTextPCBOptionsFrame( (TEXTE_PCB*) GetCurItem(), &dc );
-        m_canvas->MoveCursorToCrossHair();
+        InstallTextOptionsFrame( GetCurItem(), &dc );
         break;
 
     case ID_POPUP_PCB_ROTATE_TEXTEPCB:
@@ -1060,17 +1059,17 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         m_canvas->MoveCursorToCrossHair();
         break;
 
-    case ID_POPUP_PCB_MOVE_MIRE_REQUEST:
+    case ID_POPUP_PCB_MOVE_PCB_TARGET_REQUEST:
         BeginMoveTarget( (PCB_TARGET*) GetCurItem(), &dc );
         m_canvas->MoveCursorToCrossHair();
         break;
 
-    case ID_POPUP_PCB_EDIT_MIRE:
+    case ID_POPUP_PCB_EDIT_PCB_TARGET:
         ShowTargetOptionsDialog( (PCB_TARGET*) GetCurItem(), &dc );
         m_canvas->MoveCursorToCrossHair();
         break;
 
-    case ID_POPUP_PCB_DELETE_MIRE:
+    case ID_POPUP_PCB_DELETE_PCB_TARGET:
         m_canvas->MoveCursorToCrossHair();
         DeleteTarget( (PCB_TARGET*) GetCurItem(), &dc );
         SetCurItem( NULL );
@@ -1119,14 +1118,7 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         break;
 
     case ID_POPUP_PCB_EDIT_DRAWING:
-#ifndef USE_WX_OVERLAY
-        InstallGraphicItemPropertiesDialog( (DRAWSEGMENT*) GetCurItem(), &dc );
-#else
-        // #1277772 - Draw into dialog converted in refresh request
-        InstallGraphicItemPropertiesDialog( (DRAWSEGMENT*) GetCurItem(), NULL );
-        m_canvas->Refresh();
-#endif
-        m_canvas->MoveCursorToCrossHair();
+        InstallGraphicItemPropertiesDialog( GetCurItem() );
         break;
 
     case ID_POPUP_PCB_MOVE_DRAWING_REQUEST:
@@ -1222,12 +1214,16 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         Clean_Pcb();
         break;
 
-    case ID_MENU_PCB_SWAP_LAYERS:
-        Swap_Layers( event );
+    case ID_MENU_PCB_UPDATE_FOOTPRINTS:
+        InstallExchangeModuleFrame( dynamic_cast<MODULE*>( GetCurItem() ), true, false );
         break;
 
-    case ID_PCB_USER_GRID_SETUP:
-        InvokeDialogGrid();
+    case ID_MENU_PCB_EXCHANGE_FOOTPRINTS:
+        InstallExchangeModuleFrame( dynamic_cast<MODULE*>( GetCurItem() ), false, false );
+        break;
+
+    case ID_MENU_PCB_SWAP_LAYERS:
+        Swap_Layers( event );
         break;
 
     case ID_POPUP_PCB_DISPLAY_FOOTPRINT_DOC:
@@ -1246,15 +1242,14 @@ void PCB_EDIT_FRAME::Process_Special_Functions( wxCommandEvent& event )
         ArchiveModulesOnBoard( true );
         break;
 
-    case ID_GEN_IMPORT_DXF_FILE:
-        InvokeDXFDialogBoardImport( this );
+    case ID_GEN_IMPORT_GRAPHICS_FILE:
+        InvokeDialogImportGfxBoard( this );
         m_canvas->Refresh();
         break;
 
+
     default:
-        wxString msg;
-        msg.Printf( wxT( "PCB_EDIT_FRAME::Process_Special_Functions() unknown event id %d" ), id );
-        DisplayError( this, msg );
+        wxLogDebug( wxT( "PCB_EDIT_FRAME::Process_Special_Functions() unknown event id %d" ), id );
         break;
     }
 
@@ -1298,7 +1293,7 @@ void PCB_EDIT_FRAME::RemoveStruct( BOARD_ITEM* Item, wxDC* DC )
         Delete_Segment( DC, (TRACK*) Item );
         break;
 
-    case PCB_ZONE_T:
+    case PCB_SEGZONE_T:
         Delete_OldZone_Fill( (SEGZONE*) Item );
         break;
 
@@ -1330,20 +1325,16 @@ void PCB_EDIT_FRAME::RemoveStruct( BOARD_ITEM* Item, wxDC* DC )
     case TYPE_NOT_INIT:
     case PCB_T:
     default:
-        {
-            wxString msg = wxString::Format(
-                wxT( "Remove: item type %d unknown." ), Item->Type() );
-            DisplayError( this, msg );
-        }
+        wxLogDebug( wxT( "Remove: item type %d unknown." ), Item->Type() );
         break;
     }
 }
 
 
-void PCB_EDIT_FRAME::SwitchLayer( wxDC* DC, LAYER_ID layer )
+void PCB_EDIT_FRAME::SwitchLayer( wxDC* DC, PCB_LAYER_ID layer )
 {
-    LAYER_ID curLayer = GetActiveLayer();
-    DISPLAY_OPTIONS* displ_opts = (DISPLAY_OPTIONS*)GetDisplayOptions();
+    PCB_LAYER_ID curLayer = GetActiveLayer();
+    auto displ_opts = (PCB_DISPLAY_OPTIONS*)GetDisplayOptions();
 
     // Check if the specified layer matches the present layer
     if( layer == curLayer )
@@ -1415,12 +1406,10 @@ void PCB_EDIT_FRAME::SwitchLayer( wxDC* DC, LAYER_ID layer )
 void PCB_EDIT_FRAME::OnSelectTool( wxCommandEvent& aEvent )
 {
     int id = aEvent.GetId();
-
-    if( GetToolId() == id )
-        return;
+    int lastToolID = GetToolId();
 
     INSTALL_UNBUFFERED_DC( dc, m_canvas );
-    DISPLAY_OPTIONS* displ_opts = (DISPLAY_OPTIONS*)GetDisplayOptions();
+    auto displ_opts = (PCB_DISPLAY_OPTIONS*)GetDisplayOptions();
 
     // Stop the current command and deselect the current tool.
     m_canvas->EndMouseCapture( ID_NO_TOOL_SELECTED, m_canvas->GetDefaultCursor() );
@@ -1428,24 +1417,24 @@ void PCB_EDIT_FRAME::OnSelectTool( wxCommandEvent& aEvent )
     switch( id )
     {
     case ID_NO_TOOL_SELECTED:
-        SetToolID( id, m_canvas->GetDefaultCursor(), wxEmptyString );
+        SetNoToolSelected();
         break;
 
     case ID_ZOOM_SELECTION:
-        SetToolID( id, wxCURSOR_MAGNIFIER, _( "Zoom to selection" ) );
+        // This tool is located on the main toolbar: switch it on or off on click on it
+        if( lastToolID != ID_ZOOM_SELECTION )
+            SetToolID( ID_ZOOM_SELECTION, wxCURSOR_MAGNIFIER, _( "Zoom to selection" ) );
+        else
+            SetNoToolSelected();
         break;
 
     case ID_TRACK_BUTT:
-        if( g_Drc_On )
+        if( Settings().m_legacyDrcOn )
             SetToolID( id, wxCURSOR_PENCIL, _( "Add tracks" ) );
         else
             SetToolID( id, wxCURSOR_QUESTION_ARROW, _( "Add tracks" ) );
 
-        if( (GetBoard()->m_Status_Pcb & LISTE_RATSNEST_ITEM_OK) == 0 )
-        {
-            Compile_Ratsnest( &dc, true );
-        }
-
+        Compile_Ratsnest( &dc, true );
         break;
 
     case ID_PCB_MODULE_BUTT:
@@ -1467,7 +1456,7 @@ void PCB_EDIT_FRAME::OnSelectTool( wxCommandEvent& aEvent )
         SetToolID( id, wxCURSOR_PENCIL, _( "Add keepout" ) );
         break;
 
-    case ID_PCB_MIRE_BUTT:
+    case ID_PCB_TARGET_BUTT:
         SetToolID( id, wxCURSOR_PENCIL, _( "Add layer alignment target" ) );
         break;
 
@@ -1514,9 +1503,14 @@ void PCB_EDIT_FRAME::OnSelectTool( wxCommandEvent& aEvent )
     case ID_PCB_SHOW_1_RATSNEST_BUTT:
         SetToolID( id, wxCURSOR_HAND, _( "Select rats nest" ) );
 
-        if( ( GetBoard()->m_Status_Pcb & LISTE_RATSNEST_ITEM_OK ) == 0 )
-            Compile_Ratsnest( &dc, true );
+        Compile_Ratsnest( &dc, true );
 
+        break;
+
+    // collect GAL-only tools here
+    case ID_PCB_DRAW_VIA_BUTT:
+    case ID_PCB_MEASUREMENT_TOOL:
+        SetToolID( id, wxCURSOR_DEFAULT, _( "Unsupported tool in this canvas" ) );
         break;
     }
 }
@@ -1524,10 +1518,11 @@ void PCB_EDIT_FRAME::OnSelectTool( wxCommandEvent& aEvent )
 
 void PCB_EDIT_FRAME::moveExact()
 {
-    wxPoint translation;
-    double rotation = 0;
+    wxPoint         translation;
+    double          rotation;
+    ROTATION_ANCHOR rotationAnchor = ROTATE_AROUND_ITEM_ANCHOR;
 
-    DIALOG_MOVE_EXACT dialog( this, translation, rotation );
+    DIALOG_MOVE_EXACT dialog( this, translation, rotation, rotationAnchor );
     int ret = dialog.ShowModal();
 
     if( ret == wxID_OK )
@@ -1544,7 +1539,22 @@ void PCB_EDIT_FRAME::moveExact()
             SaveCopyInUndoList( itemToSave, UR_CHANGED );
 
             item->Move( translation );
-            item->Rotate( item->GetPosition(), rotation );
+
+            switch( rotationAnchor )
+            {
+            case ROTATE_AROUND_ITEM_ANCHOR:
+                item->Rotate( item->GetPosition(), rotation );
+                break;
+            case ROTATE_AROUND_USER_ORIGIN:
+                item->Rotate( GetScreen()->m_O_Curseur, rotation );
+                break;
+            case ROTATE_AROUND_AUX_ORIGIN:
+                item->Rotate( GetAuxOrigin(), rotation );
+                break;
+            default:
+                wxFAIL_MSG( "Rotation choice shouldn't have been available in this context." );
+            }
+
             m_canvas->Refresh();
         }
     }
@@ -1586,7 +1596,7 @@ void PCB_BASE_EDIT_FRAME::duplicateItem( BOARD_ITEM* aItem, bool aIncrement )
 
         wxPoint crossHairPos = GetCrossHairPosition();
 
-        const BLOCK_COMMAND_T blockType = aIncrement ? BLOCK_COPY_AND_INCREMENT : BLOCK_COPY;
+        const BLOCK_COMMAND_T blockType = aIncrement ? BLOCK_DUPLICATE_AND_INCREMENT : BLOCK_DUPLICATE;
 
         if( !HandleBlockBegin( &dc, blockType, crossHairPos ) )
             return;

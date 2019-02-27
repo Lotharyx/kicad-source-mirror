@@ -30,7 +30,7 @@
 #ifndef C3D_RENDER_BASE_H
 #define C3D_RENDER_BASE_H
 
-#include <wxBasePcbFrame.h>
+#include <pcb_base_frame.h>
 #include "../3d_canvas/cinfo3d_visu.h"
 #include <reporter.h>
 

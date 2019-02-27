@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2012 Torsten Hueter, torstenhtr <at> gmx.de
  * Copyright (C) 2013 CERN
- * Copyright (C) 2013-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2013-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
@@ -40,6 +40,67 @@ namespace KIGFX
 {
 class VIEW;
 
+///> Structure to keep VIEW_CONTROLS settings for easy store/restore operations
+struct VC_SETTINGS
+{
+    VC_SETTINGS()
+    {
+        Reset();
+    }
+
+    ///> Restores the default settings
+    void Reset();
+
+    ///> Flag determining the cursor visibility
+    bool m_showCursor;
+
+    ///> Forced cursor position (world coordinates)
+    VECTOR2D m_forcedPosition;
+
+    ///> Is the forced cursor position enabled
+    bool m_forceCursorPosition;
+
+    ///> Should the cursor be locked within the parent window area
+    bool m_cursorCaptured;
+
+    ///> Should the cursor snap to grid or move freely
+    bool m_snappingEnabled;
+
+    ///> Flag for grabbing the mouse cursor
+    bool m_grabMouse;
+
+    ///> Flag for turning on autopanning
+    bool m_autoPanEnabled;
+
+    ///> Flag for turning on autopanning
+    bool m_autoPanSettingEnabled;
+
+    ///> Distance from cursor to VIEW edge when panning is active
+    float m_autoPanMargin;
+
+    ///> How fast is panning when in auto mode
+    float m_autoPanSpeed;
+
+    ///> If the cursor is allowed to be warped
+    bool m_warpCursor;
+
+    ///> Mousewheel (2-finger touchpad) panning
+    bool m_enableMousewheelPan;
+
+    ///> Allow panning with the right button in addition to middle
+    bool m_panWithRightButton;
+
+    ///> Allow panning with the left button in addition to middle
+    bool m_panWithLeftButton;
+
+    ///> Is last cursor motion event coming from keyboard arrow cursor motion action
+    bool m_lastKeyboardCursorPositionValid;
+
+    ///> Position of the above event
+    VECTOR2D m_lastKeyboardCursorPosition;
+};
+
+
 /**
  * Class VIEW_CONTROLS
  * is an interface for classes handling user events controlling the view behaviour
@@ -48,15 +109,14 @@ class VIEW;
 class VIEW_CONTROLS
 {
 public:
-    VIEW_CONTROLS( VIEW* aView ) : m_view( aView ),
-        m_forceCursorPosition( false ), m_cursorCaptured( false ), m_snappingEnabled( false ),
-        m_grabMouse( false ), m_autoPanEnabled( false ), m_autoPanMargin( 0.1 ),
-        m_autoPanSpeed( 0.15 ), m_warpCursor( false ), m_enableMousewheelPan( false )
+    VIEW_CONTROLS( VIEW* aView ) :
+        m_view( aView ), m_cursorWarped( false )
     {
     }
 
     virtual ~VIEW_CONTROLS()
-    {}
+    {
+    }
 
     /**
      * Function SetSnapping()
@@ -66,7 +126,15 @@ public:
      */
     virtual void SetSnapping( bool aEnabled )
     {
-        m_snappingEnabled = aEnabled;
+        m_settings.m_snappingEnabled = aEnabled;
+    }
+
+    /**
+     * @return the current state of the snapping cursor to grid.
+     */
+    virtual bool GetSnappingState()
+    {
+        return m_settings.m_snappingEnabled;
     }
 
     /**
@@ -76,7 +144,7 @@ public:
      */
     virtual void SetGrabMouse( bool aEnabled )
     {
-        m_grabMouse = aEnabled;
+        m_settings.m_grabMouse = aEnabled;
     }
 
     /**
@@ -87,7 +155,17 @@ public:
      */
     virtual void SetAutoPan( bool aEnabled )
     {
-        m_autoPanEnabled = aEnabled;
+        m_settings.m_autoPanEnabled = aEnabled;
+    }
+
+    /**
+     * Function EnableAutoPan
+     * Turns on/off auto panning (user setting to disable it entirely).
+     * @param aEnabled tells if the autopanning should be enabled.
+     */
+    virtual void EnableAutoPan( bool aEnabled )
+    {
+        m_settings.m_autoPanSettingEnabled = aEnabled;
     }
 
     /**
@@ -97,7 +175,7 @@ public:
      */
     virtual void SetAutoPanSpeed( float aSpeed )
     {
-        m_autoPanSpeed = aSpeed;
+        m_settings.m_autoPanSpeed = aSpeed;
     }
 
     /**
@@ -107,27 +185,49 @@ public:
      */
     virtual void SetAutoPanMargin( float aMargin )
     {
-        m_autoPanMargin = aMargin;
+        m_settings.m_autoPanMargin = aMargin;
     }
 
     /**
      * Function GetMousePosition()
-     * Returns the current mouse pointer position in screen coordinates. Note, that it may be
+     * Returns the current mouse pointer position. Note, that it may be
      * different from the cursor position if snapping is enabled (@see GetCursorPosition()).
      *
-     * @return The current mouse pointer position in the screen coordinates.
+     * @param aWorldCoordinates if true, the result is given in world coordinates, otherwise
+     * it is given in screen coordinates.
+     * @return The current mouse pointer position in either world or screen coordinates.
      */
-    virtual VECTOR2I GetMousePosition() const = 0;
+    virtual VECTOR2D GetMousePosition( bool aWorldCoordinates = true ) const = 0;
 
     /**
-     * Function GetCursorPosition()
      * Returns the current cursor position in world coordinates. Note, that it may be
      * different from the mouse pointer position if snapping is enabled or cursor position
-     * is forced to specific point.
+     * is forced to a specific point.
      *
      * @return The current cursor position in world coordinates.
      */
-    virtual VECTOR2D GetCursorPosition() const = 0;
+    VECTOR2D GetCursorPosition() const
+    {
+        return GetCursorPosition( m_settings.m_snappingEnabled );
+    }
+
+    /**
+     * Returns the current cursor position in world coordinates - ingoring the cursorUp
+     * position force mode.
+     *
+     * @return The current cursor position in world coordinates.
+     */
+    virtual VECTOR2D GetRawCursorPosition( bool aSnappingEnabled = true ) const = 0;
+
+    /**
+     * Returns the current cursor position in world coordinates. Note, that it may be
+     * different from the mouse pointer position if snapping is enabled or cursor position
+     * is forced to a specific point.
+     *
+     * @param aEnableSnapping selects whether cursor position should be snapped to the grid.
+     * @return The current cursor position in world coordinates.
+     */
+    virtual VECTOR2D GetCursorPosition( bool aEnableSnapping ) const = 0;
 
     /**
      * Function ForceCursorPosition()
@@ -137,8 +237,36 @@ public:
      */
     virtual void ForceCursorPosition( bool aEnabled, const VECTOR2D& aPosition = VECTOR2D( 0, 0 ) )
     {
-        m_forcedPosition = aPosition;
-        m_forceCursorPosition = aEnabled;
+        m_settings.m_forceCursorPosition = aEnabled;
+        m_settings.m_forcedPosition = aPosition;
+    }
+
+    /**
+     * Moves cursor to the requested position expressed in world coordinates. The position is not
+     * forced and will be overridden with the next mouse motion event. Mouse cursor follows the
+     * world cursor.
+     * @param aPosition is the requested cursor position in the world coordinates.
+     * @param aWarpView enables/disables view warp if the cursor is outside the current viewport.
+     */
+    virtual void SetCursorPosition( const VECTOR2D& aPosition, bool aWarpView = true, bool aTriggeredByArrows = false ) = 0;
+
+
+    /**
+     * Moves the graphic crosshair cursor to the requested position expressed in world coordinates.
+     * @param aPosition is the requested cursor position in the world coordinates.
+     * @param aWarpView enables/disables view warp if the cursor is outside the current viewport.
+     */
+    virtual void SetCrossHairCursorPosition( const VECTOR2D& aPosition, bool aWarpView = true ) = 0;
+
+
+    /**
+     * Function ForcedCursorPosition()
+     * Returns true if the current cursor position is forced to a specific location, ignoring
+     * the mouse cursor position.
+     */
+    bool ForcedCursorPosition() const
+    {
+        return m_settings.m_forceCursorPosition;
     }
 
     /**
@@ -149,18 +277,30 @@ public:
     virtual void ShowCursor( bool aEnabled );
 
     /**
+     * Function IsCursorShown()
+     * Returns true when cursor is visible.
+     * @return True if cursor is visible.
+     */
+    bool IsCursorShown() const;
+
+    /**
      * Function CaptureCursor()
      * Forces the cursor to stay within the drawing panel area.
      * @param aEnabled determines if the cursor should be captured.
      */
     virtual void CaptureCursor( bool aEnabled )
     {
-        m_cursorCaptured = aEnabled;
+        m_settings.m_cursorCaptured = aEnabled;
     }
 
+    /**
+     * Function IsCursorPositionForced()
+     * Returns true if the cursor position is set by one of the tools. Forced cursor position
+     * means it does not react to mouse movement.
+     */
     inline bool IsCursorPositionForced() const
     {
-        return m_forceCursorPosition;
+        return m_settings.m_forceCursorPosition;
     }
 
     /**
@@ -174,44 +314,44 @@ public:
      * specified in the world coordinates and its not visible in the current viewport).
      */
     virtual void WarpCursor( const VECTOR2D& aPosition, bool aWorldCoordinates = false,
-            bool aWarpView = false ) const = 0;
+            bool aWarpView = false ) = 0;
 
     /**
      * Function EnableCursorWarping()
      * Enables or disables warping the cursor.
-     * @param aEnabled is true if the cursor is allowed to be warped.
+     * @param aEnable is true if the cursor is allowed to be warped.
      */
     void EnableCursorWarping( bool aEnable )
     {
-        m_warpCursor = aEnable;
+        m_settings.m_warpCursor = aEnable;
     }
 
     /**
      * Function IsCursorWarpingEnabled()
-     * Returns the current setting for cursor warping.
+     * @return the current setting for cursor warping.
      */
     bool IsCursorWarpingEnabled() const
     {
-        return m_warpCursor;
+        return m_settings.m_warpCursor;
     }
 
     /**
      * Function EnableMousewheelPan()
      * Enables or disables mousewheel panning.
-     * @param aEnabled is true if mouse-wheel panning is enabled.
+     * @param aEnable is true if mouse-wheel panning is enabled.
      */
     virtual void EnableMousewheelPan( bool aEnable )
     {
-        m_enableMousewheelPan = aEnable;
+        m_settings.m_enableMousewheelPan = aEnable;
     }
 
     /**
      * Function IsMousewheelPanEnabled()
-     * Returns the current setting for mousewheel panning
+     * @return the current setting for mousewheel panning
      */
     virtual bool IsMousewheelPanEnabled() const
     {
-        return m_enableMousewheelPan;
+        return m_settings.m_enableMousewheelPan;
     }
 
     /**
@@ -221,48 +361,36 @@ public:
      */
     virtual void CenterOnCursor() const = 0;
 
+    void SetAdditionalPanButtons( bool aLeft = false, bool aRight = false )
+    {
+        m_settings.m_panWithLeftButton = aLeft;
+        m_settings.m_panWithRightButton = aRight;
+    }
+
     /**
      * Function Reset()
      * Restores the default VIEW_CONTROLS settings.
      */
     virtual void Reset();
 
+    ///> Returns the current VIEW_CONTROLS settings
+    const VC_SETTINGS& GetSettings() const
+    {
+        return m_settings;
+    }
+
+    ///> Applies VIEW_CONTROLS settings from an object
+    void ApplySettings( const VC_SETTINGS& aSettings );
+
 protected:
-    /// Pointer to controlled VIEW.
-    VIEW*       m_view;
+    ///> Pointer to controlled VIEW.
+    VIEW* m_view;
 
-    /// Current cursor position
-    VECTOR2D    m_cursorPosition;
+    ///> Application warped the cursor, not the user (keyboard)
+    bool m_cursorWarped;
 
-    /// Forced cursor position
-    VECTOR2D    m_forcedPosition;
-
-    /// Is the forced cursor position enabled
-    bool        m_forceCursorPosition;
-
-    /// Should the cursor be locked within the parent window area
-    bool        m_cursorCaptured;
-
-    /// Should the cursor snap to grid or move freely
-    bool        m_snappingEnabled;
-
-    /// Flag for grabbing the mouse cursor
-    bool        m_grabMouse;
-
-    /// Flag for turning on autopanning
-    bool        m_autoPanEnabled;
-
-    /// Distance from cursor to VIEW edge when panning is active
-    float       m_autoPanMargin;
-
-    /// How fast is panning when in auto mode
-    float       m_autoPanSpeed;
-
-    /// If the cursor is allowed to be warped
-    bool        m_warpCursor;
-
-    /// Mousewheel (2-finger touchpad) panning
-    bool        m_enableMousewheelPan;
+    ///> Current VIEW_CONTROLS settings
+    VC_SETTINGS m_settings;
 };
 } // namespace KIGFX
 

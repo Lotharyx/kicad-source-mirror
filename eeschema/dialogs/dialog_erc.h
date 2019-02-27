@@ -64,16 +64,16 @@ private:
     void OnButtonCloseClick( wxCommandEvent& event ) override;
     void OnResetMatrixClick( wxCommandEvent& event ) override;
 
+    void RedrawDrawPanel();
+
     // Click on a marker info:
     void OnLeftClickMarkersList( wxHtmlLinkEvent& event ) override;
 
     // Double click on a marker info:
     void OnLeftDblClickMarkersList( wxMouseEvent& event ) override;
 
-    void TestErc( wxArrayString* aMessagesList );
+    void TestErc( REPORTER& aReporter );
     void DisplayERC_MarkersList();
-    void SelLocal( wxCommandEvent& event );
-    void SelNewCmp( wxCommandEvent& event );
     void ResetDefaultERCDiag( wxCommandEvent& event );
     void ChangeErrorLevel( wxCommandEvent& event );
     void ReBuildMatrixPanel();

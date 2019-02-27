@@ -4,8 +4,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2010 Jean-Pierre Charras <jean-pierre.charras@gipsa-lab.inpg.fr
- * Copyright (C) 1992-2016 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2010 Jean-Pierre Charras jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,9 +26,8 @@
  */
 
 #include <fctsys.h>
-#include <plot_common.h>
-#include <class_sch_screen.h>
-#include <schframe.h>
+#include <plotter.h>
+#include <sch_edit_frame.h>
 #include <base_units.h>
 #include <sch_sheet_path.h>
 #include <project.h>
@@ -53,52 +52,27 @@ enum HPGL_PAGEZ_T {
 
 static const wxChar* plot_sheet_list( int aSize )
 {
-    const wxChar* ret;
-
     switch( aSize )
     {
     default:
-    case PAGE_DEFAULT:
-        ret = NULL;         break;
-
-    case HPGL_PAGE_SIZE_A4:
-        ret = wxT( "A4" );  break;
-
-    case HPGL_PAGE_SIZE_A3:
-        ret = wxT( "A3" );  break;
-
-    case HPGL_PAGE_SIZE_A2:
-        ret = wxT( "A2" );  break;
-
-    case HPGL_PAGE_SIZE_A1:
-        ret = wxT( "A1" );  break;
-
-    case HPGL_PAGE_SIZE_A0:
-        ret = wxT( "A0" );  break;
-
-    case HPGL_PAGE_SIZE_A:
-        ret = wxT( "A" );   break;
-
-    case HPGL_PAGE_SIZE_B:
-        ret = wxT( "B" );   break;
-
-    case HPGL_PAGE_SIZE_C:
-        ret = wxT( "C" );   break;
-
-    case HPGL_PAGE_SIZE_D:
-        ret = wxT( "D" );   break;
-
-    case HPGL_PAGE_SIZE_E:
-        ret = wxT( "E" );   break;
+    case PAGE_DEFAULT:      return nullptr;
+    case HPGL_PAGE_SIZE_A4: return wxT( "A4" );
+    case HPGL_PAGE_SIZE_A3: return wxT( "A3" );
+    case HPGL_PAGE_SIZE_A2: return wxT( "A2" );
+    case HPGL_PAGE_SIZE_A1: return wxT( "A1" );
+    case HPGL_PAGE_SIZE_A0: return wxT( "A0" );
+    case HPGL_PAGE_SIZE_A:  return wxT( "A" );
+    case HPGL_PAGE_SIZE_B:  return wxT( "B" );
+    case HPGL_PAGE_SIZE_C:  return wxT( "C" );
+    case HPGL_PAGE_SIZE_D:  return wxT( "D" );
+    case HPGL_PAGE_SIZE_E:  return wxT( "E" );
     }
-
-    return ret;
-};
+}
 
 
 void DIALOG_PLOT_SCHEMATIC::SetHPGLPenWidth()
 {
-    m_HPGLPenSize = ValueFromTextCtrl( *m_penHPGLWidthCtrl );
+    m_HPGLPenSize = m_penWidth.GetValue();
 
     if( m_HPGLPenSize > Millimeter2iu( 2 ) )
         m_HPGLPenSize = Millimeter2iu( 2 );
@@ -146,8 +120,8 @@ void DIALOG_PLOT_SCHEMATIC::createHPGLFile( bool aPlotAll, bool aPlotFrameRef )
         PAGE_INFO           plotPage = curPage;
 
         // if plotting on a page size other than curPage
-        if( m_HPGLPaperSizeOption->GetSelection() != PAGE_DEFAULT )
-            plotPage.SetType( plot_sheet_list( m_HPGLPaperSizeOption->GetSelection() ) );
+        if( m_paperSizeOption->GetSelection() != PAGE_DEFAULT )
+            plotPage.SetType( plot_sheet_list( m_paperSizeOption->GetSelection() ) );
 
         // Calculation of conversion scales.
         double  plot_scale = (double) plotPage.GetWidthMils() / curPage.GetWidthMils();
@@ -174,12 +148,12 @@ void DIALOG_PLOT_SCHEMATIC::createHPGLFile( bool aPlotAll, bool aPlotFrameRef )
             if( Plot_1_Page_HPGL( plotFileName.GetFullPath(), screen, plotPage, plotOffset,
                                   plot_scale, aPlotFrameRef ) )
             {
-                msg.Printf( _( "Plot: '%s' OK.\n" ), GetChars( plotFileName.GetFullPath() ) );
+                msg.Printf( _( "Plot: \"%s\" OK.\n" ), GetChars( plotFileName.GetFullPath() ) );
                 reporter.Report( msg, REPORTER::RPT_ACTION );
             }
             else
             {
-                msg.Printf( _( "Unable to create file '%s'.\n" ),
+                msg.Printf( _( "Unable to create file \"%s\".\n" ),
                             GetChars( plotFileName.GetFullPath() ) );
                 reporter.Report( msg, REPORTER::RPT_ERROR );
             }

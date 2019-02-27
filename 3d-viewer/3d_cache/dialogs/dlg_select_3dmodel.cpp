@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2016 Mario Luzeiro <mrluzeiro@ua.pt>
  * Copyright (C) 2016 Cirilo Bernardo <cirilo.bernardo@gmail.com>
+ * Copyright (C) 2017-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -31,13 +32,14 @@
 #include "3d_cache_dialogs.h"
 #include <3d_model_viewer/c3d_model_viewer.h>
 #include <common_ogl/cogl_att_list.h>
+#include <pcbnew/class_module.h>
 
 #define ID_FILE_TREE    ( wxID_LAST + 1 )
 #define ID_SET_DIR      ( ID_FILE_TREE + 1 )
 #define ID_CFG_PATHS    ( ID_SET_DIR + 1 )
 
 
-wxBEGIN_EVENT_TABLE( DLG_SELECT_3DMODEL, wxDialog )
+wxBEGIN_EVENT_TABLE( DLG_SELECT_3DMODEL, DIALOG_SHIM )
     EVT_DIRCTRL_SELECTIONCHANGED( ID_FILE_TREE, DLG_SELECT_3DMODEL::OnSelectionChanged )
     EVT_DIRCTRL_FILEACTIVATED( ID_FILE_TREE, DLG_SELECT_3DMODEL::OnFileActivated )
     EVT_CHOICE( ID_SET_DIR, DLG_SELECT_3DMODEL::SetRootDir )
@@ -46,14 +48,14 @@ wxEND_EVENT_TABLE()
 
 
 DLG_SELECT_3DMODEL::DLG_SELECT_3DMODEL( wxWindow* aParent, S3D_CACHE* aCacheManager,
-    S3D_INFO* aModelItem, wxString& prevModelSelectDir, int& prevModelWildcard ) :
-    wxDialog( aParent, wxID_ANY, _( "Select 3D Model" ), wxDefaultPosition,
-             wxSize( 500,200 ), wxCAPTION | wxRESIZE_BORDER | wxCLOSE_BOX
-             | wxMINIMIZE_BOX | wxMAXIMIZE_BOX | wxSYSTEM_MENU ),
+    MODULE_3D_SETTINGS* aModelItem, wxString& prevModelSelectDir, int& prevModelWildcard ) :
+    DIALOG_SHIM( aParent, wxID_ANY, _( "Select 3D Model" ), wxDefaultPosition,
+                 wxSize( 500,200 ), wxCAPTION | wxRESIZE_BORDER | wxCLOSE_BOX
+               | wxMINIMIZE_BOX | wxMAXIMIZE_BOX | wxSYSTEM_MENU ),
     m_model( aModelItem ), m_cache( aCacheManager ), m_previousDir( prevModelSelectDir ),
     m_previousFilterIndex( prevModelWildcard )
 {
-    this->SetSizeHints( wxSize( 500,200 ), wxDefaultSize );
+    SetSizeHints( wxSize( 500,200 ), wxDefaultSize );
 
     if( NULL != m_cache )
         m_resolver = m_cache->GetResolver();
@@ -73,22 +75,20 @@ DLG_SELECT_3DMODEL::DLG_SELECT_3DMODEL( wxWindow* aParent, S3D_CACHE* aCacheMana
 
     m_FileTree = new wxGenericDirCtrl( this, ID_FILE_TREE, prevModelSelectDir, wxDefaultPosition,
         wxSize( 300,100 ), wxDIRCTRL_3D_INTERNAL | wxDIRCTRL_EDIT_LABELS
-        | wxDIRCTRL_SELECT_FIRST | wxDIRCTRL_SHOW_FILTERS|wxSUNKEN_BORDER, wxEmptyString, 0 );
+        | wxDIRCTRL_SELECT_FIRST | wxDIRCTRL_SHOW_FILTERS | wxBORDER_SIMPLE, wxEmptyString, 0 );
 
 
     m_FileTree->ShowHidden( false );
-    m_FileTree->SetMinSize( wxSize( 300,100 ) );
+    m_FileTree->SetMinSize( wxSize( 300, 400 ) );
     m_FileTree->SetLabel( wxT( "3D_MODEL_SELECTOR" ) );
 
     bSizer2->Add( m_FileTree, 1, wxEXPAND | wxALL, 5 );
-    bSizer1->Add( bSizer2, 1, wxEXPAND, 5 );
+    bSizer1->Add( bSizer2, 3, wxEXPAND, 5 );
 
-    m_modelViewer = new C3D_MODEL_VIEWER( this,
-                                          COGL_ATT_LIST::GetAttributesList( true ),
-                                          m_cache );
-    m_modelViewer->SetMinSize( wxSize( 512, 384 ) );
+    m_modelViewer = new C3D_MODEL_VIEWER( this, COGL_ATT_LIST::GetAttributesList( true ), m_cache );
+    m_modelViewer->SetMinSize( wxSize( 500, 400 ) );
 
-    bSizer1->Add( m_modelViewer, 0, wxCENTER, 5 );
+    bSizer1->Add( m_modelViewer, 5, wxEXPAND | wxALL | wxCENTER, 5 );
 
     // create the filter list
     if( NULL != m_cache )
@@ -106,13 +106,12 @@ DLG_SELECT_3DMODEL::DLG_SELECT_3DMODEL( wxWindow* aParent, S3D_CACHE* aCacheMana
 
             if( sL != eL )
                 filter.Append( wxT( "|" ) );
-
         }
 
         if( !filter.empty() )
             m_FileTree->SetFilter( filter );
         else
-            m_FileTree->SetFilter( wxT( "*.*" ) );
+            m_FileTree->SetFilter( wxFileSelectorDefaultWildcardStr );
 
         if( prevModelWildcard >= 0 && prevModelWildcard < (int)fl->size() )
             m_FileTree->SetFilterIndex( prevModelWildcard );
@@ -124,7 +123,7 @@ DLG_SELECT_3DMODEL::DLG_SELECT_3DMODEL( wxWindow* aParent, S3D_CACHE* aCacheMana
     }
     else
     {
-        m_FileTree->SetFilter( wxT( "*.*" ) );
+        m_FileTree->SetFilter( wxFileSelectorDefaultWildcardStr );
         prevModelWildcard = 0;
         m_FileTree->SetFilterIndex( 0 );
     }
@@ -154,9 +153,9 @@ DLG_SELECT_3DMODEL::DLG_SELECT_3DMODEL( wxWindow* aParent, S3D_CACHE* aCacheMana
 
     updateDirChoiceList();
 
-    this->SetSizerAndFit( bSizer0 );
-    this->Layout();
-    this->Centre( wxBOTH );
+    SetSizerAndFit( bSizer0 );
+    Layout();
+    Centre( wxBOTH );
 
     m_modelViewer->Refresh();
     m_modelViewer->SetFocus();
@@ -241,9 +240,9 @@ void DLG_SELECT_3DMODEL::updateDirChoiceList( void )
     if( NULL == m_FileTree || NULL == m_resolver || NULL == dirChoices )
         return;
 
-    std::list< S3D_ALIAS > const* md = m_resolver->GetPaths();
-    std::list< S3D_ALIAS >::const_iterator sL = md->begin();
-    std::list< S3D_ALIAS >::const_iterator eL = md->end();
+    std::list< SEARCH_PATH > const* md = m_resolver->GetPaths();
+    std::list< SEARCH_PATH >::const_iterator sL = md->begin();
+    std::list< SEARCH_PATH >::const_iterator eL = md->end();
     std::set< wxString > cl;
     wxString prjDir;
 

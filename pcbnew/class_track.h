@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -33,8 +33,9 @@
 
 #include <pcbnew.h>
 #include <class_board_item.h>
-#include <class_board_connected_item.h>
-#include <PolyLine.h>
+#include <board_connected_item.h>
+#include <pcb_display_options.h>
+
 #include <trigo.h>
 
 
@@ -42,9 +43,10 @@ class TRACK;
 class VIA;
 class D_PAD;
 class MSG_PANEL_ITEM;
-
+class SHAPE_POLY_SET;
 
 // Via types
+// Note that this enum must be synchronized to GAL_LAYER_ID
 enum VIATYPE_T
 {
     VIA_THROUGH      = 3,      /* Always a through hole via */
@@ -57,6 +59,10 @@ enum VIATYPE_T
 #define UNDEFINED_DRILL_DIAMETER  -1       //< Undefined via drill diameter.
 
 #define MIN_VIA_DRAW_SIZE          4       /// Minimum size in pixel for full drawing
+
+// Used for tracks and vias for algorithmic safety, not to enforce constraints
+#define GEOMETRY_MIN_SIZE ( int )( 0.001 * IU_PER_MM )
+
 
 /**
  * Function GetTrack
@@ -108,7 +114,7 @@ public:
     virtual void Flip( const wxPoint& aCentre ) override;
 
     void SetPosition( const wxPoint& aPos ) override { m_Start = aPos; }
-    const wxPoint& GetPosition() const override { return m_Start; }
+    const wxPoint GetPosition() const override { return m_Start; }
 
     void SetWidth( int aWidth )                 { m_Width = aWidth; }
     int GetWidth() const                        { return m_Width; }
@@ -145,10 +151,13 @@ public:
     /**
      * Function GetBestInsertPoint
      * searches the "best" insertion point within the track linked list.
-     * The best point is the begging of the corresponding net code section.
+     * The best point is currently the end of the corresponding net code section.
      * (The BOARD::m_Track and BOARD::m_Zone lists are sorted by netcode.)
      * @param aPcb The BOARD to search for the insertion point.
-     * @return TRACK* - the item found in the linked list (or NULL if no track)
+     * @return TRACK* - the insertion point in the linked list.
+     * this is the next item after the last item having my net code.
+     * therefore the track to insert must be inserted before the insertion point.
+     * if the best insertion point is the end of list, the returned value is NULL
      */
     TRACK* GetBestInsertPoint( BOARD* aPcb );
 
@@ -187,11 +196,14 @@ public:
      * @param aCorrectionFactor = the correction to apply to circles radius to keep
      * clearance when the circle is approximated by segment bigger or equal
      * to the real clearance value (usually near from 1.0)
+     * @param ignoreLineWidth = used for edge cut items where the line width is only
+     * for visualization
      */
     void TransformShapeWithClearanceToPolygon( SHAPE_POLY_SET& aCornerBuffer,
                                                int             aClearanceValue,
                                                int             aCircleToSegmentsCount,
-                                               double          aCorrectionFactor ) const;
+                                               double          aCorrectionFactor,
+                                               bool            ignoreLineWidth = false ) const override;
     /**
      * Function IsPointOnEnds
      * returns STARTPOINT if point if near (dist = min_dist) start point, ENDPOINT if
@@ -207,21 +219,12 @@ public:
      */
     bool IsNull();
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
-
-    /**
-     * Function ShowWidth
-     * returns the width of the track in displayable user units.
-     */
-    wxString ShowWidth() const;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
     SEARCH_RESULT Visit( INSPECTOR inspector, void* testData, const KICAD_T scanTypes[] ) override;
 
     virtual bool HitTest( const wxPoint& aPosition ) const override;
 
-    /** @copydoc BOARD_ITEM::HitTest(const EDA_RECT& aRect,
-     *                               bool aContained = true, int aAccuracy ) const
-     */
     virtual bool HitTest( const EDA_RECT& aRect, bool aContained = true, int aAccuracy = 0 ) const override;
 
     /**
@@ -232,7 +235,7 @@ public:
      * @param aLayer The layer to match, pass -1 for a don't care.
      * @return A pointer to a VIA object if found, else NULL.
      */
-    VIA* GetVia( const wxPoint& aPosition, LAYER_ID aLayer = UNDEFINED_LAYER );
+    VIA* GetVia( const wxPoint& aPosition, PCB_LAYER_ID aLayer = UNDEFINED_LAYER );
 
     /**
      * Function GetVia
@@ -292,17 +295,19 @@ public:
      */
     virtual int GetClearance( BOARD_CONNECTED_ITEM* aItem = NULL ) const override;
 
-    virtual wxString GetSelectMenuText() const override;
+    virtual wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    virtual BITMAP_DEF GetMenuImage() const override { return  showtrack_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
     virtual EDA_ITEM* Clone() const override;
 
-    /// @copydoc VIEW_ITEM::ViewGetLayers()
     virtual void ViewGetLayers( int aLayers[], int& aCount ) const override;
 
-    /// @copydoc VIEW_ITEM::ViewGetLOD()
-    virtual unsigned int ViewGetLOD( int aLayer ) const override;
+    virtual unsigned int ViewGetLOD( int aLayer, KIGFX::VIEW* aView ) const override;
+
+    const BOX2I ViewBBox() const override;
+
+    virtual void SwapData( BOARD_ITEM* aImage ) override;
 
 #if defined (DEBUG)
     virtual void Show( int nestLevel, std::ostream& os ) const override { ShowDummy( os ); }
@@ -322,17 +327,17 @@ protected:
      * Display info about the track segment only, and does not calculate the full track length
      * @param aList A list of #MSG_PANEL_ITEM objects to add status information.
      */
-    virtual void GetMsgPanelInfoBase( std::vector< MSG_PANEL_ITEM >& aList );
+    virtual void GetMsgPanelInfoBase( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList );
 
 
     /**
      * Helper function for the common panel info */
-    void GetMsgPanelInfoBase_Common( std::vector< MSG_PANEL_ITEM >& aList );
+    void GetMsgPanelInfoBase_Common( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList );
 
     /**
      * Helper for drawing the short netname in tracks */
     void DrawShortNetname( EDA_DRAW_PANEL* panel, wxDC* aDC, GR_DRAWMODE aDrawMode,
-            EDA_COLOR_T aBgColor );
+            COLOR4D aBgColor );
 
     int         m_Width;            ///< Thickness of track, or via diameter
     wxPoint     m_Start;            ///< Line start point
@@ -361,17 +366,17 @@ public:
 
     SEGZONE* Next() const { return static_cast<SEGZONE*>( Pnext ); }
 
-    wxString GetSelectMenuText() const override;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
     void Draw( EDA_DRAW_PANEL* panel, wxDC* DC,
                GR_DRAWMODE aDrawMode, const wxPoint& aOffset = ZeroOffset ) override;
 
-    BITMAP_DEF GetMenuImage() const override { return  add_zone_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
     EDA_ITEM* Clone() const override;
 
 protected:
-    virtual void GetMsgPanelInfoBase( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfoBase( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 };
 
 
@@ -390,7 +395,7 @@ public:
     void Draw( EDA_DRAW_PANEL* panel, wxDC* DC,
                GR_DRAWMODE aDrawMode, const wxPoint& aOffset = ZeroOffset ) override;
 
-    bool IsOnLayer( LAYER_ID aLayer ) const override;
+    bool IsOnLayer( PCB_LAYER_ID aLayer ) const override;
 
     virtual LSET GetLayerSet() const override;
 
@@ -401,7 +406,10 @@ public:
      * @param aTopLayer = first layer connected by the via
      * @param aBottomLayer = last layer connected by the via
      */
-    void SetLayerPair( LAYER_ID aTopLayer, LAYER_ID aBottomLayer );
+    void SetLayerPair( PCB_LAYER_ID aTopLayer, PCB_LAYER_ID aBottomLayer );
+
+    void SetBottomLayer( PCB_LAYER_ID aLayer );
+    void SetTopLayer( PCB_LAYER_ID aLayer );
 
     /**
      * Function LayerPair
@@ -410,9 +418,19 @@ public:
      *  @param top_layer = pointer to the first layer (can be null)
      *  @param bottom_layer = pointer to the last layer (can be null)
      */
-    void LayerPair( LAYER_ID* top_layer, LAYER_ID* bottom_layer ) const;
+    void LayerPair( PCB_LAYER_ID* top_layer, PCB_LAYER_ID* bottom_layer ) const;
 
-    const wxPoint& GetPosition() const override {  return m_Start; }
+    PCB_LAYER_ID TopLayer() const;
+    PCB_LAYER_ID BottomLayer() const;
+
+    /**
+     * Function SanitizeLayers
+     * Check so that the layers are correct dependin on the type of via, and
+     * so that the top actually is on top.
+     */
+    void SanitizeLayers();
+
+    const wxPoint GetPosition() const override {  return m_Start; }
     void SetPosition( const wxPoint& aPoint ) override { m_Start = aPoint;  m_End = aPoint; }
 
     virtual bool HitTest( const wxPoint& aPosition ) const override;
@@ -424,14 +442,15 @@ public:
         return wxT( "VIA" );
     }
 
-    wxString GetSelectMenuText() const override;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    BITMAP_DEF GetMenuImage() const override { return  via_sketch_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
     EDA_ITEM* Clone() const override;
 
-    /// @copydoc VIEW_ITEM::ViewGetLayers()
     virtual void ViewGetLayers( int aLayers[], int& aCount ) const override;
+
+    virtual unsigned int ViewGetLOD( int aLayer, KIGFX::VIEW* aView ) const override;
 
     virtual void Flip( const wxPoint& aCentre ) override;
 
@@ -476,12 +495,14 @@ public:
     */
     bool IsDrillDefault() const { return m_Drill <= 0; }
 
+    virtual void SwapData( BOARD_ITEM* aImage ) override;
+
 protected:
-    virtual void GetMsgPanelInfoBase( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfoBase( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
 private:
     /// The bottom layer of the via (the top layer is in m_Layer)
-    LAYER_ID  m_BottomLayer;
+    PCB_LAYER_ID  m_BottomLayer;
 
     VIATYPE_T m_ViaType;        // Type of via
 
@@ -498,6 +519,20 @@ inline VIA* GetFirstVia( TRACK* aTrk, const TRACK* aStopPoint = NULL )
     // It could stop because of the stop point, not on a via
     if( aTrk && (aTrk->Type() == PCB_VIA_T) )
         return static_cast<VIA*>( aTrk );
+    else
+        return NULL;
+}
+
+
+/// Scan a track list for the first TRACK object. Returns  NULL if not found (or NULL passed)
+inline TRACK* GetFirstTrack( TRACK* aTrk, const TRACK* aStopPoint = NULL )
+{
+    while( aTrk && ( aTrk != aStopPoint ) && ( aTrk->Type() != PCB_TRACE_T ) )
+        aTrk = aTrk->Next();
+
+    // It could stop because of the stop point, not on a via
+    if( aTrk && ( aTrk->Type() == PCB_TRACE_T ) )
+        return static_cast<TRACK*>( aTrk );
     else
         return NULL;
 }

@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2013 NBEE Embedded Systems SL, Miguel Angel Ajo <miguelangel@ajo.es>
- * Copyright (C) 2013 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2013-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -25,23 +25,59 @@
 #ifndef __PCBNEW_SCRIPTING_HELPERS_H
 #define __PCBNEW_SCRIPTING_HELPERS_H
 
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <io_mgr.h>
+
 /* we could be including all these methods as static in a class, but
- * we want plain pcbnew.<method_name> access from python */
+ * we want plain pcbnew.<method_name> access from python
+ */
 
 #ifndef SWIG
 void    ScriptingSetPcbEditFrame( PCB_EDIT_FRAME* aPCBEdaFrame );
 
 #endif
 
+// For Python scripts: return the current board.
 BOARD*  GetBoard();
 
 BOARD*  LoadBoard( wxString& aFileName, IO_MGR::PCB_FILE_T aFormat );
+
+// Default LoadBoard() to load .kicad_pcb files:.
 BOARD*  LoadBoard( wxString& aFileName );
 
-bool    SaveBoard( wxString& aFileName, BOARD* aBoard, IO_MGR::PCB_FILE_T aFormat );
+// Boards can be saved only as .kicad_pcb file format,
+// so no option to choose the file format.
 bool    SaveBoard( wxString& aFileName, BOARD* aBoard );
 
+/**
+ * Update the board display after modifying it by a python script
+ * (note: it is automatically called by action plugins, after running the plugin,
+ * so call this function is usually not needed inside action plugins
+ *
+ * Could be deprecated because modifying a board (especially deleting items) outside
+ * a action plugin can crash Pcbnew.
+ */
+void    Refresh();
 
-#endif
+void    WindowZoom( int xl, int yl, int width, int height );
+
+/**
+ * Update the layer manager and other widgets from the board setup
+ * (layer and items visibility, colors ...)
+ * (note: it is automatically called by action plugins, after running the plugin,
+ * so call this function is usually not needed inside action plugins
+ */
+void UpdateUserInterface();
+
+/**
+ * Returns the currently selected user unit value for the interface
+ * @return 0 = Inches, 1=mm, -1 if the frame isn't set
+ */
+int GetUserUnits();
+
+/**
+ * Are we currently in an action plugin?
+ */
+bool IsActionRunning();
+
+#endif      // __PCBNEW_SCRIPTING_HELPERS_H

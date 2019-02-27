@@ -24,12 +24,21 @@
 
 %{
 #include <pcbnew_footprint_wizards.h>
+#include <pcbnew_action_plugins.h>
 %}
 
-class PYTHON_FOOTPRINT_WIZARDS
+class PYTHON_FOOTPRINT_WIZARD_LIST
 {
 public:
     static void register_wizard( PyObject* wizard );
     static void deregister_wizard( PyObject* wizard );
+
+};
+
+class PYTHON_ACTION_PLUGINS
+{
+public:
+    static void register_action( PyObject* wizard );
+    static void deregister_action( PyObject* wizard );
 
 };

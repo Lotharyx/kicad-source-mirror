@@ -2,8 +2,8 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2008-2011 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2008 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,7 +29,7 @@
 #include <common.h>
 #include <kicad_string.h>
 #include <gestfich.h>
-#include <wxstruct.h>
+#include <eda_base_frame.h>
 #include <config_params.h>
 
 #include <wx/apptrait.h>
@@ -135,19 +135,20 @@ void ConfigBaseWriteDouble( wxConfigBase* aConfig, const wxString& aKey, double 
 
 
 PARAM_CFG_BASE::PARAM_CFG_BASE( const wxString& ident, const paramcfg_id type,
-                                const wxChar* group )
+                                const wxChar* group, const wxString& legacy )
 {
     m_Ident = ident;
     m_Type  = type;
     m_Group = group;
     m_Setup = false;
+
+    m_Ident_legacy = legacy;
 }
 
 
-PARAM_CFG_INT::PARAM_CFG_INT( const wxString& ident, int* ptparam,
-                              int default_val, int min, int max,
-                              const wxChar* group ) :
-    PARAM_CFG_BASE( ident, PARAM_INT, group )
+PARAM_CFG_INT::PARAM_CFG_INT( const wxString& ident, int* ptparam, int default_val,
+                              int min, int max, const wxChar* group, const wxString& legacy ) :
+    PARAM_CFG_BASE( ident, PARAM_INT, group, legacy )
 {
     m_Pt_param = ptparam;
     m_Default  = default_val;
@@ -156,16 +157,15 @@ PARAM_CFG_INT::PARAM_CFG_INT( const wxString& ident, int* ptparam,
 }
 
 
-PARAM_CFG_INT::PARAM_CFG_INT( bool Insetup, const wxString& ident, int* ptparam,
-                              int default_val, int min, int max,
-                              const wxChar* group ) :
-    PARAM_CFG_BASE( ident, PARAM_INT, group )
+PARAM_CFG_INT::PARAM_CFG_INT( bool setup, const wxString& ident, int* ptparam, int default_val,
+                              int min, int max, const wxChar* group, const wxString& legacy ) :
+    PARAM_CFG_BASE( ident, PARAM_INT, group, legacy )
 {
     m_Pt_param = ptparam;
     m_Default  = default_val;
     m_Min   = min;
     m_Max   = max;
-    m_Setup = Insetup;
+    m_Setup = setup;
 }
 
 
@@ -174,7 +174,10 @@ void PARAM_CFG_INT::ReadParam( wxConfigBase* aConfig ) const
     if( !m_Pt_param || !aConfig )
         return;
 
-    int itmp = aConfig->Read( m_Ident, m_Default );
+    int itmp = m_Default;
+
+    if( !aConfig->Read( m_Ident, &itmp ) && m_Ident_legacy != wxEmptyString )
+        aConfig->Read( m_Ident_legacy, &itmp );
 
     if( (itmp < m_Min) || (itmp > m_Max) )
         itmp = m_Default;
@@ -193,20 +196,21 @@ void PARAM_CFG_INT::SaveParam( wxConfigBase* aConfig ) const
 
 
 PARAM_CFG_INT_WITH_SCALE::PARAM_CFG_INT_WITH_SCALE( const wxString& ident, int* ptparam,
-                              int default_val, int min, int max,
-                              const wxChar* group, double aBiu2cfgunit ) :
-    PARAM_CFG_INT( ident, ptparam, default_val, min, max, group )
+                                                    int default_val, int min, int max,
+                                                    const wxChar* group, double aBiu2cfgunit,
+                                                    const wxString& legacy_ident ) :
+    PARAM_CFG_INT( ident, ptparam, default_val, min, max, group, legacy_ident )
 {
     m_Type = PARAM_INT_WITH_SCALE;
     m_BIU_to_cfgunit = aBiu2cfgunit;
 }
 
 
-PARAM_CFG_INT_WITH_SCALE::PARAM_CFG_INT_WITH_SCALE( bool Insetup,
-                              const wxString& ident, int* ptparam,
-                              int default_val, int min, int max,
-                              const wxChar* group, double aBiu2cfgunit ) :
-    PARAM_CFG_INT( Insetup, ident, ptparam, default_val, min, max, group )
+PARAM_CFG_INT_WITH_SCALE::PARAM_CFG_INT_WITH_SCALE( bool setup, const wxString& ident, int* ptparam,
+                                                    int default_val, int min, int max,
+                                                    const wxChar* group, double aBiu2cfgunit,
+                                                    const wxString& legacy_ident ) :
+    PARAM_CFG_INT( setup, ident, ptparam, default_val, min, max, group, legacy_ident )
 {
     m_Type = PARAM_INT_WITH_SCALE;
     m_BIU_to_cfgunit = aBiu2cfgunit;
@@ -219,7 +223,8 @@ void PARAM_CFG_INT_WITH_SCALE::ReadParam( wxConfigBase* aConfig ) const
         return;
 
     double dtmp = (double) m_Default * m_BIU_to_cfgunit;
-    aConfig->Read( m_Ident, &dtmp );
+    if( !aConfig->Read( m_Ident, &dtmp ) && m_Ident_legacy != wxEmptyString )
+        aConfig->Read( m_Ident_legacy, &dtmp );
 
     int itmp = KiROUND( dtmp / m_BIU_to_cfgunit );
 
@@ -243,8 +248,8 @@ void PARAM_CFG_INT_WITH_SCALE::SaveParam( wxConfigBase* aConfig ) const
 }
 
 
-PARAM_CFG_SETCOLOR::PARAM_CFG_SETCOLOR( const wxString& ident, EDA_COLOR_T* ptparam,
-                                        EDA_COLOR_T default_val,
+PARAM_CFG_SETCOLOR::PARAM_CFG_SETCOLOR( const wxString& ident, COLOR4D* ptparam,
+                                        COLOR4D default_val,
                                         const wxChar* group ) :
     PARAM_CFG_BASE( ident, PARAM_SETCOLOR, group )
 {
@@ -255,8 +260,8 @@ PARAM_CFG_SETCOLOR::PARAM_CFG_SETCOLOR( const wxString& ident, EDA_COLOR_T* ptpa
 
 PARAM_CFG_SETCOLOR::PARAM_CFG_SETCOLOR( bool          Insetup,
                                         const wxString& ident,
-                                        EDA_COLOR_T*  ptparam,
-                                        EDA_COLOR_T   default_val,
+                                        COLOR4D*      ptparam,
+                                        COLOR4D       default_val,
                                         const wxChar* group ) :
     PARAM_CFG_BASE( ident, PARAM_SETCOLOR, group )
 {
@@ -271,11 +276,33 @@ void PARAM_CFG_SETCOLOR::ReadParam( wxConfigBase* aConfig ) const
     if( !m_Pt_param || !aConfig )
         return;
 
-    EDA_COLOR_T itmp = ColorByName( aConfig->Read( m_Ident, wxT("NONE") ) );
+    COLOR4D temp;
 
-    if( itmp == UNSPECIFIED_COLOR )
-        itmp = m_Default;
-    *m_Pt_param = itmp;
+    if( aConfig->HasEntry( m_Ident ) )
+    {
+        if( temp.SetFromWxString( aConfig->Read( m_Ident, wxT( "NONE" ) ) ) )
+        {
+            *m_Pt_param = temp;
+            return;
+        }
+    }
+
+    // If no luck, try reading legacy format
+    wxString legacy_Ident = m_Ident;
+    legacy_Ident.Replace( wxT( "4D" ), wxEmptyString );
+
+    EDA_COLOR_T old = ColorByName( aConfig->Read( legacy_Ident, wxT( "NONE" ) ) );
+
+    if( old != UNSPECIFIED_COLOR )
+    {
+        if( m_Ident == wxT( "Color4DErcWEx" ) || m_Ident == wxT( "Color4DErcEEx" ) )
+            *m_Pt_param = COLOR4D( old ).WithAlpha( 0.8 );
+        else
+            *m_Pt_param = COLOR4D( old );
+        return;
+    }
+
+    *m_Pt_param = m_Default;
 }
 
 
@@ -284,7 +311,7 @@ void PARAM_CFG_SETCOLOR::SaveParam( wxConfigBase* aConfig ) const
     if( !m_Pt_param || !aConfig )
         return;
 
-    aConfig->Write( m_Ident, ColorGetName( *m_Pt_param ) );
+    aConfig->Write( m_Ident, m_Pt_param->ToColour().GetAsString( wxC2S_CSS_SYNTAX ) );
 }
 
 

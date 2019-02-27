@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013-2015 Jean-Pierre Charras, jp.charras@wanadoo.fr
- * Copyright (C) 2013-2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2013-2017 Jean-Pierre Charras, jp.charras@wanadoo.fr
+ * Copyright (C) 2013 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -42,7 +42,7 @@
 #include <pgm_base.h>
 #include <kiface_i.h>
 #include <gestfich.h>
-#include <schframe.h>
+#include <sch_edit_frame.h>
 
 #include <general.h>
 #include <netlist.h>
@@ -55,7 +55,7 @@
 #include <netlist_exporters/netlist_exporter_pspice.h>
 
 #include <eeschema_id.h>
-
+#include <wx/regex.h>
 
 
 #define CUSTOMPANEL_COUNTMAX 8  // Max number of netlist plugins
@@ -145,7 +145,13 @@ private:
     void    GenNetlist( wxCommandEvent& event ) override;
     void    RunSimulator( wxCommandEvent& event );
     void    NetlistUpdateOpt();
+
+    // Called when changing the notebook page, therefore the current
+    // netlist format
     void    OnNetlistTypeSelection( wxNotebookEvent& event ) override;
+
+    // called when checking the  "Default format" wxCheckBox
+    // in the current page of the notbook
     void    SelectDefaultNetlistType( wxCommandEvent& event );
 
     /**
@@ -165,11 +171,6 @@ private:
      * Write the current netlist options setup in the configuration
      */
     void WriteCurrentNetlistSetup();
-
-    bool GetUseDefaultNetlistName()
-    {
-        return m_cbUseDefaultNetlistName->IsChecked();
-    }
 
     /**
      * Function UserNetlistTypeName
@@ -191,7 +192,7 @@ private:
      * @return true for known netlist type, false for custom formats
      */
     bool FilenamePrms( NETLIST_TYPE_ID aNetTypeId,
-                             wxString * aExt, wxString * aWildCard );
+                       wxString * aExt, wxString * aWildCard );
 
     DECLARE_EVENT_TABLE()
 };
@@ -238,7 +239,7 @@ enum id_netlist {
 };
 
 
-// ID for configuration:
+// keywords for configuration:
 #define CUSTOM_NETLIST_TITLE   wxT( "CustomNetlistTitle" )
 #define CUSTOM_NETLIST_COMMAND wxT( "CustomNetlistCommand" )
 #define NETLIST_USE_DEFAULT_NETNAME wxT( "NetlistUseDefaultNetname" )
@@ -257,8 +258,7 @@ END_EVENT_TABLE()
 NETLIST_PAGE_DIALOG::NETLIST_PAGE_DIALOG( wxNotebook*     parent,
                                           const wxString& title,
                                           NETLIST_TYPE_ID id_NetType ) :
-    wxPanel( parent, -1, wxDefaultPosition, wxDefaultSize,
-             wxTAB_TRAVERSAL | wxBORDER_SUNKEN )
+    wxPanel( parent, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL )
 {
     m_IdNetType = id_NetType;
     m_pageNetFmtName = title;
@@ -289,11 +289,10 @@ NETLIST_PAGE_DIALOG::NETLIST_PAGE_DIALOG( wxNotebook*     parent,
     UpperBoxSizer->Add( m_RightOptionsBoxSizer, 0, wxALIGN_CENTER_VERTICAL | wxALL, 5 );
 
     wxStaticText* text = new wxStaticText( this, -1, _( "Options:" ) );
-    m_LeftBoxSizer->Add( text, 0, wxGROW | wxALL, 5 );
+    m_LeftBoxSizer->Add( text, 0, wxGROW | wxBOTTOM | wxRIGHT, 5 );
 
-    m_IsCurrentFormat = new wxCheckBox( this, ID_CURRENT_FORMAT_IS_DEFAULT,
-                                        _( "Default format" ) );
-    m_LeftBoxSizer->Add( m_IsCurrentFormat, 0, wxGROW | wxALL, 5 );
+    m_IsCurrentFormat = new wxCheckBox( this, ID_CURRENT_FORMAT_IS_DEFAULT, _( "Default format" ) );
+    m_LeftBoxSizer->Add( m_IsCurrentFormat, 0, wxGROW | wxBOTTOM | wxRIGHT, 5 );
     m_IsCurrentFormat->SetValue( selected );
 
     if( selected )
@@ -310,7 +309,6 @@ NETLIST_DIALOG::NETLIST_DIALOG( SCH_EDIT_FRAME* parent ) :
 
     long tmp;
     m_config->Read( NETLIST_USE_DEFAULT_NETNAME, &tmp, 0l );
-    m_cbUseDefaultNetlistName->SetValue( tmp );
     m_NetFmtName = m_Parent->GetNetListFormatName();
 
     for( int ii = 0; ii < PANELCUSTOMBASE + CUSTOMPANEL_COUNTMAX; ii++ )
@@ -342,12 +340,18 @@ NETLIST_DIALOG::NETLIST_DIALOG( SCH_EDIT_FRAME* parent ) :
     // Add custom panels:
     InstallCustomPages();
 
+    // Ensure a netlist format is selected:
     if( !m_asFormatSelected )
+    {
         m_PanelNetType[PANELPCBNEW]->m_IsCurrentFormat->SetValue( true );
+        m_NoteBook->SetSelection( PANELPCBNEW );
+        // call OnNetlistTypeSelection to update some widgets.
+        // SetSelection() do nothing if the current page is already PANELPCBNEW
+        wxNotebookEvent event;
+        OnNetlistTypeSelection( event );
+    }
 
     SetDefaultItem( m_buttonNetlist );
-
-    FixOSXCancelButtonIssue();
 
     // Now all widgets have the size fixed, call FinishDialogSettings
     FinishDialogSettings();
@@ -383,14 +387,15 @@ void NETLIST_DIALOG::InstallPageSpice()
         new NETLIST_PAGE_DIALOG( m_NoteBook, title, NET_TYPE_SPICE );
 
     page->m_SpiceAjustPassiveValues = new wxCheckBox( page, ID_USE_NETCODE_AS_NETNAME,
-                                           _( "Reformat passive component values" ) );
+                                           _( "Reformat passive symbol values" ) );
     page->m_SpiceAjustPassiveValues->SetToolTip(
-                     _( "Reformat passive component values e.g. 1M -> 1Meg" ) );
+                     _( "Reformat passive symbol values e.g. 1M -> 1Meg" ) );
     page->m_SpiceAjustPassiveValues->SetValue( m_Parent->GetSpiceAjustPassiveValues() );
-    page->m_LeftBoxSizer->Add( page->m_SpiceAjustPassiveValues, 0, wxGROW | wxALL, 5 );
+    page->m_LeftBoxSizer->Add( page->m_SpiceAjustPassiveValues, 0,
+                               wxGROW | wxBOTTOM | wxRIGHT, 5 );
 
     page->m_LowBoxSizer->Add( new wxStaticText( page, -1, _( "Simulator command:" ) ), 0,
-                              wxGROW | wxLEFT | wxRIGHT | wxTOP, 5 );
+                              wxGROW | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
 
     page->m_CommandStringCtrl = new wxTextCtrl( page, -1, m_Parent->GetSimulatorCommand(),
                                                 wxDefaultPosition, wxDefaultSize );
@@ -403,7 +408,7 @@ void NETLIST_DIALOG::InstallPageSpice()
 
     // Add buttons
     Button = new wxButton( page, ID_RUN_SIMULATOR, _( "&Run Simulator" ) );
-    page->m_RightBoxSizer->Add( Button, 0, wxGROW | wxALL, 5 );
+    page->m_LowBoxSizer->Add( Button, 0, wxGROW | wxBOTTOM | wxLEFT | wxRIGHT, 5 );
 }
 
 
@@ -451,11 +456,11 @@ NETLIST_PAGE_DIALOG* NETLIST_DIALOG::AddOneCustomPage( const wxString & aTitle,
     currPage->m_CommandStringCtrl->SetInsertionPoint( 1 );
     currPage->m_LowBoxSizer->Add( currPage->m_CommandStringCtrl,
                                   0,
-                                  wxGROW | wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT | wxBOTTOM,
+                                  wxGROW | wxTOP | wxLEFT | wxRIGHT | wxBOTTOM,
                                   5 );
 
     currPage->m_LowBoxSizer->Add( new wxStaticText( currPage,
-                                                    -1, _( "Title:" ) ), 0,
+                                  -1, _( "Title:" ) ), 0,
                                   wxGROW | wxLEFT | wxRIGHT | wxTOP, 5 );
 
     currPage->m_TitleStringCtrl = new wxTextCtrl( currPage, -1, aTitle,
@@ -464,7 +469,7 @@ NETLIST_PAGE_DIALOG* NETLIST_DIALOG::AddOneCustomPage( const wxString & aTitle,
     currPage->m_TitleStringCtrl->SetInsertionPoint( 1 );
     currPage->m_LowBoxSizer->Add( currPage->m_TitleStringCtrl,
                                   0,
-                                  wxGROW | wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT | wxBOTTOM,
+                                  wxGROW | wxTOP | wxLEFT | wxRIGHT | wxBOTTOM,
                                   5 );
     return currPage;
 }
@@ -492,21 +497,11 @@ void NETLIST_DIALOG::SelectDefaultNetlistType( wxCommandEvent& event )
 void NETLIST_DIALOG::OnNetlistTypeSelection( wxNotebookEvent& event )
 {
     NETLIST_PAGE_DIALOG* currPage = (NETLIST_PAGE_DIALOG*) m_NoteBook->GetCurrentPage();
+
     if( currPage == NULL )
         return;
 
     m_buttonDelPlugin->Enable( currPage->m_IdNetType >= NET_TYPE_CUSTOM1 );
-    m_cbUseDefaultNetlistName->Enable( currPage->m_IdNetType < NET_TYPE_CUSTOM1 );
-
-    wxString fileExt;
-    if( FilenamePrms( currPage->m_IdNetType, &fileExt, NULL ) )
-    {
-        wxFileName fn = g_RootSheet->GetScreen()->GetFileName();
-        fn.SetExt( fileExt );
-        m_textCtrlDefaultFileName->SetValue( fn.GetFullName() );
-    }
-    else
-        m_textCtrlDefaultFileName->Clear();
 }
 
 
@@ -566,7 +561,16 @@ void NETLIST_DIALOG::GenNetlist( wxCommandEvent& event )
         break;
 
     default:    // custom, NET_TYPE_CUSTOM1 and greater
+    {
+        wxString command = currPage->m_CommandStringCtrl->GetValue();
+        wxRegEx extRE( wxT( ".*\\.([[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]]?)\\.xslt?\".*" ) );
+
+        if( extRE.Matches( command ) )
+            fileExt = extRE.GetMatch( command, 1 );
+
         title.Printf( _( "%s Export" ), currPage->m_TitleStringCtrl->GetValue().GetData() );
+    }
+        break;
     }
 
     fn.SetExt( fileExt );
@@ -575,20 +579,16 @@ void NETLIST_DIALOG::GenNetlist( wxCommandEvent& event )
        fn.SetPath( wxPathOnly( Prj().GetProjectFullName() ) );
 
     wxString fullpath = fn.GetFullPath();
+    wxString fullname = fn.GetFullName();
+    wxString path     = fn.GetPath();
 
-    if( !GetUseDefaultNetlistName() || currPage->m_IdNetType >= NET_TYPE_CUSTOM1 )
-    {
-        wxString fullname = fn.GetFullName();
-        wxString path     = fn.GetPath();
+    // fullname does not and should not include the path, per wx docs.
+    wxFileDialog dlg( this, title, path, fullname, fileWildcard, wxFD_SAVE );
 
-        // fullname does not and should not include the path, per wx docs.
-        wxFileDialog dlg( this, title, path, fullname, fileWildcard, wxFD_SAVE );
+    if( dlg.ShowModal() == wxID_CANCEL )
+        return;
 
-        if( dlg.ShowModal() == wxID_CANCEL )
-            return;
-
-        fullpath = dlg.GetPath();   // directory + filename
-    }
+    fullpath = dlg.GetPath();   // directory + filename
 
     m_Parent->ClearMsgPanel();
 
@@ -597,7 +597,7 @@ void NETLIST_DIALOG::GenNetlist( wxCommandEvent& event )
     else
         m_Parent->SetNetListerCommand( wxEmptyString );
 
-    m_Parent->CreateNetlist( currPage->m_IdNetType, fullpath, netlist_opt );
+    m_Parent->CreateNetlist( currPage->m_IdNetType, fullpath, netlist_opt, NULL, false );
 
     WriteCurrentNetlistSetup();
 
@@ -606,7 +606,7 @@ void NETLIST_DIALOG::GenNetlist( wxCommandEvent& event )
 
 
 bool NETLIST_DIALOG::FilenamePrms( NETLIST_TYPE_ID aNetTypeId,
-                                         wxString * aExt, wxString * aWildCard )
+                                   wxString * aExt, wxString * aWildCard )
 {
     wxString fileExt;
     wxString fileWildcard;
@@ -617,22 +617,22 @@ bool NETLIST_DIALOG::FilenamePrms( NETLIST_TYPE_ID aNetTypeId,
     {
     case NET_TYPE_SPICE:
         fileExt = wxT( "cir" );
-        fileWildcard = _( "SPICE netlist file (.cir)|*.cir" );
+        fileWildcard = SpiceNetlistFileWildcard();
         break;
 
     case NET_TYPE_CADSTAR:
         fileExt = wxT( "frp" );
-        fileWildcard = _( "CadStar netlist file (.frp)|*.frp" );
+        fileWildcard = CadstarNetlistFileWildcard();
         break;
 
     case NET_TYPE_PCBNEW:
     case NET_TYPE_ORCADPCB2:
         fileExt = NetlistFileExtension;
-        fileWildcard = NetlistFileWildcard;
+        fileWildcard = NetlistFileWildcard();
         break;
 
     default:    // custom, NET_TYPE_CUSTOM1 and greater
-        fileWildcard = AllFilesWildcard;
+        fileWildcard = AllFilesWildcard();
         ret = false;
     }
 
@@ -675,7 +675,7 @@ void NETLIST_DIALOG::RunSimulator( wxCommandEvent& event )
         netlist_opt |= NET_ADJUST_PASSIVE_VALS;
 
     if( ! m_Parent->CreateNetlist( currPage->m_IdNetType, fn.GetFullPath(),
-                                   netlist_opt ) )
+                                   netlist_opt, NULL, false ) )
         return;
 
     ExecuteFile( this, ExecFile, CommandLine );
@@ -687,8 +687,6 @@ void NETLIST_DIALOG::WriteCurrentNetlistSetup()
     wxString  msg, Command;
 
     NetlistUpdateOpt();
-
-    m_config->Write( NETLIST_USE_DEFAULT_NETNAME, GetUseDefaultNetlistName() );
 
     // Update existing custom pages
     int jj = 0;
@@ -812,9 +810,8 @@ void NETLIST_DIALOG_ADD_PLUGIN::OnOKClick( wxCommandEvent& event )
 
 void NETLIST_DIALOG_ADD_PLUGIN::OnBrowsePlugins( wxCommandEvent& event )
 {
-    wxString FullFileName, Mask, Path;
+    wxString FullFileName, Path;
 
-    Mask = wxT( "*" );
 #ifndef __WXMAC__
     Path = Pgm().GetExecutablePath();
 #else
@@ -824,7 +821,7 @@ void NETLIST_DIALOG_ADD_PLUGIN::OnBrowsePlugins( wxCommandEvent& event )
                                       Path,
                                       FullFileName,
                                       wxEmptyString,
-                                      Mask,
+                                      wxFileSelectorDefaultWildcardStr,
                                       this,
                                       wxFD_OPEN,
                                       true
@@ -864,4 +861,3 @@ int InvokeDialogNetList( SCH_EDIT_FRAME* aCaller )
 
     return dlg.ShowModal();
 }
-

@@ -1,7 +1,7 @@
 /*
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
- * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2013-2017 CERN
  * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
@@ -19,7 +19,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <boost/optional.hpp>
+#include <core/optional.h>
 
 #include <math/vector2d.h>
 
@@ -30,8 +30,6 @@
 #include "pns_router.h"
 
 #include <geometry/shape_rect.h>
-
-using boost::optional;
 
 namespace PNS {
 
@@ -57,7 +55,7 @@ LINE::~LINE()
 }
 
 
-const LINE& LINE::operator=( const LINE& aOther )
+LINE& LINE::operator=( const LINE& aOther )
 {
     m_line = aOther.m_line;
     m_width = aOther.m_width;
@@ -93,10 +91,10 @@ void LINE::Mark( int aMarker )
 }
 
 
-void LINE::Unmark()
+void LINE::Unmark( int aMarker )
 {
     for( SEGMENT* s : m_segmentRefs )
-        s->Unmark();
+        s->Unmark( aMarker );
 
     m_marker = 0;
 }
@@ -161,18 +159,24 @@ bool LINE::Walkaround( SHAPE_LINE_CHAIN aObstacle, SHAPE_LINE_CHAIN& aPre,
                            SHAPE_LINE_CHAIN& aWalk, SHAPE_LINE_CHAIN& aPost, bool aCw ) const
 {
     const SHAPE_LINE_CHAIN& line( CLine() );
-    VECTOR2I ip_start;
-    VECTOR2I ip_end;
 
     if( line.SegmentCount() < 1 )
         return false;
 
-    if( aObstacle.PointInside( line.CPoint( 0 ) ) || aObstacle.PointInside( line.CPoint( -1 ) ) )
-        return false;
+    const auto pFirst = line.CPoint(0);
+    const auto pLast = line.CPoint(-1);
 
-    SHAPE_LINE_CHAIN::INTERSECTIONS ips, ips2;
+    if( aObstacle.PointInside( line.CPoint( 0 ) ) || aObstacle.PointInside( line.CPoint( -1 ) ) )
+    {
+        return false;
+    }
+
+    SHAPE_LINE_CHAIN::INTERSECTIONS ips;
 
     line.Intersect( aObstacle, ips );
+
+    auto eFirst = aObstacle.EdgeContainingPoint( pFirst );
+    auto eLast = aObstacle.EdgeContainingPoint( pLast );
 
     aWalk.Clear();
     aPost.Clear();
@@ -181,6 +185,23 @@ bool LINE::Walkaround( SHAPE_LINE_CHAIN aObstacle, SHAPE_LINE_CHAIN& aPre,
     int farthest_dist = 0;
 
     SHAPE_LINE_CHAIN::INTERSECTION nearest, farthest;
+    SHAPE_LINE_CHAIN::INTERSECTION is;
+
+    if( eFirst >= 0 )
+    {
+        is.our = line.CSegment(0);
+        is.their = aObstacle.CSegment( eFirst );
+        is.p = pFirst;
+        ips.push_back(is);
+    }
+
+    if ( eLast >= 0 )
+    {
+        is.our = line.CSegment(-1);
+        is.their = aObstacle.CSegment( eLast );
+        is.p = pLast;
+        ips.push_back(is);
+    }
 
     for( int i = 0; i < (int) ips.size(); i++ )
     {
@@ -230,6 +251,9 @@ bool LINE::Walkaround( SHAPE_LINE_CHAIN aObstacle, SHAPE_LINE_CHAIN& aPre,
 
     int i = i_first;
 
+    if( i_first < 0 || i_last < 0 )
+        return false;
+
     while( i != i_last )
     {
         aWalk.Append( aObstacle.CPoint( i ) );
@@ -253,14 +277,18 @@ bool LINE::Walkaround( SHAPE_LINE_CHAIN aObstacle, SHAPE_LINE_CHAIN& aPre,
 }
 
 
-void LINE::Walkaround( const SHAPE_LINE_CHAIN& aObstacle, SHAPE_LINE_CHAIN& aPath, bool aCw ) const
+bool LINE::Walkaround( const SHAPE_LINE_CHAIN& aObstacle, SHAPE_LINE_CHAIN& aPath, bool aCw ) const
 {
     SHAPE_LINE_CHAIN walk, post;
 
-    Walkaround( aObstacle, aPath, walk, post, aCw );
+    if( ! Walkaround( aObstacle, aPath, walk, post, aCw ) )
+        return false;
+
     aPath.Append( walk );
     aPath.Append( post );
     aPath.Simplify();
+
+    return true;
 }
 
 
@@ -336,9 +364,10 @@ void LINE::ShowLinks() const
         wxLogTrace( "PNS", "seg %d: %p\n", i, m_segmentRefs[i] );
 }
 
+
 SHAPE_LINE_CHAIN dragCornerInternal( const SHAPE_LINE_CHAIN& aOrigin, const VECTOR2I& aP )
 {
-    optional<SHAPE_LINE_CHAIN> picked;
+    OPT<SHAPE_LINE_CHAIN> picked;
     int i;
     int d = 2;
 
@@ -359,14 +388,22 @@ SHAPE_LINE_CHAIN dragCornerInternal( const SHAPE_LINE_CHAIN& aOrigin, const VECT
         SHAPE_LINE_CHAIN paths[2];
         DIRECTION_45 dirs[2];
         DIRECTION_45 d_prev = ( i > 0 ? DIRECTION_45( aOrigin.CSegment( i-1 ) ) : DIRECTION_45() );
+        int dirCount = 0;
 
         for( int j = 0; j < 2; j++ )
         {
             paths[j] = d_start.BuildInitialTrace( p_start, aP, j );
-            dirs[j] = DIRECTION_45( paths[j].CSegment( 0 ) );
+
+            if( paths[j].SegmentCount() < 1 )
+                continue;
+
+            assert( dirCount < int( sizeof( dirs ) / sizeof( dirs[0] ) ) );
+
+            dirs[dirCount] = DIRECTION_45( paths[j].CSegment( 0 ) );
+            ++dirCount;
         }
 
-        for( int j = 0; j < 2; j++ )
+        for( int j = 0; j < dirCount; j++ )
         {
             if( dirs[j] == d_start )
             {
@@ -378,7 +415,7 @@ SHAPE_LINE_CHAIN dragCornerInternal( const SHAPE_LINE_CHAIN& aOrigin, const VECT
         if( picked )
             break;
 
-        for( int j = 0; j < 2; j++ )
+        for( int j = 0; j < dirCount; j++ )
         {
             if( dirs[j].IsObtuse( d_prev ) )
             {
@@ -405,7 +442,7 @@ SHAPE_LINE_CHAIN dragCornerInternal( const SHAPE_LINE_CHAIN& aOrigin, const VECT
 }
 
 
-void LINE::DragCorner( const VECTOR2I& aP, int aIndex, int aSnappingThreshold )
+void LINE::dragCorner45( const VECTOR2I& aP, int aIndex, int aSnappingThreshold )
 {
     SHAPE_LINE_CHAIN path;
 
@@ -426,6 +463,37 @@ void LINE::DragCorner( const VECTOR2I& aP, int aIndex, int aSnappingThreshold )
 
     path.Simplify();
     m_line = path;
+}
+
+
+void LINE::dragCornerFree( const VECTOR2I& aP, int aIndex, int aSnappingThreshold )
+{
+    m_line.Point( aIndex ) = aP;
+    m_line.Simplify();
+}
+
+void LINE::DragCorner( const VECTOR2I& aP, int aIndex, int aSnappingThreshold, bool aFreeAngle )
+{
+    if( aFreeAngle )
+    {
+        dragCornerFree ( aP, aIndex, aSnappingThreshold );
+    }
+    else
+    {
+        dragCorner45 ( aP, aIndex, aSnappingThreshold );
+    }
+}
+
+void LINE::DragSegment( const VECTOR2I& aP, int aIndex, int aSnappingThreshold, bool aFreeAngle )
+{
+    if( aFreeAngle )
+    {
+        assert( false );
+    }
+    else
+    {
+        dragSegment45 ( aP, aIndex, aSnappingThreshold );
+    }
 }
 
 
@@ -517,7 +585,7 @@ VECTOR2I LINE::snapToNeighbourSegments( const SHAPE_LINE_CHAIN& aPath, const VEC
 }
 
 
-void LINE::DragSegment( const VECTOR2I& aP, int aIndex, int aSnappingThreshold )
+void LINE::dragSegment45( const VECTOR2I& aP, int aIndex, int aSnappingThreshold )
 {
     SHAPE_LINE_CHAIN path( m_line );
     VECTOR2I target( aP );
@@ -582,7 +650,7 @@ void LINE::DragSegment( const VECTOR2I& aP, int aIndex, int aSnappingThreshold )
     }
     else
     {
-        if( dir_prev.IsObtuse(drag_dir ) )
+        if( dir_prev.Angle( drag_dir ) & (DIRECTION_45::ANG_OBTUSE | DIRECTION_45::ANG_HALF_FULL) )
         {
             guideA[0] = SEG( s_prev.A, s_prev.A + drag_dir.Left().ToVector() );
             guideA[1] = SEG( s_prev.A, s_prev.A + drag_dir.Right().ToVector() );
@@ -606,13 +674,14 @@ void LINE::DragSegment( const VECTOR2I& aP, int aIndex, int aSnappingThreshold )
     }
     else
     {
-        if( dir_next.IsObtuse( drag_dir ) )
+        if( dir_next.Angle( drag_dir ) & (DIRECTION_45::ANG_OBTUSE | DIRECTION_45::ANG_HALF_FULL) )
         {
             guideB[0] = SEG( s_next.B, s_next.B + drag_dir.Left().ToVector() );
             guideB[1] = SEG( s_next.B, s_next.B + drag_dir.Right().ToVector() );
         }
         else
             guideB[0] = guideB[1] =    SEG( dragged.B, dragged.B + dir_next.ToVector() );
+        
     }
 
     SEG s_current( target, target + drag_dir.ToVector() );
@@ -770,9 +839,9 @@ bool LINE::HasLoops() const
 {
     for( int i = 0; i < PointCount(); i++ )
     {
-        for( int j = 0; j < PointCount(); j++ )
+        for( int j = i + 2; j < PointCount(); j++ )
         {
-            if( ( std::abs( i - j ) > 1 ) && CPoint( i ) == CPoint( j ) )
+            if( CPoint( i ) == CPoint( j ) )
                 return true;
         }
     }
@@ -835,7 +904,9 @@ OPT_BOX2I LINE::ChangedArea( const LINE* aOther ) const
                     i_start = i;
                     break;
                 }
-            } else {
+            }
+            else
+            {
                 i_start = i;
                 break;
             }

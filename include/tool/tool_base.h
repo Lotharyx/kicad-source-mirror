@@ -36,12 +36,13 @@
 
 class EDA_ITEM;
 class TOOL_MANAGER;
+class wxWindow;
 
 namespace KIGFX
 {
 class VIEW;
 class VIEW_CONTROLS;
-};
+}
 
 enum TOOL_TYPE
 {
@@ -79,7 +80,7 @@ public:
     enum RESET_REASON
     {
         RUN,                ///< Tool is invoked after being inactive
-        MODEL_RELOAD,       ///< Model changes
+        MODEL_RELOAD,       ///< Model changes (required full reload)
         GAL_SWITCH          ///< Rendering engine changes
     };
 
@@ -145,15 +146,10 @@ public:
         return m_toolMgr;
     }
 
-    /**
-     * Function SetTransitions()
-     * This method is meant to be overridden in order to specify handlers for events. It is called
-     * every time tool is reset or finished.
-     */
-    virtual void SetTransitions() {};
-
     TOOL_SETTINGS& GetSettings();
 
+    bool IsToolActive() const;
+    
 protected:
     friend class TOOL_MANAGER;
     friend class TOOL_SETTINGS;

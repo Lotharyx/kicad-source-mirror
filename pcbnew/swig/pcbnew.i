@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2012 NBEE Embedded Systems, Miguel Angel Ajo <miguelangel@nbee.es>
- * Copyright (C) 1992-2012 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -35,15 +35,20 @@
 %include "docstrings.i"
 #endif
 
+// support for wchar_t
+%include "cwstring.i"
 
 %include kicad.i
+
+// mostly for KICAD_T
+%include typeinfo.i
 
 %include <convert_to_biu.h>
 
 %{
-#include <fpid.h>
+#include <lib_id.h>
 %}
-%include fpid.h
+%include lib_id.h
 
 
 // ignore a couple of items that generate warnings from swig built code
@@ -59,13 +64,16 @@ class BASE_SET {};
 
 %{
 #include <wx_python_helpers.h>
-#include <colors.h>
+#include <gal/color4d.h>
 
 #include <pcbnew_scripting_helpers.h>
 
 #include <plotcontroller.h>
 #include <pcb_plot_params.h>
+#include <exporters/gendrill_file_writer_base.h>
 #include <exporters/gendrill_Excellon_writer.h>
+#include <exporters/gendrill_gerber_writer.h>
+#include <exporters/gerber_jobfile_writer.h>
 
 BOARD *GetBoard(); /* get current editor board */
 %}
@@ -101,16 +109,21 @@ HANDLE_EXCEPTIONS(PLUGIN::FootprintDelete)
 
 %include <plotcontroller.h>
 %include <pcb_plot_params.h>
-%include <plot_common.h>
+%include <plotter.h>
+%include <exporters/gendrill_file_writer_base.h>
 %include <exporters/gendrill_Excellon_writer.h>
-%include <colors.h>
+%include <exporters/gendrill_gerber_writer.h>
+%include <exporters/gerber_jobfile_writer.h>
+%include <gal/color4d.h>
+%include <id.h>
 
+HANDLE_EXCEPTIONS(LoadBoard)
 %include <pcbnew_scripting_helpers.h>
 
 
 
 %include board.i
-%include module.i
+%include footprint.i
 %include plugins.i
 %include units.i
 

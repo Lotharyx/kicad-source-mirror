@@ -2,8 +2,8 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2015 Jean-Pierre Charras, jaen-pierre.charras at wanadoo.fr
- * Copyright (C) 2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2004-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2015 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 2004-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -32,10 +32,9 @@
 #define _LIB_ITEM_H_
 
 #include <base_struct.h>
+#include <eda_rect.h>
 #include <transform.h>
 #include <gr_basic.h>
-
-#include <boost/ptr_container/ptr_vector.hpp>
 
 
 class LINE_READER;
@@ -45,6 +44,7 @@ class PLOTTER;
 class LIB_ITEM;
 class LIB_PIN;
 class MSG_PANEL_ITEM;
+class EDA_DRAW_PANEL;
 
 
 extern const int fill_tab[];
@@ -52,14 +52,6 @@ extern const int fill_tab[];
 
 #define MINIMUM_SELECTION_DISTANCE 2 // Minimum selection distance in internal units
 
-
-/**
- * Helper for defining a list of library draw object pointers.  The Boost
- * pointer containers are responsible for deleting object pointers placed
- * in them.  If you access a object pointer from the list, do not delete
- * it directly.
- */
-typedef boost::ptr_vector< LIB_ITEM > LIB_ITEMS;
 
 /**
  * Helper for defining a list of pin object pointers.  The list does not
@@ -70,28 +62,25 @@ typedef std::vector< LIB_PIN* > LIB_PINS;
 
 
 /**
- * Class LIB_ITEM
- * is the base class for drawable items used by schematic library components.
+ * The base class for drawable items used by schematic library components.
  */
 class LIB_ITEM : public EDA_ITEM
 {
     /**
-     * Function drawGraphic
-     *
-     * draws the item on \a aPanel.
+     * Draw the item on \a aPanel.
      *
      * @param aPanel A pointer to the panel to draw the object upon.
      * @param aDC A pointer to the device context used to draw the object.
      * @param aOffset A reference to a wxPoint object containing the offset where to draw
      *                from the object's current position.
-     * @param aColor An #EDA_COLOR_T to draw the object or -1 to draw the object in it's
-     *               default color.
+     * @param aColor A COLOR4D to draw the object or COLOR4D::UNSPECIFIED to draw
+     *               the object in it's default color.
      * @param aDrawMode The mode used to perform the draw (#GR_OR, #GR_COPY, etc.).
      * @param aData A pointer to any object specific data required to perform the draw.
      * @param aTransform A reference to a #TRANSFORM object containing drawing transform.
      */
     virtual void drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC,
-                              const wxPoint& aOffset, EDA_COLOR_T aColor,
+                              const wxPoint& aOffset, COLOR4D aColor,
                               GR_DRAWMODE aDrawMode, void* aData,
                               const TRANSFORM& aTransform ) = 0;
 
@@ -100,24 +89,11 @@ class LIB_ITEM : public EDA_ITEM
      *
      * @param aClipBox Clip box of the current device context.
      * @param aDC The device context to draw on.
-     * @param aColor The index of the color to draw.
+     * @param aColor Draw color
      */
-    virtual void drawEditGraphics( EDA_RECT* aClipBox, wxDC* aDC, EDA_COLOR_T aColor ) {}
+    virtual void drawEditGraphics( EDA_RECT* aClipBox, wxDC* aDC, COLOR4D aColor ) {}
 
-    /**
-     * Calculates the attributes of an item at \a aPosition when it is being edited.
-     *
-     * This method gets called by the Draw() method when the item is being edited.  This
-     * probably should be a pure virtual method but bezier curves are not yet editable in
-     * the component library editor.  Therefore, the default method does nothing.
-     *
-     * @param aPosition The current mouse position in drawing coordinates.
-     */
-    virtual void calcEdit( const wxPoint& aPosition ) {}
-
-    bool    m_eraseLastDrawItem; ///< Used when editing a new draw item to prevent drawing
-                                 ///< artifacts.
-
+    
     friend class LIB_PART;
 
 protected:
@@ -140,8 +116,6 @@ protected:
      */
     FILL_T   m_Fill;
 
-    wxString m_typeName;          ///< Name of object displayed in the message panel.
-
     wxPoint  m_initialPos;        ///< Temporary position when moving an existing item.
     wxPoint  m_initialCursorPos;  ///< Initial cursor position at the beginning of a move.
 
@@ -160,7 +134,11 @@ public:
 
     virtual ~LIB_ITEM() { }
 
-    wxString GetTypeName() { return m_typeName; }
+    /**
+     * Provide a user-consumable name of the object type.  Perform localization when
+     * called so that run-time language selection works.
+     */
+    virtual wxString GetTypeName() = 0;
 
     /**
      * Begin an editing a component library draw item in \a aEditMode at \a aPosition.
@@ -202,12 +180,24 @@ public:
     virtual void EndEdit( const wxPoint& aPosition, bool aAbort = false ) { m_Flags = 0; }
 
     /**
+     * Calculates the attributes of an item at \a aPosition when it is being edited.
+     *
+     * This method gets called by the Draw() method when the item is being edited.  This
+     * probably should be a pure virtual method but bezier curves are not yet editable in
+     * the component library editor.  Therefore, the default method does nothing.
+     *
+     * @param aPosition The current mouse position in drawing coordinates.
+     */
+    virtual void CalcEdit( const wxPoint& aPosition ) {}
+
+
+    /**
      * Draw an item
      *
      * @param aPanel DrawPanel to use (can be null) mainly used for clipping purposes.
      * @param aDC Device Context (can be null)
      * @param aOffset Offset to draw
-     * @param aColor -1 to use the normal body item color, or use this color if >= 0
+     * @param aColor Draw color, or COLOR4D::UNSPECIFIED to use the normal body item color
      * @param aDrawMode GR_OR, GR_XOR, ...
      * @param aData Value or pointer used to pass others parameters, depending on body items.
      *              Used for some items to force to force no fill mode ( has meaning only for
@@ -216,32 +206,20 @@ public:
      * @param aTransform Transform Matrix (rotation, mirror ..)
      */
     virtual void Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint &aOffset,
-                       EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
+                       COLOR4D aColor, GR_DRAWMODE aDrawMode, void* aData,
                        const TRANSFORM& aTransform );
 
     /**
-     * Function GetPenSize
-     *
      * @return the size of the "pen" that be used to draw or plot this item
      */
     virtual int GetPenSize() const = 0;
-
-    /**
-     * Function Save
-     * writes draw item object to \a aFormatter in component library "*.lib" format.
-     *
-     * @param aFormatter A reference to an #OUTPUTFORMATTER object to write the
-     *                   component library item to.
-     * @return True if success writing else false.
-     */
-    virtual bool Save( OUTPUTFORMATTER& aFormatter ) = 0;
-
-    virtual bool Load( LINE_READER& aLine, wxString& aErrorMsg ) = 0;
 
     LIB_PART*      GetParent() const
     {
         return (LIB_PART *)m_Parent;
     }
+
+    void ViewGetLayers( int aLayers[], int& aCount ) const override;
 
     virtual bool HitTest( const wxPoint& aPosition ) const override
     {
@@ -264,9 +242,7 @@ public:
     virtual const EDA_RECT GetBoundingBox() const override { return EDA_ITEM::GetBoundingBox(); }
 
     /**
-     * Function GetMsgPanelInfo
-     * displays basic info (type, part and convert) about the current item
-     * in message panel.
+     * Display basic info (type, part and convert) about the current item in message panel.
      * <p>
      * This base function is used to display the information common to the
      * all library items.  Call the base class from the derived class or the
@@ -274,7 +250,8 @@ public:
      * </p>
      * @param aList is the list to populate.
      */
-    virtual void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    virtual void GetMsgPanelInfo( EDA_UNITS_T aUnits,
+                                  std::vector< MSG_PANEL_ITEM >& aList ) override;
 
     /**
      * Test LIB_ITEM objects for equivalence.
@@ -297,16 +274,14 @@ public:
     bool operator<( const LIB_ITEM& aOther) const;
 
     /**
-     * Function Offset
-     * sets the drawing object by \a aOffset from the current position.
+     * Set the drawing object by \a aOffset from the current position.
      *
      * @param aOffset Coordinates to offset the item position.
      */
     virtual void SetOffset( const wxPoint& aOffset ) = 0;
 
     /**
-     * Function Inside
-     * tests if any part of the draw object is inside rectangle bounds of \a aRect.
+     * Test if any part of the draw object is inside rectangle bounds of \a aRect.
      *
      * @param aRect Rectangle to check against.
      * @return True if object is inside rectangle.
@@ -314,16 +289,14 @@ public:
     virtual bool Inside( EDA_RECT& aRect ) const = 0;
 
     /**
-     * Function Move
-     * moves a draw object to \a aPosition.
+     * Move a draw object to \a aPosition.
      *
      * @param aPosition Position to move draw item to.
      */
     virtual void Move( const wxPoint& aPosition ) = 0;
 
     /**
-     * Function GetPosition
-     * returns the current draw object position.
+     * Return the current draw object position.
      *
      * @return A wxPoint object containing the position of the object.
      */
@@ -332,24 +305,21 @@ public:
     void SetPosition( const wxPoint& aPosition ) { Move( aPosition ); }
 
     /**
-     * Function MirrorHorizontal
-     * mirrors the draw object along the horizontal (X) axis about \a aCenter point.
+     * Mirror the draw object along the horizontal (X) axis about \a aCenter point.
      *
      * @param aCenter Point to mirror around.
      */
     virtual void MirrorHorizontal( const wxPoint& aCenter ) = 0;
 
     /**
-     * Function MirrorVertical
-     * mirrors the draw object along the MirrorVertical (Y) axis about \a aCenter point.
+     * Mirror the draw object along the MirrorVertical (Y) axis about \a aCenter point.
      *
      * @param aCenter Point to mirror around.
      */
     virtual void MirrorVertical( const wxPoint& aCenter ) = 0;
 
     /**
-     * Function Rotate
-     * rotates the object about \a aCenter point.
+     * Rotate the object about \a aCenter point.
      *
      * @param aCenter Point to rotate around.
      * @param aRotateCCW True to rotate counter clockwise.  False to rotate clockwise.
@@ -373,16 +343,14 @@ public:
                        const TRANSFORM& aTransform ) = 0;
 
     /**
-     * Function GetWidth
-     * return the width of the draw item.
+     * Return the width of the draw item.
      *
      * @return Width of draw object.
      */
     virtual int GetWidth() const = 0;
 
     /**
-     * Function SetWidth
-     * sets the width of the draw item to \a aWidth.
+     * Set the width of the draw item to \a aWidth.
      */
     virtual void SetWidth( int aWidth ) = 0;
 
@@ -403,9 +371,7 @@ public:
      */
     bool InEditMode() const { return ( m_Flags & ( IS_NEW | IS_DRAGGED | IS_MOVED | IS_RESIZED ) ) != 0; }
 
-    void SetEraseLastDrawItem( bool aErase = true ) { m_eraseLastDrawItem = aErase; }
-
-    virtual EDA_COLOR_T GetDefaultColor();
+    virtual COLOR4D GetDefaultColor();
 
     void SetUnit( int aUnit ) { m_Unit = aUnit; }
 
@@ -426,8 +392,7 @@ public:
 private:
 
     /**
-     * Function compare
-     * provides the draw object specific comparison called by the == and < operators.
+     * Provide the draw object specific comparison called by the == and < operators.
      *
      * The base object sort order which always proceeds the derived object sort order
      * is as follows:

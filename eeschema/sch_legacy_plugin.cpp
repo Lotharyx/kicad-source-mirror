@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2016 CERN
- * Copyright (C) 2016 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2016-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * @author Wayne Stambaugh <stambaughw@gmail.com>
  *
@@ -26,37 +26,45 @@
 #include <wx/mstream.h>
 #include <wx/filename.h>
 #include <wx/tokenzr.h>
-
-#include <drawtxt.h>
+#include <pgm_base.h>
+#include <draw_graphic_text.h>
 #include <kiway.h>
 #include <kicad_string.h>
 #include <richio.h>
 #include <core/typeinfo.h>
+#include <properties.h>
+#include <trace_helpers.h>
 
 #include <general.h>
-#include <lib_field.h>
+#include <sch_bitmap.h>
 #include <sch_bus_entry.h>
-#include <sch_marker.h>
+#include <sch_component.h>
 #include <sch_junction.h>
 #include <sch_line.h>
+#include <sch_marker.h>
 #include <sch_no_connect.h>
-#include <sch_component.h>
 #include <sch_text.h>
 #include <sch_sheet.h>
-#include <sch_bitmap.h>
 #include <sch_legacy_plugin.h>
 #include <template_fieldnames.h>
-#include <class_sch_screen.h>
+#include <sch_screen.h>
 #include <class_libentry.h>
 #include <class_library.h>
 #include <lib_arc.h>
 #include <lib_bezier.h>
 #include <lib_circle.h>
+#include <lib_field.h>
 #include <lib_pin.h>
 #include <lib_polyline.h>
 #include <lib_rectangle.h>
 #include <lib_text.h>
+#include <eeschema_id.h>       // for MAX_UNIT_COUNT_PER_PACKAGE definition
+#include <symbol_lib_table.h>  // for PropPowerSymsOnly definintion.
+#include <confirm.h>
 
+
+// Must be the first line of part library document (.dcm) files.
+#define DOCFILE_IDENT     "EESchema-DOCLIB  Version 2.0"
 
 #define SCH_PARSE_ERROR( text, reader, pos )                         \
     THROW_PARSE_ERROR( text, reader.GetSource(), reader.Line(),      \
@@ -66,8 +74,11 @@
 // Token delimiters.
 const char* delims = " \t\r\n";
 
-
-const wxChar traceSchLegacyPlugin[] = wxT( "KI_SCH_LEGACY_PLUGIN" );
+// Tokens to read/save graphic lines style
+#define T_STYLE "style"
+#define T_COLOR "rgb"          // cannot be modifed (used by wxWidgets)
+#define T_COLORA "rgba"        // cannot be modifed (used by wxWidgets)
+#define T_WIDTH "width"
 
 
 static bool is_eol( char c )
@@ -86,20 +97,19 @@ static bool is_eol( char c )
 
 
 /**
- * Function strCompare
- *
- * compares \a aString to the string starting at \a aLine and advances the character point to
+ * Compare \a aString to the string starting at \a aLine and advances the character point to
  * the end of \a String and returns the new pointer position in \a aOutput if it is not NULL.
  *
  * @param aString - A pointer to the string to compare.
  * @param aLine - A pointer to string to begin the comparison.
  * @param aOutput - A pointer to a string pointer to the end of the comparison if not NULL.
- * @return True if \a aString was found starting at \a aLine.  Otherwise false.
+ * @return true if \a aString was found starting at \a aLine.  Otherwise false.
  */
 static bool strCompare( const char* aString, const char* aLine, const char** aOutput = NULL )
 {
     size_t len = strlen( aString );
-    bool retv = ( strncasecmp( aLine, aString, len ) == 0 ) && isspace( aLine[ len ] );
+    bool retv = ( strncasecmp( aLine, aString, len ) == 0 ) &&
+                ( isspace( aLine[ len ] ) || aLine[ len ] == 0 );
 
     if( retv && aOutput )
     {
@@ -120,9 +130,7 @@ static bool strCompare( const char* aString, const char* aLine, const char** aOu
 
 
 /**
- * Function parseInt
- *
- * parses an ASCII integer string with possible leading whitespace into
+ * Parse an ASCII integer string with possible leading whitespace into
  * an integer and updates the pointer at \a aOutput if it is not NULL, just
  * like "man strtol()".
  *
@@ -131,8 +139,8 @@ static bool strCompare( const char* aString, const char* aLine, const char** aOu
  * @param aOutput - The pointer to a string pointer to copy the string pointer position when
  *                  the parsing is complete.
  * @return A valid integer value.
- * @throws An #IO_ERROR on an unexpected end of line.
- * @throws A #PARSE_ERROR if the parsed token is not a valid integer.
+ * @throw An #IO_ERROR on an unexpected end of line.
+ * @throw A #PARSE_ERROR if the parsed token is not a valid integer.
  */
 static int parseInt( FILE_LINE_READER& aReader, const char* aLine, const char** aOutput = NULL )
 {
@@ -164,9 +172,7 @@ static int parseInt( FILE_LINE_READER& aReader, const char* aLine, const char** 
 
 
 /**
- * Function parseHex
- *
- * parses an ASCII hex integer string with possible leading whitespace into
+ * Parse an ASCII hex integer string with possible leading whitespace into
  * a long integer and updates the pointer at \a aOutput if it is not NULL, just
  * like "man strtol".
  *
@@ -175,8 +181,8 @@ static int parseInt( FILE_LINE_READER& aReader, const char* aLine, const char** 
  * @param aOutput - The pointer to a string pointer to copy the string pointer position when
  *                  the parsing is complete.
  * @return A valid integer value.
- * @throws An #IO_ERROR on an unexpected end of line.
- * @throws A #PARSE_ERROR if the parsed token is not a valid integer.
+ * @throw IO_ERROR on an unexpected end of line.
+ * @throw PARSE_ERROR if the parsed token is not a valid integer.
  */
 static unsigned long parseHex( FILE_LINE_READER& aReader, const char* aLine,
                                const char** aOutput = NULL )
@@ -212,9 +218,7 @@ static unsigned long parseHex( FILE_LINE_READER& aReader, const char* aLine,
 
 
 /**
- * Function parseDouble
- *
- * parses an ASCII point string with possible leading whitespace into a double precision
+ * Parses an ASCII point string with possible leading whitespace into a double precision
  * floating point number and  updates the pointer at \a aOutput if it is not NULL, just
  * like "man strtod".
  *
@@ -223,8 +227,8 @@ static unsigned long parseHex( FILE_LINE_READER& aReader, const char* aLine,
  * @param aOutput - The pointer to a string pointer to copy the string pointer position when
  *                  the parsing is complete.
  * @return A valid double value.
- * @throws An #IO_ERROR on an unexpected end of line.
- * @throws A #PARSE_ERROR if the parsed token is not a valid integer.
+ * @throw IO_ERROR on an unexpected end of line.
+ * @throw PARSE_ERROR if the parsed token is not a valid integer.
  */
 static double parseDouble( FILE_LINE_READER& aReader, const char* aLine,
                            const char** aOutput = NULL )
@@ -257,17 +261,15 @@ static double parseDouble( FILE_LINE_READER& aReader, const char* aLine,
 
 
 /**
- * Function parseChar
- *
- * parses a single ASCII character and updates the pointer at \a aOutput if it is not NULL.
+ * Parse a single ASCII character and updates the pointer at \a aOutput if it is not NULL.
  *
  * @param aReader - The line reader used to generate exception throw information.
  * @param aCurrentToken - A pointer the current position in a string.
  * @param aNextToken - The pointer to a string pointer to copy the string pointer position when
  *                     the parsing is complete.
  * @return A valid ASCII character.
- * @throws An #IO_ERROR on an unexpected end of line.
- * @throws A #PARSE_ERROR if the parsed token is not a a single character token.
+ * @throw IO_ERROR on an unexpected end of line.
+ * @throw PARSE_ERROR if the parsed token is not a a single character token.
  */
 static char parseChar( FILE_LINE_READER& aReader, const char* aCurrentToken,
                        const char** aNextToken = NULL )
@@ -279,7 +281,7 @@ static char parseChar( FILE_LINE_READER& aReader, const char* aCurrentToken,
         SCH_PARSE_ERROR( _( "unexpected end of line" ), aReader, aCurrentToken );
 
     if( !isspace( *( aCurrentToken + 1 ) ) )
-        SCH_PARSE_ERROR( _( "expected single character token" ), aReader, aCurrentToken );
+        SCH_PARSE_ERROR( "expected single character token", aReader, aCurrentToken );
 
     if( aNextToken )
     {
@@ -296,9 +298,7 @@ static char parseChar( FILE_LINE_READER& aReader, const char* aCurrentToken,
 
 
 /**
- * Function parseUnquotedString.
- *
- * parses an unquoted utf8 string and updates the pointer at \a aOutput if it is not NULL.
+ * Parse an unquoted utf8 string and updates the pointer at \a aOutput if it is not NULL.
  *
  * The parsed string must be a continuous string with no white space.
  *
@@ -308,8 +308,8 @@ static char parseChar( FILE_LINE_READER& aReader, const char* aCurrentToken,
  * @param aNextToken - The pointer to a string pointer to copy the string pointer position when
  *                     the parsing is complete.
  * @param aCanBeEmpty - True if the parsed string is optional.  False if it is mandatory.
- * @throws An #IO_ERROR on an unexpected end of line.
- * @throws A #PARSE_ERROR if the \a aCanBeEmpty is false and no string was parsed.
+ * @throw IO_ERROR on an unexpected end of line.
+ * @throw PARSE_ERROR if the \a aCanBeEmpty is false and no string was parsed.
  */
 static void parseUnquotedString( wxString& aString, FILE_LINE_READER& aReader,
                                  const char* aCurrentToken, const char** aNextToken = NULL,
@@ -359,9 +359,7 @@ static void parseUnquotedString( wxString& aString, FILE_LINE_READER& aReader,
 
 
 /**
- * Function parseQuotedString.
- *
- * parses an quoted ASCII utf8 and updates the pointer at \a aOutput if it is not NULL.
+ * Parse an quoted ASCII utf8 and updates the pointer at \a aOutput if it is not NULL.
  *
  * The parsed string must be contained within a single line.  There are no multi-line
  * quoted strings in the legacy schematic file format.
@@ -372,8 +370,8 @@ static void parseUnquotedString( wxString& aString, FILE_LINE_READER& aReader,
  * @param aNextToken - The pointer to a string pointer to copy the string pointer position when
  *                     the parsing is complete.
  * @param aCanBeEmpty - True if the parsed string is optional.  False if it is mandatory.
- * @throws An #IO_ERROR on an unexpected end of line.
- * @throws A #PARSE_ERROR if the \a aCanBeEmpty is false and no string was parsed.
+ * @throw IO_ERROR on an unexpected end of line.
+ * @throw PARSE_ERROR if the \a aCanBeEmpty is false and no string was parsed.
  */
 static void parseQuotedString( wxString& aString, FILE_LINE_READER& aReader,
                                const char* aCurrentToken, const char** aNextToken = NULL,
@@ -402,7 +400,7 @@ static void parseQuotedString( wxString& aString, FILE_LINE_READER& aReader,
 
     // Verify opening quote.
     if( *tmp != '"' )
-        SCH_PARSE_ERROR( _( "expecting opening quote" ), aReader, aCurrentToken );
+        SCH_PARSE_ERROR( "expecting opening quote", aReader, aCurrentToken );
 
     tmp++;
 
@@ -439,10 +437,10 @@ static void parseQuotedString( wxString& aString, FILE_LINE_READER& aReader,
     aString = FROM_UTF8( utf8.c_str() );
 
     if( aString.IsEmpty() && !aCanBeEmpty )
-        SCH_PARSE_ERROR( _( "expected quoted string" ), aReader, aCurrentToken );
+        SCH_PARSE_ERROR( "expected quoted string", aReader, aCurrentToken );
 
     if( *tmp && *tmp != '"' )
-        SCH_PARSE_ERROR( _( "no closing quote for string found" ), aReader, tmp );
+        SCH_PARSE_ERROR( "no closing quote for string found", aReader, tmp );
 
     // Move past the closing quote.
     tmp++;
@@ -459,9 +457,116 @@ static void parseQuotedString( wxString& aString, FILE_LINE_READER& aReader,
 }
 
 
+/**
+ * A cache assistant for the part library portion of the #SCH_PLUGIN API, and only for the
+ * #SCH_LEGACY_PLUGIN, so therefore is private to this implementation file, i.e. not placed
+ * into a header.
+ */
+class SCH_LEGACY_PLUGIN_CACHE
+{
+    static int      m_modHash;      // Keep track of the modification status of the library.
+
+    wxString        m_fileName;     // Absolute path and file name.
+    wxFileName      m_libFileName;  // Absolute path and file name is required here.
+    wxDateTime      m_fileModTime;
+    LIB_ALIAS_MAP   m_aliases;      // Map of names of LIB_ALIAS pointers.
+    bool            m_isWritable;
+    bool            m_isModified;
+    int             m_versionMajor;
+    int             m_versionMinor;
+    int             m_libType;      // Is this cache a component or symbol library.
+
+    LIB_PART*       loadPart( FILE_LINE_READER& aReader );
+    void            loadHeader( FILE_LINE_READER& aReader );
+    void            loadAliases( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
+    void            loadField( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
+    void            loadDrawEntries( std::unique_ptr< LIB_PART >& aPart,
+                                     FILE_LINE_READER&            aReader );
+    void            loadFootprintFilters( std::unique_ptr< LIB_PART >& aPart,
+                                          FILE_LINE_READER&            aReader );
+    void            loadDocs();
+    LIB_ARC*        loadArc( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
+    LIB_CIRCLE*     loadCircle( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
+    LIB_TEXT*       loadText( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
+    LIB_RECTANGLE*  loadRectangle( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
+    LIB_PIN*        loadPin( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
+    LIB_POLYLINE*   loadPolyLine( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
+    LIB_BEZIER*     loadBezier( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
+
+    FILL_T          parseFillMode( FILE_LINE_READER& aReader, const char* aLine,
+                                   const char** aOutput );
+    bool            checkForDuplicates( wxString& aAliasName );
+    LIB_ALIAS*      removeAlias( LIB_ALIAS* aAlias );
+
+    void            saveDocFile();
+    void            saveSymbol( LIB_PART* aSymbol,
+                                std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter );
+    void            saveArc( LIB_ARC* aArc, std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter );
+    void            saveBezier( LIB_BEZIER* aBezier,
+                                std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter );
+    void            saveCircle( LIB_CIRCLE* aCircle,
+                                std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter );
+    void            saveField( LIB_FIELD* aField,
+                               std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter );
+    void            savePin( LIB_PIN* aPin, std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter );
+    void            savePolyLine( LIB_POLYLINE* aPolyLine,
+                                  std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter );
+    void            saveRectangle( LIB_RECTANGLE* aRectangle,
+                                   std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter );
+    void            saveText( LIB_TEXT* aText,
+                              std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter );
+
+    friend SCH_LEGACY_PLUGIN;
+
+public:
+    SCH_LEGACY_PLUGIN_CACHE( const wxString& aLibraryPath );
+    ~SCH_LEGACY_PLUGIN_CACHE();
+
+    int GetModifyHash() const { return m_modHash; }
+
+    // Most all functions in this class throw IO_ERROR exceptions.  There are no
+    // error codes nor user interface calls from here, nor in any SCH_PLUGIN objects.
+    // Catch these exceptions higher up please.
+
+    /// Save the entire library to file m_libFileName;
+    void Save( bool aSaveDocFile = true );
+
+    void Load();
+
+    void AddSymbol( const LIB_PART* aPart );
+
+    void DeleteAlias( const wxString& aAliasName );
+
+    void DeleteSymbol( const wxString& aAliasName );
+
+    // If m_libFileName is a symlink follow it to the real source file
+    wxFileName GetRealFile() const;
+
+    wxDateTime GetLibModificationTime();
+
+    bool IsFile( const wxString& aFullPathAndFileName ) const;
+
+    bool IsFileChanged() const;
+
+    void SetModified( bool aModified = true ) { m_isModified = aModified; }
+
+    wxString GetLogicalName() const { return m_libFileName.GetName(); }
+
+    void SetFileName( const wxString& aFileName ) { m_libFileName = aFileName; }
+
+    wxString GetFileName() const { return m_libFileName.GetFullPath(); }
+};
+
+
 SCH_LEGACY_PLUGIN::SCH_LEGACY_PLUGIN()
 {
     init( NULL );
+}
+
+
+SCH_LEGACY_PLUGIN::~SCH_LEGACY_PLUGIN()
+{
+    delete m_cache;
 }
 
 
@@ -491,8 +596,30 @@ SCH_SHEET* SCH_LEGACY_PLUGIN::Load( const wxString& aFileName, KIWAY* aKiway,
     // always be an absolute path so the project path can be used for load child sheet files.
     wxASSERT( fn.IsAbsolute() );
 
-    m_path = fn.GetPath();
+    if( aAppendToMe )
+    {
+        wxLogTrace( traceSchLegacyPlugin, "Append \"%s\" to sheet \"%s\".",
+                    aFileName, aAppendToMe->GetFileName() );
 
+        wxFileName normedFn = aAppendToMe->GetFileName();
+
+        if( !normedFn.IsAbsolute() )
+        {
+            if( aFileName.Right( normedFn.GetFullPath().Length() ) == normedFn.GetFullPath() )
+                m_path = aFileName.Left( aFileName.Length() - normedFn.GetFullPath().Length() );
+        }
+
+        if( m_path.IsEmpty() )
+            m_path = aKiway->Prj().GetProjectPath();
+
+        wxLogTrace( traceSchLegacyPlugin, "Normalized append path \"%s\".", m_path );
+    }
+    else
+    {
+        m_path = aKiway->Prj().GetProjectPath();
+    }
+
+    m_currentPath.push( m_path );
     init( aKiway, aProperties );
 
     if( aAppendToMe == NULL )
@@ -514,6 +641,8 @@ SCH_SHEET* SCH_LEGACY_PLUGIN::Load( const wxString& aFileName, KIWAY* aKiway,
         loadHierarchy( sheet );
     }
 
+    wxASSERT( m_currentPath.size() == 1 );  // only the project path should remain
+
     return sheet;
 }
 
@@ -532,7 +661,15 @@ void SCH_LEGACY_PLUGIN::loadHierarchy( SCH_SHEET* aSheet )
         wxFileName fileName = aSheet->GetFileName();
 
         if( !fileName.IsAbsolute() )
-            fileName.SetPath( m_path );
+            fileName.MakeAbsolute( m_currentPath.top() );
+
+        // Save the current path so that it gets restored when decending and ascending the
+        // sheet hierarchy which allows for sheet schematic files to be nested in folders
+        // relative to the last path a schematic was loaded from.
+        wxLogTrace( traceSchLegacyPlugin, "Saving path    \"%s\"", m_currentPath.top() );
+        m_currentPath.push( fileName.GetPath() );
+        wxLogTrace( traceSchLegacyPlugin, "Current path   \"%s\"", m_currentPath.top() );
+        wxLogTrace( traceSchLegacyPlugin, "Loading        \"%s\"", fileName.GetFullPath() );
 
         m_rootSheet->SearchHierarchy( fileName.GetFullPath(), &screen );
 
@@ -546,30 +683,49 @@ void SCH_LEGACY_PLUGIN::loadHierarchy( SCH_SHEET* aSheet )
         {
             aSheet->SetScreen( new SCH_SCREEN( m_kiway ) );
             aSheet->GetScreen()->SetFileName( fileName.GetFullPath() );
-            loadFile( fileName.GetFullPath(), aSheet->GetScreen() );
 
-            EDA_ITEM* item = aSheet->GetScreen()->GetDrawItems();
-
-            while( item )
+            try
             {
-                if( item->Type() == SCH_SHEET_T )
+                loadFile( fileName.GetFullPath(), aSheet->GetScreen() );
+
+                EDA_ITEM* item = aSheet->GetScreen()->GetDrawItems();
+
+                while( item )
                 {
-                    SCH_SHEET* sheet = (SCH_SHEET*) item;
+                    if( item->Type() == SCH_SHEET_T )
+                    {
+                        SCH_SHEET* sheet = (SCH_SHEET*) item;
 
-                    // Set the parent to aSheet.  This effectively creates a method to find
-                    // the root sheet from any sheet so a pointer to the root sheet does not
-                    // need to be stored globally.  Note: this is not the same as a hierarchy.
-                    // Complex hierarchies can have multiple copies of a sheet.  This only
-                    // provides a simple tree to find the root sheet.
-                    sheet->SetParent( aSheet );
+                        // Set the parent to aSheet.  This effectively creates a method to find
+                        // the root sheet from any sheet so a pointer to the root sheet does not
+                        // need to be stored globally.  Note: this is not the same as a hierarchy.
+                        // Complex hierarchies can have multiple copies of a sheet.  This only
+                        // provides a simple tree to find the root sheet.
+                        sheet->SetParent( aSheet );
 
-                    // Recursion starts here.
-                    loadHierarchy( sheet );
+                        // Recursion starts here.
+                        loadHierarchy( sheet );
+                    }
+
+                    item = item->Next();
                 }
+            }
+            catch( const IO_ERROR& ioe )
+            {
+                // If there is a problem loading the root sheet, there is no recovery.
+                if( aSheet == m_rootSheet )
+                    throw( ioe );
 
-                item = item->Next();
+                // For all subsheets, queue up the error message for the caller.
+                if( !m_error.IsEmpty() )
+                    m_error += "\n";
+
+                m_error += ioe.What();
             }
         }
+
+        m_currentPath.pop();
+        wxLogTrace( traceSchLegacyPlugin, "Restoring path \"%s\"", m_currentPath.top() );
     }
 }
 
@@ -622,9 +778,9 @@ void SCH_LEGACY_PLUGIN::loadHeader( FILE_LINE_READER& aReader, SCH_SCREEN* aScre
 {
     const char* line = aReader.ReadLine();
 
-    if( !strCompare( "Eeschema Schematic File Version", line, &line ) )
+    if( !line || !strCompare( "Eeschema Schematic File Version", line, &line ) )
     {
-        m_error.Printf( _( "'%s' does not appear to be an Eeschema file" ),
+        m_error.Printf( _( "\"%s\" does not appear to be an Eeschema file" ),
                         GetChars( aScreen->GetFileName() ) );
         THROW_IO_ERROR( m_error );
     }
@@ -671,7 +827,7 @@ void SCH_LEGACY_PLUGIN::loadPageSettings( FILE_LINE_READER& aReader, SCH_SCREEN*
     parseUnquotedString( buf, aReader, line, &line );
 
     if( !pageInfo.SetType( buf ) )
-        SCH_PARSE_ERROR( _( "invalid page size" ), aReader, line );
+        SCH_PARSE_ERROR( "invalid page size", aReader, line );
 
     int pagew = parseInt( aReader, line, &line );
     int pageh = parseInt( aReader, line, &line );
@@ -756,7 +912,7 @@ void SCH_LEGACY_PLUGIN::loadPageSettings( FILE_LINE_READER& aReader, SCH_SCREEN*
         }
     }
 
-    SCH_PARSE_ERROR( _( "missing 'EndDescr'" ), aReader, line );
+    SCH_PARSE_ERROR( "missing 'EndDescr'", aReader, line );
 }
 
 
@@ -848,7 +1004,7 @@ SCH_SHEET* SCH_LEGACY_PLUGIN::loadSheet( FILE_LINE_READER& aReader )
                     sheetPin->SetShape( NET_UNSPECIFIED );
                     break;
                 default:
-                    SCH_PARSE_ERROR( _( "invalid sheet pin type" ), aReader, line );
+                    SCH_PARSE_ERROR( "invalid sheet pin type", aReader, line );
                 }
 
                 switch( parseChar( aReader, line, &line ) )
@@ -869,7 +1025,7 @@ SCH_SHEET* SCH_LEGACY_PLUGIN::loadSheet( FILE_LINE_READER& aReader )
                     sheetPin->SetEdge( SCH_SHEET_PIN::SHEET_LEFT_SIDE );
                     break;
                 default:
-                    SCH_PARSE_ERROR( _( "invalid sheet pin side" ), aReader, line );
+                    SCH_PARSE_ERROR( "invalid sheet pin side", aReader, line );
                 }
 
                 wxPoint position;
@@ -880,7 +1036,7 @@ SCH_SHEET* SCH_LEGACY_PLUGIN::loadSheet( FILE_LINE_READER& aReader )
 
                 size = parseInt( aReader, line, &line );
 
-                sheetPin->SetSize( wxSize( size, size ) );
+                sheetPin->SetTextSize( wxSize( size, size ) );
 
                 sheet->AddPin( sheetPin.release() );
             }
@@ -891,7 +1047,7 @@ SCH_SHEET* SCH_LEGACY_PLUGIN::loadSheet( FILE_LINE_READER& aReader )
         line = aReader.ReadLine();
     }
 
-    SCH_PARSE_ERROR( _( "missing '$EndSheet`" ), aReader, line );
+    SCH_PARSE_ERROR( "missing '$EndSheet`", aReader, line );
 
     return NULL;  // Prevents compiler warning.  Should never get here.
 }
@@ -919,8 +1075,16 @@ SCH_BITMAP* SCH_LEGACY_PLUGIN::loadBitmap( FILE_LINE_READER& aReader )
         }
         else if( strCompare( "Scale", line, &line ) )
         {
-            /// @todo Make m_scale private and add accessors.
-            bitmap->GetImage()->SetScale( parseDouble( aReader, line, &line ) );
+            auto scalefactor = parseDouble( aReader, line, &line );
+
+            // Prevent scalefactor values that cannot be displayed.
+            // In the case of a bad value, we accept that the image might be mis-scaled
+            // rather than removing the full image.  Users can then edit the scale factor in
+            // Eeschema to the appropriate value
+            if( !std::isnormal( scalefactor ) )
+                scalefactor = 1.0;
+
+            bitmap->GetImage()->SetScale( scalefactor );
         }
         else if( strCompare( "Data", line, &line ) )
         {
@@ -1038,6 +1202,68 @@ SCH_LINE* SCH_LEGACY_PLUGIN::loadWire( FILE_LINE_READER& aReader )
     if( !strCompare( "Line", line, &line ) )
         SCH_PARSE_ERROR( "invalid wire definition", aReader, line );
 
+    // Since Sept 15, 2017, a line style is alloved (width, style, color)
+    // Only non default values are stored
+    while( !is_eol( *line ) )
+    {
+        wxString buf;
+
+        parseUnquotedString( buf, aReader, line, &line );
+
+        if( buf == ")" )
+            continue;
+
+        else if( buf == T_WIDTH )
+        {
+            int size = parseInt( aReader, line, &line );
+            wire->SetLineWidth( size );
+        }
+        else if( buf == T_STYLE )
+        {
+            parseUnquotedString( buf, aReader, line, &line );
+            int style = SCH_LINE::GetLineStyleInternalId( buf );
+            wire->SetLineStyle( style );
+        }
+        else    // should be the color parameter.
+        {
+            // The color param is something like rgb(150, 40, 191)
+            // and because there is no space between ( and 150
+            // the first param is inside buf.
+            // So break keyword and the first param into 2 separate strings.
+            wxString prm, keyword;
+            keyword = buf.BeforeLast( '(', &prm );
+
+            if( ( keyword == T_COLOR ) || ( keyword == T_COLORA ) )
+            {
+                long color[4] = { 0 };
+
+                int ii = 0;
+
+                if( !prm.IsEmpty() )
+                {
+                    prm.ToLong( &color[ii] );
+                    ii++;
+                }
+
+                int prm_count = ( keyword == T_COLORA ) ? 4 : 3;
+                // fix opacity to 1.0 or 255, when not exists in file
+                color[3] = 255;
+
+                for(; ii < prm_count && !is_eol( *line ); ii++ )
+                {
+                    color[ii] = parseInt( aReader, line, &line );
+
+                    // Skip the separator between values
+                    if( *line == ',' || *line == ' ')
+                        line++;
+                }
+
+                wire->SetLineColor( color[0]/255.0, color[1]/255.0, color[2]/255.0,color[3]/255.0 );
+            }
+        }
+    }
+
+    // Read the segment en points coordinates:
     line = aReader.ReadLine();
 
     wxPoint begin, end;
@@ -1130,11 +1356,11 @@ SCH_TEXT* SCH_LEGACY_PLUGIN::loadText( FILE_LINE_READER& aReader )
     position.x = parseInt( aReader, line, &line );
     position.y = parseInt( aReader, line, &line );
     text->SetPosition( position );
-    text->SetOrientation( parseInt( aReader, line, &line ) );
+    text->SetLabelSpinStyle( parseInt( aReader, line, &line ) );
 
     int size = parseInt( aReader, line, &line );
 
-    text->SetSize( wxSize( size, size ) );
+    text->SetTextSize( wxSize( size, size ) );
 
     // Parse the global and hierarchical label type.
     if( text->Type() == SCH_HIERARCHICAL_LABEL_T || text->Type() == SCH_GLOBAL_LABEL_T )
@@ -1150,22 +1376,27 @@ SCH_TEXT* SCH_LEGACY_PLUGIN::loadText( FILE_LINE_READER& aReader )
         else if( strCompare( SheetLabelType[NET_UNSPECIFIED], line, &line ) )
             text->SetShape( NET_UNSPECIFIED );
         else
-            SCH_PARSE_ERROR( _( "invalid label type" ), aReader, line );
+            SCH_PARSE_ERROR( "invalid label type", aReader, line );
     }
 
     int thickness = 0;
 
-    // The following tokens do not exist in version 1 schematic files.
+    // The following tokens do not exist in version 1 schematic files,
+    // and not always in version 2 for HLabels and GLabels
     if( m_version > 1 )
     {
-        if( strCompare( "Italic", line, &line ) )
-            text->SetItalic( true );
-        else if( !strCompare( "~", line, &line ) )
-            SCH_PARSE_ERROR( _( "expected 'Italics' or '~'" ), aReader, line );
+        if( m_version > 2 || *line >= ' ' )
+        {
+            if( strCompare( "Italic", line, &line ) )
+                text->SetItalic( true );
+            else if( !strCompare( "~", line, &line ) )
+                SCH_PARSE_ERROR( _( "expected 'Italics' or '~'" ), aReader, line );
+        }
 
         // The thickness token does not exist in older versions of the schematic file format
-        // so calling parseInt will not work here.
-        thickness = parseInt( aReader, line, &line );
+        // so calling parseInt will be made only if the EOL is not reached.
+        if( *line >= ' ' )
+            thickness = parseInt( aReader, line, &line );
     }
 
     text->SetBold( thickness != 0 );
@@ -1209,14 +1440,31 @@ SCH_COMPONENT* SCH_LEGACY_PLUGIN::loadComponent( FILE_LINE_READER& aReader )
         if( strCompare( "L", line, &line ) )
         {
             wxString libName;
+            size_t pos = 2;                               // "X" plus ' ' space character.
+            wxString utf8Line = wxString::FromUTF8( line );
+            wxStringTokenizer tokens( utf8Line, " \r\n\t" );
 
-            parseUnquotedString( libName, aReader, line, &line );
+            if( tokens.CountTokens() < 2 )
+                THROW_PARSE_ERROR( "invalid symbol library definition", aReader.GetSource(),
+                                   aReader.Line(), aReader.LineNumber(), pos );
+
+            libName = tokens.GetNextToken();
             libName.Replace( "~", " " );
-            component->SetPartName( libName );
 
-            wxString refDesignator;
+            LIB_ID libId;
 
-            parseUnquotedString( refDesignator, aReader, line, &line );
+            // Prior to schematic version 4, library IDs did not have a library nickname so
+            // parsing the symbol name with LIB_ID::Parse() would break symbol library links
+            // that contained '/' and ':' characters.
+            if( m_version > 3 )
+                libId.Parse( libName, LIB_ID::ID_SCH, true );
+            else
+                libId.SetLibItemName( libName, false );
+
+            component->SetLibId( libId );
+
+            wxString refDesignator = tokens.GetNextToken();
+
             refDesignator.Replace( "~", " " );
 
             wxString prefix = refDesignator;
@@ -1240,7 +1488,20 @@ SCH_COMPONENT* SCH_LEGACY_PLUGIN::loadComponent( FILE_LINE_READER& aReader )
         }
         else if( strCompare( "U", line, &line ) )
         {
-            component->SetUnit( parseInt( aReader, line, &line ) );
+            // This fixes a potentially buggy files caused by unit being set to zero which
+            // causes netlist issues.  See https://bugs.launchpad.net/kicad/+bug/1677282.
+            int unit = parseInt( aReader, line, &line );
+
+            if( unit == 0 )
+            {
+                unit = 1;
+
+                // Set the file as modified so the user can be warned.
+                if( m_rootSheet && m_rootSheet->GetScreen() )
+                    m_rootSheet->GetScreen()->SetModify();
+            }
+
+            component->SetUnit( unit );
             component->SetConvert( parseInt( aReader, line, &line ) );
             component->SetTimeStamp( parseHex( aReader, line, &line ) );
         }
@@ -1288,7 +1549,7 @@ SCH_COMPONENT* SCH_LEGACY_PLUGIN::loadComponent( FILE_LINE_READER& aReader )
             if( !unit.ToLong( &tmp, 10 ) )
                 SCH_PARSE_ERROR( "expected integer value", aReader, line );
 
-            if( tmp < 0 || tmp > 26 )
+            if( tmp < 0 || tmp > MAX_UNIT_COUNT_PER_PACKAGE )
                 SCH_PARSE_ERROR( "unit value out of range", aReader, line );
 
             component->AddHierarchicalReference( path, reference, (int)tmp );
@@ -1342,8 +1603,8 @@ SCH_COMPONENT* SCH_LEGACY_PLUGIN::loadComponent( FILE_LINE_READER& aReader )
                 else if( hjustify == 'R' )
                     component->GetField( index )->SetHorizJustify( GR_TEXT_HJUSTIFY_RIGHT );
                 else if( hjustify != 'C' )
-                    SCH_PARSE_ERROR( _( "component field text horizontal justification must be "
-                                        "L, R, or C" ), aReader, line );
+                    SCH_PARSE_ERROR( "component field text horizontal justification must be "
+                                     "L, R, or C", aReader, line );
 
                 // We are guaranteed to have a least one character here for older file formats
                 // otherwise an exception would have been raised..
@@ -1352,38 +1613,41 @@ SCH_COMPONENT* SCH_LEGACY_PLUGIN::loadComponent( FILE_LINE_READER& aReader )
                 else if( textAttrs[0] == 'B' )
                     component->GetField( index )->SetVertJustify( GR_TEXT_VJUSTIFY_BOTTOM );
                 else if( textAttrs[0] != 'C' )
-                    SCH_PARSE_ERROR( _( "component field text vertical justification must be "
-                                        "B, T, or C" ), aReader, line );
+                    SCH_PARSE_ERROR( "component field text vertical justification must be "
+                                     "B, T, or C", aReader, line );
 
                 // Newer file formats include the bold and italics text attribute.
-                if( textAttrs.Length() != 3 )
-                    SCH_PARSE_ERROR( _( "component field text attributes must be 3 characters wide" ),
-                                     aReader, line );
+                if( textAttrs.Length() > 1 )
+                {
+                    if( textAttrs.Length() != 3 )
+                        SCH_PARSE_ERROR( _( "component field text attributes must be 3 characters wide" ),
+                                         aReader, line );
 
-                if( textAttrs[1] == 'I' )
-                    component->GetField( index )->SetItalic( true );
-                else if( textAttrs[1] != 'N' )
-                    SCH_PARSE_ERROR( _( "component field text italics indicator must be I or N" ),
-                                     aReader, line );
+                    if( textAttrs[1] == 'I' )
+                        component->GetField( index )->SetItalic( true );
+                    else if( textAttrs[1] != 'N' )
+                        SCH_PARSE_ERROR( "component field text italics indicator must be I or N",
+                                         aReader, line );
 
-                if( textAttrs[2] == 'B' )
-                    component->GetField( index )->SetBold( true );
-                else if( textAttrs[2] != 'N' )
-                    SCH_PARSE_ERROR( _( "component field text bold indicator must be B or N" ),
-                                     aReader, line );
+                    if( textAttrs[2] == 'B' )
+                        component->GetField( index )->SetBold( true );
+                    else if( textAttrs[2] != 'N' )
+                        SCH_PARSE_ERROR( "component field text bold indicator must be B or N",
+                                         aReader, line );
+                }
             }
 
             component->GetField( index )->SetText( text );
-            component->GetField( index )->SetTextPosition( pos );
-            component->GetField( index )->SetAttributes( attributes );
-            component->GetField( index )->SetSize( wxSize( size, size ) );
+            component->GetField( index )->SetTextPos( pos );
+            component->GetField( index )->SetVisible( !attributes );
+            component->GetField( index )->SetTextSize( wxSize( size, size ) );
 
             if( orientation == 'H' )
-                component->GetField( index )->SetOrientation( TEXT_ORIENT_HORIZ );
+                component->GetField( index )->SetTextAngle( TEXT_ANGLE_HORIZ );
             else if( orientation == 'V' )
-                component->GetField( index )->SetOrientation( TEXT_ORIENT_VERT );
+                component->GetField( index )->SetTextAngle( TEXT_ANGLE_VERT );
             else
-                SCH_PARSE_ERROR( _( "component field orientation must be H or V" ),
+                SCH_PARSE_ERROR( "component field orientation must be H or V",
                                  aReader, line );
 
             if( name.IsEmpty() )
@@ -1415,22 +1679,22 @@ SCH_COMPONENT* SCH_LEGACY_PLUGIN::loadComponent( FILE_LINE_READER& aReader )
             transform.x1 = parseInt( aReader, line, &line );
 
             if( transform.x1 < -1 || transform.x1 > 1 )
-                SCH_PARSE_ERROR( _( "invalid component X1 transform value" ), aReader, line );
+                SCH_PARSE_ERROR( "invalid component X1 transform value", aReader, line );
 
             transform.y1 = parseInt( aReader, line, &line );
 
             if( transform.y1 < -1 || transform.y1 > 1 )
-                SCH_PARSE_ERROR( _( "invalid component Y1 transform value" ), aReader, line );
+                SCH_PARSE_ERROR( "invalid component Y1 transform value", aReader, line );
 
             transform.x2 = parseInt( aReader, line, &line );
 
             if( transform.x2 < -1 || transform.x2 > 1 )
-                SCH_PARSE_ERROR( _( "invalid component X2 transform value" ), aReader, line );
+                SCH_PARSE_ERROR( "invalid component X2 transform value", aReader, line );
 
             transform.y2 = parseInt( aReader, line, &line );
 
             if( transform.y2 < -1 || transform.y2 > 1 )
-                SCH_PARSE_ERROR( _( "invalid component Y2 transform value" ), aReader, line );
+                SCH_PARSE_ERROR( "invalid component Y2 transform value", aReader, line );
 
             component->SetTransform( transform );
         }
@@ -1449,6 +1713,8 @@ void SCH_LEGACY_PLUGIN::Save( const wxString& aFileName, SCH_SCREEN* aScreen, KI
 {
     wxCHECK_RET( aScreen != NULL, "NULL SCH_SCREEN object." );
     wxCHECK_RET( !aFileName.IsEmpty(), "No schematic file name defined." );
+
+    LOCALE_IO   toggle;     // toggles on, then off, the C locale, to write floating point values.
 
     init( aKiway, aProperties );
 
@@ -1479,7 +1745,7 @@ void SCH_LEGACY_PLUGIN::Format( SCH_SCREEN* aScreen )
         m_out->Print( 0, "LIBS:%s\n", TO_UTF8( lib.GetName() ) );
 
     // This section is not used, but written for file compatibility
-    m_out->Print( 0, "EELAYER %d %d\n", LAYERSCH_ID_COUNT, 0 );
+    m_out->Print( 0, "EELAYER %d %d\n", SCH_LAYER_ID_COUNT, 0 );
     m_out->Print( 0, "EELAYER END\n" );
 
     /* Write page info, ScreenNumber and NumberOfScreen; not very meaningful for
@@ -1511,32 +1777,32 @@ void SCH_LEGACY_PLUGIN::Format( SCH_SCREEN* aScreen )
         switch( item->Type() )
         {
         case SCH_COMPONENT_T:
-            saveComponent( dynamic_cast< SCH_COMPONENT* >( item ) );
+            saveComponent( static_cast< SCH_COMPONENT* >( item ) );
             break;
         case SCH_BITMAP_T:
-            saveBitmap( dynamic_cast< SCH_BITMAP* >( item ) );
+            saveBitmap( static_cast< SCH_BITMAP* >( item ) );
             break;
         case SCH_SHEET_T:
-            saveSheet( dynamic_cast< SCH_SHEET* >( item ) );
+            saveSheet( static_cast< SCH_SHEET* >( item ) );
             break;
         case SCH_JUNCTION_T:
-            saveJunction( dynamic_cast< SCH_JUNCTION* >( item ) );
+            saveJunction( static_cast< SCH_JUNCTION* >( item ) );
             break;
         case SCH_NO_CONNECT_T:
-            saveNoConnect( dynamic_cast< SCH_NO_CONNECT* >( item ) );
+            saveNoConnect( static_cast< SCH_NO_CONNECT* >( item ) );
             break;
         case SCH_BUS_WIRE_ENTRY_T:
         case SCH_BUS_BUS_ENTRY_T:
-            saveBusEntry( dynamic_cast< SCH_BUS_ENTRY_BASE* >( item ) );
+            saveBusEntry( static_cast< SCH_BUS_ENTRY_BASE* >( item ) );
             break;
         case SCH_LINE_T:
-            saveLine( dynamic_cast< SCH_LINE* >( item ) );
+            saveLine( static_cast< SCH_LINE* >( item ) );
             break;
         case SCH_TEXT_T:
         case SCH_LABEL_T:
         case SCH_GLOBAL_LABEL_T:
         case SCH_HIERARCHICAL_LABEL_T:
-            saveText( dynamic_cast< SCH_TEXT* >( item ) );
+            saveText( static_cast< SCH_TEXT* >( item ) );
             break;
         default:
             wxASSERT( "Unexpected schematic object type in SCH_LEGACY_PLUGIN::Format()" );
@@ -1569,7 +1835,7 @@ void SCH_LEGACY_PLUGIN::saveComponent( SCH_COMPONENT* aComponent )
             name1 = toUTFTildaText( aComponent->GetField( REFERENCE )->GetText() );
     }
 
-    wxString part_name = aComponent->GetPartName();
+    wxString part_name = aComponent->GetLibId().Format();
 
     if( part_name.size() )
     {
@@ -1666,10 +1932,10 @@ void SCH_LEGACY_PLUGIN::saveField( SCH_FIELD* aField )
     m_out->Print( 0, "F %d %s %c %-3d %-3d %-3d %4.4X %c %c%c%c",
                   aField->GetId(),
                   EscapedUTF8( aField->GetText() ).c_str(),     // wraps in quotes too
-                  aField->GetOrientation() == TEXT_ORIENT_HORIZ ? 'H' : 'V',
+                  aField->GetTextAngle() == TEXT_ANGLE_HORIZ ? 'H' : 'V',
                   aField->GetLibPosition().x, aField->GetLibPosition().y,
-                  aField->GetSize().x,
-                  aField->GetAttributes(),
+                  aField->GetTextWidth(),
+                  !aField->IsVisible(),
                   hjustify, vjustify,
                   aField->IsItalic() ? 'I' : 'N',
                   aField->IsBold() ? 'B' : 'N' );
@@ -1705,7 +1971,7 @@ void SCH_LEGACY_PLUGIN::saveBitmap( SCH_BITMAP* aBitmap )
     wxStreamBuffer* buffer = stream.GetOutputStreamBuffer();
     char*           begin  = (char*) buffer->GetBufferStart();
 
-    for( int ii = 0; begin <= buffer->GetBufferEnd(); begin++, ii++ )
+    for( int ii = 0; begin < buffer->GetBufferEnd(); begin++, ii++ )
     {
         if( ii >= 32 )
         {
@@ -1727,7 +1993,8 @@ void SCH_LEGACY_PLUGIN::saveSheet( SCH_SHEET* aSheet )
     wxCHECK_RET( aSheet != NULL, "SCH_SHEET* is NULL" );
 
     m_out->Print( 0, "$Sheet\n" );
-    m_out->Print( 0, "S %-4d %-4d %-4d %-4d\n", aSheet->GetPosition().x, aSheet->GetPosition().y,
+    m_out->Print( 0, "S %-4d %-4d %-4d %-4d\n",
+                  aSheet->GetPosition().x, aSheet->GetPosition().y,
                   aSheet->GetSize().x, aSheet->GetSize().y );
 
     m_out->Print( 0, "U %8.8lX\n", (unsigned long) aSheet->GetTimeStamp() );
@@ -1789,7 +2056,7 @@ void SCH_LEGACY_PLUGIN::saveSheet( SCH_SHEET* aSheet )
         m_out->Print( 0, "F%d %s %c %c %-3d %-3d %-3d\n", pin.GetNumber(),
                       EscapedUTF8( pin.GetText() ).c_str(),     // supplies wrapping quotes
                       type, side, pin.GetPosition().x, pin.GetPosition().y,
-                      pin.GetSize().x );
+                      pin.GetTextWidth() );
     }
 
     m_out->Print( 0, "$EndSheet\n" );
@@ -1841,9 +2108,29 @@ void SCH_LEGACY_PLUGIN::saveLine( SCH_LINE* aLine )
     else if( aLine->GetLayer() == LAYER_BUS )
         layer = "Bus";
 
-    m_out->Print( 0, "Wire %s %s\n", layer, width );
-    m_out->Print( 0, "\t%-4d %-4d %-4d %-4d\n", aLine->GetStartPoint().x, aLine->GetStartPoint().y,
+    m_out->Print( 0, "Wire %s %s", layer, width );
+
+    // Write line style (width, type, color) only for non default values
+    if( aLine->GetLayer() == LAYER_NOTES )
+    {
+        if( aLine->GetPenSize() != aLine->GetDefaultWidth() )
+            m_out->Print( 0, " %s %d", T_WIDTH, aLine->GetLineSize() );
+
+        if( aLine->GetLineStyle() != aLine->GetDefaultStyle() )
+            m_out->Print( 0, " %s %s", T_STYLE, SCH_LINE::GetLineStyleName( aLine->GetLineStyle() ) );
+
+        if( aLine->GetLineColor() != aLine->GetDefaultColor() )
+            m_out->Print( 0, " %s",
+                TO_UTF8( aLine->GetLineColor().ToColour().GetAsString( wxC2S_CSS_SYNTAX ) ) );
+    }
+
+    m_out->Print( 0, "\n" );
+
+    m_out->Print( 0, "\t%-4d %-4d %-4d %-4d",
+                  aLine->GetStartPoint().x, aLine->GetStartPoint().y,
                   aLine->GetEndPoint().x, aLine->GetEndPoint().y );
+
+    m_out->Print( 0, "\n");
 }
 
 
@@ -1859,7 +2146,7 @@ void SCH_LEGACY_PLUGIN::saveText( SCH_TEXT* aText )
 
     wxString text = aText->GetText();
 
-    LAYERSCH_ID layer = aText->GetLayer();
+    SCH_LAYER_ID layer = aText->GetLayer();
 
     if( layer == LAYER_NOTES || layer == LAYER_LOCLABEL )
     {
@@ -1889,99 +2176,38 @@ void SCH_LEGACY_PLUGIN::saveText( SCH_TEXT* aText )
         }
 
         m_out->Print( 0, "Text %s %-4d %-4d %-4d %-4d %s %d\n%s\n", textType,
-                      aText->GetPosition().x, aText->GetPosition().y, aText->GetOrientation(),
-                      aText->GetSize().x, italics, aText->GetThickness(), TO_UTF8( text ) );
+                      aText->GetPosition().x, aText->GetPosition().y,
+                      aText->GetLabelSpinStyle(),
+                      aText->GetTextWidth(),
+                      italics, aText->GetThickness(), TO_UTF8( text ) );
     }
     else if( layer == LAYER_GLOBLABEL || layer == LAYER_HIERLABEL )
     {
         textType = ( layer == LAYER_GLOBLABEL ) ? "GLabel" : "HLabel";
 
         m_out->Print( 0, "Text %s %-4d %-4d %-4d %-4d %s %s %d\n%s\n", textType,
-                      aText->GetPosition().x, aText->GetPosition().y, aText->GetOrientation(),
-                      aText->GetSize().x, SheetLabelType[aText->GetShape()], italics,
+                      aText->GetPosition().x, aText->GetPosition().y,
+                      aText->GetLabelSpinStyle(),
+                      aText->GetTextWidth(),
+                      SheetLabelType[aText->GetShape()],
+                      italics,
                       aText->GetThickness(), TO_UTF8( text ) );
     }
 }
 
 
-/**
- * Class SCH_LEGACY_PLUGIN_CACHE
- * is a cache assistant for the part library portion of the #SCH_PLUGIN API, and only for the
- * #SCH_LEGACY_PLUGIN, so therefore is private to this implementation file, i.e. not placed
- * into a header.
- */
-class SCH_LEGACY_PLUGIN_CACHE
-{
-    wxFileName      m_libFileName;  // Absolute path and file name is required here.
-    wxDateTime      m_fileModTime;
-    LIB_ALIAS_MAP   m_aliases;      // Map of names of LIB_ALIAS pointers.
-    bool            m_isWritable;
-    bool            m_isModified;
-    int             m_modHash;      // Keep track of the modification status of the library.
-    int             m_versionMajor;
-    int             m_versionMinor;
-    int             m_libType;      // Is this cache a component or symbol library.
-
-    LIB_PART*       loadPart( FILE_LINE_READER& aReader );
-    void            loadHeader( FILE_LINE_READER& aReader );
-    void            loadAliases( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
-    void            loadField( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
-    void            loadDrawEntries( std::unique_ptr< LIB_PART >& aPart,
-                                     FILE_LINE_READER&            aReader );
-    void            loadFootprintFilters( std::unique_ptr< LIB_PART >& aPart,
-                                          FILE_LINE_READER&            aReader );
-    void            loadDocs();
-    LIB_ARC*        loadArc( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
-    LIB_CIRCLE*     loadCircle( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
-    LIB_TEXT*       loadText( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
-    LIB_RECTANGLE*  loadRectangle( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
-    LIB_PIN*        loadPin( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
-    LIB_POLYLINE*   loadPolyLine( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
-    LIB_BEZIER*     loadBezier( std::unique_ptr< LIB_PART >& aPart, FILE_LINE_READER& aReader );
-
-    FILL_T          parseFillMode( FILE_LINE_READER& aReader, const char* aLine,
-                                   const char** aOutput );
-    bool            checkForDuplicates( wxString& aAliasName );
-    LIB_ALIAS*      removeAlias( LIB_ALIAS* aAlias );
-
-    friend SCH_LEGACY_PLUGIN;
-
-public:
-    SCH_LEGACY_PLUGIN_CACHE( const wxString& aLibraryPath );
-    ~SCH_LEGACY_PLUGIN_CACHE();
-
-    // Most all functions in this class throw IO_ERROR exceptions.  There are no
-    // error codes nor user interface calls from here, nor in any SCH_PLUGIN objects.
-    // Catch these exceptions higher up please.
-
-    /// Save the entire library to file m_libFileName;
-    void Save();
-
-    void Load();
-
-    void AddSymbol( const LIB_PART* aPart );
-
-    void DeleteAlias( const wxString& aAliasName );
-
-    void DeleteSymbol( const wxString& aAliasName );
-
-    wxDateTime GetLibModificationTime();
-
-    bool IsFile( const wxString& aFullPathAndFileName ) const;
-
-    bool IsFileChanged() const;
-
-    wxString GetLogicalName() const { return m_libFileName.GetName(); }
-};
+int SCH_LEGACY_PLUGIN_CACHE::m_modHash = 1;     // starts at 1 and goes up
 
 
 SCH_LEGACY_PLUGIN_CACHE::SCH_LEGACY_PLUGIN_CACHE( const wxString& aFullPathAndFileName ) :
+    m_fileName( aFullPathAndFileName ),
     m_libFileName( aFullPathAndFileName ),
     m_isWritable( true ),
     m_isModified( false )
 {
     m_versionMajor = -1;
     m_versionMinor = -1;
+    m_libType = LIBRARY_TYPE_EESCHEMA;
 }
 
 
@@ -2006,25 +2232,56 @@ SCH_LEGACY_PLUGIN_CACHE::~SCH_LEGACY_PLUGIN_CACHE()
 }
 
 
+// If m_libFileName is a symlink follow it to the real source file
+wxFileName SCH_LEGACY_PLUGIN_CACHE::GetRealFile() const
+{
+    wxFileName fn( m_libFileName );
+
+#ifndef __WINDOWS__
+    if( fn.Exists( wxFILE_EXISTS_SYMLINK ) )
+    {
+        char buffer[ PATH_MAX + 1 ];
+        ssize_t pathLen = readlink( TO_UTF8( fn.GetFullPath() ), buffer, PATH_MAX );
+
+        if( pathLen > 0 )
+        {
+            buffer[ pathLen ] = '\0';
+            fn.Assign( fn.GetPath() + wxT( "/" ) + wxString::FromUTF8( buffer ) );
+            fn.Normalize();
+        }
+    }
+#endif
+
+    return fn;
+}
+
+
 wxDateTime SCH_LEGACY_PLUGIN_CACHE::GetLibModificationTime()
 {
+    wxFileName fn = GetRealFile();
+
     // update the writable flag while we have a wxFileName, in a network this
     // is possibly quite dynamic anyway.
-    m_isWritable = m_libFileName.IsFileWritable();
+    m_isWritable = fn.IsFileWritable();
 
-    return m_libFileName.GetModificationTime();
+    return fn.GetModificationTime();
 }
 
 
 bool SCH_LEGACY_PLUGIN_CACHE::IsFile( const wxString& aFullPathAndFileName ) const
 {
-    return m_libFileName == aFullPathAndFileName;
+    return m_fileName == aFullPathAndFileName;
 }
 
 
 bool SCH_LEGACY_PLUGIN_CACHE::IsFileChanged() const
 {
-    return m_libFileName.GetModificationTime() != m_fileModTime;
+    wxFileName fn = GetRealFile();
+
+    if( m_fileModTime.IsValid() && fn.IsOk() && fn.FileExists() )
+        return fn.GetModificationTime() != m_fileModTime;
+
+    return false;
 }
 
 
@@ -2073,11 +2330,7 @@ LIB_ALIAS* SCH_LEGACY_PLUGIN_CACHE::removeAlias( LIB_ALIAS* aAlias )
 
 void SCH_LEGACY_PLUGIN_CACHE::AddSymbol( const LIB_PART* aPart )
 {
-    // Ugly hack to fix the fact that the LIB_PART copy constructor doesn't take a const
-    // reference.  I feel all dirty inside doing this.
-    // @todo: fix LIB_PART copy ctor so it can take a const reference.
-    LIB_PART* part = new LIB_PART( *const_cast< LIB_PART* >( aPart ) );
-
+    // aPart is cloned in PART_LIB::AddPart().  The cache takes ownership of aPart.
     wxArrayString aliasNames = aPart->GetAliasNames();
 
     for( size_t i = 0; i < aliasNames.size(); i++ )
@@ -2087,10 +2340,10 @@ void SCH_LEGACY_PLUGIN_CACHE::AddSymbol( const LIB_PART* aPart )
         if( it != m_aliases.end() )
             removeAlias( it->second );
 
-        LIB_ALIAS* alias = part->GetAlias( aliasNames[i] );
+        LIB_ALIAS* alias = const_cast< LIB_PART* >( aPart )->GetAlias( aliasNames[i] );
 
         wxASSERT_MSG( alias != NULL, "No alias <" + aliasNames[i] + "> found in symbol <" +
-                      part->GetName() +">." );
+                      aPart->GetName() +">." );
 
         m_aliases[ aliasNames[i] ] = alias;
     }
@@ -2102,9 +2355,26 @@ void SCH_LEGACY_PLUGIN_CACHE::AddSymbol( const LIB_PART* aPart )
 
 void SCH_LEGACY_PLUGIN_CACHE::Load()
 {
-    FILE_LINE_READER reader( m_libFileName.GetFullPath() );
+    if( !m_libFileName.FileExists() )
+    {
+        wxString msg = wxString::Format( _( "Library file \"%s\" not found.\n\n"
+                                            "Use the Manage Symbol Libraries dialog to fix the "
+                                            "path (or remove the library)." ),
+                                         m_libFileName.GetFullPath() );
+        KIDIALOG dlg( Pgm().App().GetTopWindow(), msg, KIDIALOG::KD_ERROR );
+        dlg.DoNotShowCheckbox( __FILE__, __LINE__ );
+        dlg.ShowModal();
+        return;
+    }
 
-    wxCHECK_RET( m_libFileName.IsAbsolute(), "Cannot use relative file paths in legacy plugin." );
+    wxCHECK_RET( m_libFileName.IsAbsolute(),
+                 wxString::Format( "Cannot use relative file paths in legacy plugin to "
+                                   "open library \"%s\".", m_libFileName.GetFullPath() ) );
+
+    wxLogTrace( traceSchLegacyPlugin, "Loading legacy symbol file \"%s\"",
+                m_libFileName.GetFullPath() );
+
+    FILE_LINE_READER reader( m_libFileName.GetFullPath() );
 
     if( !reader.ReadLine() )
         THROW_IO_ERROR( _( "unexpected end of file" ) );
@@ -2112,7 +2382,12 @@ void SCH_LEGACY_PLUGIN_CACHE::Load()
     const char* line = reader.Line();
 
     if( !strCompare( "EESchema-LIBRARY Version", line, &line ) )
-        SCH_PARSE_ERROR( "file is not a valid component or symbol library file", reader, line );
+    {
+        // Old .sym files (which are libraries with only one symbol, used to store and reuse shapes)
+        // EESchema-LIB Version x.x SYMBOL. They are valid files.
+        if( !strCompare( "EESchema-LIB Version", line, &line ) )
+            SCH_PARSE_ERROR( "file is not a valid component or symbol library file", reader, line );
+    }
 
     m_versionMajor = parseInt( reader, line, &line );
 
@@ -2155,7 +2430,6 @@ void SCH_LEGACY_PLUGIN_CACHE::Load()
         {
             // Read one DEF/ENDDEF part entry from library:
             loadPart( reader );
-
         }
     }
 
@@ -2187,7 +2461,7 @@ void SCH_LEGACY_PLUGIN_CACHE::loadDocs()
 
     if( !fn.IsFileReadable() )
         THROW_IO_ERROR( wxString::Format( _( "user does not have permission to read library "
-                                             "document file '%s'" ), fn.GetFullPath() ) );
+                                             "document file \"%s\"" ), fn.GetFullPath() ) );
 
     FILE_LINE_READER reader( fn.GetFullPath() );
 
@@ -2210,7 +2484,9 @@ void SCH_LEGACY_PLUGIN_CACHE::loadDocs()
         if( !strCompare( "$CMP", line, &line ) != 0 )
             SCH_PARSE_ERROR( "$CMP command expected", reader, line );
 
-        parseUnquotedString( aliasName, reader, line, &line );    // Alias name.
+        aliasName = wxString::FromUTF8( line );
+        aliasName.Trim();
+        aliasName = LIB_ID::FixIllegalChars( aliasName, LIB_ID::ID_SCH );
 
         LIB_ALIAS_MAP::iterator it = m_aliases.find( aliasName );
 
@@ -2221,41 +2497,49 @@ void SCH_LEGACY_PLUGIN_CACHE::loadDocs()
         else
             alias = it->second;
 
-        if( alias )
+        // Read the curent alias associated doc.
+        // if the alias does not exist, just skip the description
+        // (Can happen if a .dcm is not synchronized with the corresponding .lib file)
+        while( reader.ReadLine() )
         {
-            while( reader.ReadLine() )
+            line = reader.Line();
+
+            if( !line )
+                SCH_PARSE_ERROR( "unexpected end of file", reader, line );
+
+            if( strCompare( "$ENDCMP", line, &line ) )
+                break;
+
+            text = FROM_UTF8( line + 2 );
+            // Remove spaces at eol, and eol chars:
+            text = text.Trim();
+
+            switch( line[0] )
             {
-                line = reader.Line();
-
-                if( !line )
-                    SCH_PARSE_ERROR( "unexpected end of file", reader, line );
-
-                if( strCompare( "$ENDCMP", line, &line ) )
-                    break;
-
-                text = FROM_UTF8( line + 2 );
-                text = text.Trim();
-
-                switch( line[0] )
-                {
-                case 'D':
+            case 'D':
+                if( alias )
                     alias->SetDescription( text );
-                    break;
+                break;
 
-                case 'K':
+            case 'K':
+                if( alias )
                     alias->SetKeyWords( text );
-                    break;
+                break;
 
-                case 'F':
+            case 'F':
+                if( alias )
                     alias->SetDocFileName( text );
-                    break;
+                break;
 
-                case '#':
-                    break;
+            case 0:
+            case '\n':
+            case '\r':
+            case '#':
+                // Empty line or commment
+                break;
 
-                default:
-                    SCH_PARSE_ERROR( "expected token in symbol definition", reader, line );
-                }
+            default:
+                SCH_PARSE_ERROR( "expected token in symbol definition", reader, line );
             }
         }
     }
@@ -2290,62 +2574,92 @@ LIB_PART* SCH_LEGACY_PLUGIN_CACHE::loadPart( FILE_LINE_READER& aReader )
 
     wxCHECK( strCompare( "DEF", line, &line ), NULL );
 
-    // Read DEF line:
-    char yes_no = 0;
+    long num;
+    size_t pos = 4;                               // "DEF" plus the first space.
+    wxString utf8Line = wxString::FromUTF8( line );
+    wxStringTokenizer tokens( utf8Line, " \r\n\t" );
 
+    if( tokens.CountTokens() < 8 )
+        SCH_PARSE_ERROR( "invalid symbol definition", aReader, line );
+
+    // Read DEF line:
     std::unique_ptr< LIB_PART > part( new LIB_PART( wxEmptyString ) );
 
-    wxString name, prefix;
+    wxString name, prefix, tmp;
 
-    parseUnquotedString( name, aReader, line, &line );           // Part name.
-    parseUnquotedString( prefix, aReader, line, &line );         // Prefix name
-    parseInt( aReader, line, &line );                            // NumOfPins, unused.
-    part->SetPinNameOffset( parseInt( aReader, line, &line ) );  // Pin name offset.
-    yes_no = parseChar( aReader, line, &line );                  // Show pin numbers.
+    name = tokens.GetNextToken();
+    pos += name.size() + 1;
 
-    if( !( yes_no == 'Y' || yes_no == 'N') )
-        SCH_PARSE_ERROR( "expected Y or N", aReader, line );
+    prefix = tokens.GetNextToken();
+    pos += prefix.size() + 1;
 
-    part->SetShowPinNumbers( ( yes_no == 'N' ) ? false : true );
+    tmp = tokens.GetNextToken();
+    pos += tmp.size() + 1;                        // NumOfPins, unused.
 
-    yes_no = parseChar( aReader, line, &line );                  // Show pin numbers.
+    tmp = tokens.GetNextToken();                  // Pin name offset.
 
-    if( !( yes_no == 'Y' || yes_no == 'N') )
-        SCH_PARSE_ERROR( "expected Y or N", aReader, line );
+    if( !tmp.ToLong( &num ) )
+        THROW_PARSE_ERROR( "invalid pin offset", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
 
-    part->SetShowPinNames( ( yes_no == 'N' ) ? false : true );   // Show pin names.
+    pos += tmp.size() + 1;
+    part->SetPinNameOffset( (int)num );
 
-    part->SetUnitCount( parseInt( aReader, line, &line ) );      // Number of units.
+    tmp = tokens.GetNextToken();                  // Show pin numbers.
+
+    if( !( tmp == "Y" || tmp == "N") )
+        THROW_PARSE_ERROR( "expected Y or N", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    part->SetShowPinNumbers( ( tmp == "N" ) ? false : true );
+
+    tmp = tokens.GetNextToken();                  // Show pin names.
+
+    if( !( tmp == "Y" || tmp == "N") )
+        THROW_PARSE_ERROR( "expected Y or N", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    part->SetShowPinNames( ( tmp == "N" ) ? false : true );
+
+    tmp = tokens.GetNextToken();                  // Number of units.
+
+    if( !tmp.ToLong( &num ) )
+        THROW_PARSE_ERROR( "invalid unit count", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    part->SetUnitCount( (int)num );
 
     // Ensure m_unitCount is >= 1.  Could be read as 0 in old libraries.
     if( part->GetUnitCount() < 1 )
         part->SetUnitCount( 1 );
 
     // Copy part name and prefix.
-    LIB_FIELD& value = part->GetValueField();
 
     // The root alias is added to the alias list by SetName() which is called by SetText().
     if( name.IsEmpty() )
     {
-        part->m_name = "~";
-        value.SetText( "~" );
+        part->SetName( "~" );
     }
     else if( name[0] != '~' )
     {
-        part->m_name = name;
-        value.SetText( name );
+        part->SetName( name );
     }
     else
     {
-        name = name.Right( name.Length() - 1 );
-        part->m_name = name;
-        value.SetText( name );
-        value.SetVisible( false );
+        part->SetName( name.Right( name.Length() - 1 ) );
+        part->GetValueField().SetVisible( false );
     }
 
-    // Add the root alias to the alias list.
-    part->m_aliases.push_back( new LIB_ALIAS( name, part.get() ) );
-    m_aliases[ part->GetName() ] = part->GetAlias( name );
+    // Don't set the library alias, this is determined by the symbol library table.
+    part->SetLibId( LIB_ID( wxEmptyString, part->GetName() ) );
+
+    // There are some code paths in SetText() that do not set the root alias to the
+    // alias list so add it here if it didn't get added by SetText().
+    if( !part->HasAlias( part->GetName() ) )
+        part->AddAlias( part->GetName() );
 
     LIB_FIELD& reference = part->GetReferenceField();
 
@@ -2359,38 +2673,42 @@ LIB_PART* SCH_LEGACY_PLUGIN_CACHE::loadPart( FILE_LINE_READER& aReader )
         reference.SetText( prefix );
     }
 
-    // In version 2.0 and earlier, this parameter was a '0' which was just a place holder.
+    // In version 2.2 and earlier, this parameter was a '0' which was just a place holder.
     // The was no concept of interchangeable multiple unit symbols.
-    if( LIB_VERSION( m_versionMajor, m_versionMinor ) <= LIB_VERSION( 2, 0 ) )
+    if( LIB_VERSION( m_versionMajor, m_versionMinor ) <= LIB_VERSION( 2, 2 ) )
     {
         // Nothing needs to be set since the default setting for symbols with multiple
         // units were never interchangeable.  Just parse the 0 an move on.
-        parseInt( aReader, line, &line );
+        tmp = tokens.GetNextToken();
+        pos += tmp.size() + 1;
     }
     else
     {
-        char locked = parseChar( aReader, line, &line );
+        tmp = tokens.GetNextToken();
 
-        if( locked == 'L' )
+        if( tmp == "L" )
             part->LockUnits( true );
-        else if( locked == 'F' )
+        else if( tmp == "F" || tmp == "0" )
             part->LockUnits( false );
         else
-            SCH_PARSE_ERROR( "expected L or F", aReader, line );
+            THROW_PARSE_ERROR( "expected L, F, or 0", aReader.GetSource(), aReader.Line(),
+                               aReader.LineNumber(), pos );
+
+        pos += tmp.size() + 1;
     }
 
-
     // There is the optional power component flag.
-    if( *line )
+    if( tokens.HasMoreTokens() )
     {
-        char power = parseChar( aReader, line, &line );
+        tmp = tokens.GetNextToken();
 
-        if( power == 'P' )
+        if( tmp == "P" )
             part->SetPower();
-        else if( power == 'N' )
+        else if( tmp == "N" )
             part->SetNormal();
         else
-            SCH_PARSE_ERROR( "expected P or N", aReader, line );
+            THROW_PARSE_ERROR( "expected P or N", aReader.GetSource(), aReader.Line(),
+                               aReader.LineNumber(), pos );
     }
 
     line = aReader.ReadLine();
@@ -2399,7 +2717,7 @@ LIB_PART* SCH_LEGACY_PLUGIN_CACHE::loadPart( FILE_LINE_READER& aReader )
     while( line )
     {
         if( *line == '#' )                               // Comment
-            continue;
+            ;
         else if( strCompare( "Ti", line, &line ) )       // Modification date is ignored.
             continue;
         else if( strCompare( "ALIAS", line, &line ) )    // Aliases
@@ -2411,7 +2729,48 @@ LIB_PART* SCH_LEGACY_PLUGIN_CACHE::loadPart( FILE_LINE_READER& aReader )
         else if( strCompare( "$FPLIST", line, &line ) )  // Footprint filter list
             loadFootprintFilters( part, aReader );
         else if( strCompare( "ENDDEF", line, &line ) )   // End of part description
+        {
+            // Add aliases
+            for( size_t ii = 0; ii < part->GetAliasCount(); ++ii )
+            {
+                LIB_ALIAS* alias = part->GetAlias( ii );
+                const wxString& aliasName = alias->GetName();
+                auto it = m_aliases.find( aliasName );
+
+                if( it != m_aliases.end() )
+                {
+                    // Find a new name for the alias
+                    wxString newName;
+                    int idx = 0;
+                    LIB_ALIAS_MAP::const_iterator jt;
+
+                    do
+                    {
+                        newName = wxString::Format( "%s_%d", aliasName, idx );
+                        jt = m_aliases.find( newName );
+                        ++idx;
+                    }
+                    while( jt != m_aliases.end() );
+
+                    wxLogWarning( "Symbol name conflict in library:\n%s\n"
+                                  "'%s' has been renamed to '%s'",
+                                  m_fileName, aliasName, newName );
+
+                    if( alias->IsRoot() )
+                        part->SetName( newName );
+                    else
+                        alias->SetName( newName );
+
+                    m_aliases[newName] = alias;
+                }
+                else
+                {
+                    m_aliases[aliasName] = alias;
+                }
+            }
+
             return part.release();
+        }
 
         line = aReader.ReadLine();
     }
@@ -2454,18 +2813,15 @@ void SCH_LEGACY_PLUGIN_CACHE::loadAliases( std::unique_ptr< LIB_PART >& aPart,
 
     wxCHECK_RET( strCompare( "ALIAS", line, &line ), "Invalid ALIAS section" );
 
-    // Parse the ALIAS list.
-    wxString alias;
-    parseUnquotedString( alias, aReader, line, &line );
+    wxString utf8Line = wxString::FromUTF8( line );
+    wxStringTokenizer tokens( utf8Line, " \r\n\t" );
 
-    while( !alias.IsEmpty() )
+    // Parse the ALIAS list.
+    while( tokens.HasMoreTokens() )
     {
-        newAlias = alias;
+        newAlias = tokens.GetNextToken();
         checkForDuplicates( newAlias );
         aPart->AddAlias( newAlias );
-        m_aliases[ newAlias ] = aPart->GetAlias( newAlias );
-        alias.clear();
-        parseUnquotedString( alias, aReader, line, &line, true );
     }
 }
 
@@ -2480,9 +2836,24 @@ void SCH_LEGACY_PLUGIN_CACHE::loadField( std::unique_ptr< LIB_PART >& aPart,
     int         id;
 
     if( sscanf( line + 1, "%d", &id ) != 1 || id < 0 )
-        SCH_PARSE_ERROR( _( "invalid field ID" ), aReader, line + 1 );
+        SCH_PARSE_ERROR( "invalid field ID", aReader, line + 1 );
 
-    std::unique_ptr< LIB_FIELD > field( new LIB_FIELD( aPart.get(), id ) );
+    LIB_FIELD* field;
+
+    if( (unsigned) id < MANDATORY_FIELDS )
+    {
+        field = aPart->GetField( id );
+
+        // this will fire only if somebody broke a constructor or editor.
+        // MANDATORY_FIELDS are always present in ram resident components, no
+        // exceptions, and they always have their names set, even fixed fields.
+        wxASSERT( field );
+    }
+    else
+    {
+        field = new LIB_FIELD( aPart.get(), id );
+        aPart->AddDrawItem( field );
+    }
 
     // Skip to the first double quote.
     while( *line != '"' && *line != 0 )
@@ -2491,15 +2862,12 @@ void SCH_LEGACY_PLUGIN_CACHE::loadField( std::unique_ptr< LIB_PART >& aPart,
     if( *line == 0 )
         SCH_PARSE_ERROR( _( "unexpected end of line" ), aReader, line );
 
-    wxString text;
-    parseQuotedString( text, aReader, line, &line, true );
+    parseQuotedString( field->m_Text, aReader, line, &line, true );
 
     // Doctor the *.lib file field which has a "~" in blank fields.  New saves will
     // not save like this.
-    if( text.size() == 1 && text[0] == '~' )
-        text.clear();
-
-    field->m_Text = text;
+    if( field->m_Text.size() == 1 && field->m_Text[0] == '~' )
+        field->m_Text.clear();
 
     wxPoint pos;
 
@@ -2510,16 +2878,16 @@ void SCH_LEGACY_PLUGIN_CACHE::loadField( std::unique_ptr< LIB_PART >& aPart,
     wxSize textSize;
 
     textSize.x = textSize.y = parseInt( aReader, line, &line );
-    field->SetSize( textSize );
+    field->SetTextSize( textSize );
 
     char textOrient = parseChar( aReader, line, &line );
 
     if( textOrient == 'H' )
-        field->SetOrientation( TEXT_ORIENT_HORIZ );
+        field->SetTextAngle( TEXT_ANGLE_HORIZ );
     else if( textOrient == 'V' )
-        field->SetOrientation( TEXT_ORIENT_VERT );
+        field->SetTextAngle( TEXT_ANGLE_VERT );
     else
-        SCH_PARSE_ERROR( _( "invalid field text orientation parameter" ), aReader, line );
+        SCH_PARSE_ERROR( "invalid field text orientation parameter", aReader, line );
 
     char textVisible = parseChar( aReader, line, &line );
 
@@ -2528,7 +2896,7 @@ void SCH_LEGACY_PLUGIN_CACHE::loadField( std::unique_ptr< LIB_PART >& aPart,
     else if ( textVisible == 'I' )
         field->SetVisible( false );
     else
-        SCH_PARSE_ERROR( _( "invalid field text visibility parameter" ), aReader, line );
+        SCH_PARSE_ERROR( "invalid field text visibility parameter", aReader, line );
 
     // It may be technically correct to use the library version to determine if the field text
     // attributes are present.  If anyone knows if that is valid and what version that would be,
@@ -2545,71 +2913,58 @@ void SCH_LEGACY_PLUGIN_CACHE::loadField( std::unique_ptr< LIB_PART >& aPart,
         else if( textHJustify == 'R' )
             field->SetHorizJustify( GR_TEXT_HJUSTIFY_RIGHT );
         else
-            SCH_PARSE_ERROR( _( "invalid field text horizontal justification parameter" ),
-                             aReader, line );
+            SCH_PARSE_ERROR( "invalid field text horizontal justification", aReader, line );
 
         wxString attributes;
 
         parseUnquotedString( attributes, aReader, line, &line );
 
-        if( !(attributes.size() == 3 || attributes.size() == 1 ) )
-            SCH_PARSE_ERROR( _( "invalid field text attributes size" ),
-                             aReader, line );
+        size_t attrSize = attributes.size();
 
-        if( attributes[0] == 'C' )
-            field->SetVertJustify( GR_TEXT_VJUSTIFY_CENTER );
-        else if( attributes[0] == 'B' )
-            field->SetVertJustify( GR_TEXT_VJUSTIFY_BOTTOM );
-        else if( attributes[0] == 'T' )
-            field->SetVertJustify( GR_TEXT_VJUSTIFY_TOP );
-        else
-            SCH_PARSE_ERROR( _( "invalid field text vertical justification parameter" ),
-                             aReader, line );
+        if( !(attrSize == 3 || attrSize == 1 ) )
+            SCH_PARSE_ERROR( "invalid field text attributes size", aReader, line );
 
-        if( attributes.size() == 3 )
+        switch( (wxChar) attributes[0] )
         {
-            if( attributes[1] == 'I' )        // Italic
-                field->SetItalic( true );
-            else if( attributes[1] != 'N' )   // No italics is default, check for error.
-                SCH_PARSE_ERROR( _( "invalid field text italic parameter" ), aReader, line );
+        case 'C': field->SetVertJustify( GR_TEXT_VJUSTIFY_CENTER ); break;
+        case 'B': field->SetVertJustify( GR_TEXT_VJUSTIFY_BOTTOM ); break;
+        case 'T': field->SetVertJustify( GR_TEXT_VJUSTIFY_TOP );    break;
+        default:  SCH_PARSE_ERROR( "invalid field text vertical justification", aReader, line );
+        }
 
-            if ( attributes[2] == 'B' )       // Bold
+        if( attrSize == 3 )
+        {
+            wxChar attr_1 = attributes[1];
+            wxChar attr_2 = attributes[2];
+
+            if( attr_1 == 'I' )        // Italic
+                field->SetItalic( true );
+            else if( attr_1 != 'N' )   // No italics is default, check for error.
+                SCH_PARSE_ERROR( "invalid field text italic parameter", aReader, line );
+
+            if ( attr_2 == 'B' )       // Bold
                 field->SetBold( true );
-            else if( attributes[2] != 'N' )   // No bold is default, check for error.
-                SCH_PARSE_ERROR( _( "invalid field text bold parameter" ), aReader, line );
+            else if( attr_2 != 'N' )   // No bold is default, check for error.
+                SCH_PARSE_ERROR( "invalid field text bold parameter", aReader, line );
         }
     }
 
     // Fields in RAM must always have names.
-    if( id < MANDATORY_FIELDS )
+    if( (unsigned) id < MANDATORY_FIELDS )
     {
         // Fields in RAM must always have names, because we are trying to get
         // less dependent on field ids and more dependent on names.
         // Plus assumptions are made in the field editors.
         field->m_name = TEMPLATE_FIELDNAME::GetDefaultFieldName( id );
 
-        LIB_FIELD* fixedField = aPart->GetField( field->GetId() );
-
-        // this will fire only if somebody broke a constructor or editor.
-        // MANDATORY_FIELDS are always present in ram resident components, no
-        // exceptions, and they always have their names set, even fixed fields.
-        wxASSERT( fixedField );
-
-        *fixedField = *field;
-
-        if( field->GetId() == VALUE )
-            aPart->m_name = field->GetText();
+        // Ensure the VALUE field = the part name (can be not the case
+        // with malformed libraries: edited by hand, or converted from other tools)
+        if( id == VALUE )
+            field->m_Text = aPart->GetName();
     }
     else
     {
-        wxString name;
-
-        parseQuotedString( name, aReader, line, &line, true );  // Optional.
-
-        if( !name.IsEmpty() )
-            field->m_name = name;
-
-        aPart->AddDrawItem( field.release() );    // LIB_FIELD* is now owned by the LIB_PART.
+        parseQuotedString( field->m_name, aReader, line, &line, true );  // Optional.
     }
 }
 
@@ -2662,43 +3017,29 @@ void SCH_LEGACY_PLUGIN_CACHE::loadDrawEntries( std::unique_ptr< LIB_PART >& aPar
         case '\n':   // Empty line
         case '\r':
         case 0:
-            continue;
+            break;
 
         default:
-            SCH_PARSE_ERROR( _( "undefined DRAW entry" ), aReader, line );
+            SCH_PARSE_ERROR( "undefined DRAW entry", aReader, line );
         }
 
         line = aReader.ReadLine();
     }
 
-    SCH_PARSE_ERROR( _( "file ended prematurely loading component draw element" ), aReader, line );
+    SCH_PARSE_ERROR( "file ended prematurely loading component draw element", aReader, line );
 }
 
 
 FILL_T SCH_LEGACY_PLUGIN_CACHE::parseFillMode( FILE_LINE_READER& aReader, const char* aLine,
                                                const char** aOutput )
 {
-    FILL_T mode;
-
     switch( parseChar( aReader, aLine, aOutput ) )
     {
-    case 'F':
-        mode = FILLED_SHAPE;
-        break;
-
-    case 'f':
-        mode = FILLED_WITH_BG_BODYCOLOR;
-        break;
-
-    case 'N':
-        mode = NO_FILL;
-        break;
-
-    default:
-        SCH_PARSE_ERROR( _( "invalid fill type, expected f, F, or N" ), aReader, aLine );
+    case 'F': return FILLED_SHAPE;
+    case 'f': return FILLED_WITH_BG_BODYCOLOR;
+    case 'N': return NO_FILL;
+    default: SCH_PARSE_ERROR( "invalid fill type, expected f, F, or N", aReader, aLine );
     }
-
-    return mode;
 }
 
 
@@ -2709,7 +3050,7 @@ LIB_ARC* SCH_LEGACY_PLUGIN_CACHE::loadArc( std::unique_ptr< LIB_PART >& aPart,
 
     wxCHECK_MSG( strCompare( "A", line, &line ), NULL, "Invalid LIB_ARC definition" );
 
-    std::unique_ptr< LIB_ARC > arc( new LIB_ARC( aPart.get() ) );
+    LIB_ARC* arc = new LIB_ARC( aPart.get() );
 
     wxPoint center;
 
@@ -2731,11 +3072,14 @@ LIB_ARC* SCH_LEGACY_PLUGIN_CACHE::loadArc( std::unique_ptr< LIB_PART >& aPart,
     arc->SetConvert( parseInt( aReader, line, &line ) );
     arc->SetWidth( parseInt( aReader, line, &line ) );
 
+    // Old libraries (version <= 2.2) do not have always this FILL MODE param
+    // when fill mode is no fill (default mode).
+    if( *line != 0 )
+        arc->SetFillMode( parseFillMode( aReader, line, &line ) );
+
     // Actual Coordinates of arc ends are read from file
     if( *line != 0 )
     {
-        arc->SetFillMode( parseFillMode( aReader, line, &line ) );
-
         wxPoint arcStart, arcEnd;
 
         arcStart.x = parseInt( aReader, line, &line );
@@ -2761,7 +3105,7 @@ LIB_ARC* SCH_LEGACY_PLUGIN_CACHE::loadArc( std::unique_ptr< LIB_PART >& aPart,
         arc->SetEnd( arcEnd );
     }
 
-    return arc.release();
+    return arc;
 }
 
 
@@ -2772,7 +3116,7 @@ LIB_CIRCLE* SCH_LEGACY_PLUGIN_CACHE::loadCircle( std::unique_ptr< LIB_PART >& aP
 
     wxCHECK_MSG( strCompare( "C", line, &line ), NULL, "Invalid LIB_CIRCLE definition" );
 
-    std::unique_ptr< LIB_CIRCLE > circle( new LIB_CIRCLE( aPart.get() ) );
+    LIB_CIRCLE* circle = new LIB_CIRCLE( aPart.get() );
 
     wxPoint center;
 
@@ -2788,7 +3132,7 @@ LIB_CIRCLE* SCH_LEGACY_PLUGIN_CACHE::loadCircle( std::unique_ptr< LIB_PART >& aP
     if( *line != 0 )
         circle->SetFillMode( parseFillMode( aReader, line, &line ) );
 
-    return circle.release();
+    return circle;
 }
 
 
@@ -2799,9 +3143,9 @@ LIB_TEXT* SCH_LEGACY_PLUGIN_CACHE::loadText( std::unique_ptr< LIB_PART >& aPart,
 
     wxCHECK_MSG( strCompare( "T", line, &line ), NULL, "Invalid LIB_TEXT definition" );
 
-    std::unique_ptr< LIB_TEXT > text( new LIB_TEXT( aPart.get() ) );
+    LIB_TEXT* text = new LIB_TEXT( aPart.get() );
 
-    text->SetOrientation( (double) parseInt( aReader, line, &line ) );
+    text->SetTextAngle( (double) parseInt( aReader, line, &line ) );
 
     wxPoint center;
 
@@ -2812,8 +3156,8 @@ LIB_TEXT* SCH_LEGACY_PLUGIN_CACHE::loadText( std::unique_ptr< LIB_PART >& aPart,
     wxSize size;
 
     size.x = size.y = parseInt( aReader, line, &line );
-    text->SetSize( size );
-    text->SetAttributes( parseInt( aReader, line, &line ) );
+    text->SetTextSize( size );
+    text->SetVisible( !parseInt( aReader, line, &line ) );
     text->SetUnit( parseInt( aReader, line, &line ) );
     text->SetConvert( parseInt( aReader, line, &line ) );
 
@@ -2823,13 +3167,17 @@ LIB_TEXT* SCH_LEGACY_PLUGIN_CACHE::loadText( std::unique_ptr< LIB_PART >& aPart,
     if( *line == '"' )
         parseQuotedString( str, aReader, line, &line );
     else
+    {
         parseUnquotedString( str, aReader, line, &line );
+
+        // In old libs, "spaces" are replaced by '~' in unquoted strings:
+        str.Replace( "~", " " );
+    }
 
     if( !str.IsEmpty() )
     {
         // convert two apostrophes back to double quote
         str.Replace( "''", "\"" );
-        str.Replace( wxT( "~" ), wxT( " " ) );
     }
 
     text->SetText( str );
@@ -2846,52 +3194,35 @@ LIB_TEXT* SCH_LEGACY_PLUGIN_CACHE::loadText( std::unique_ptr< LIB_PART >& aPart,
         if( strCompare( "Italic", line, &line ) )
             text->SetItalic( true );
         else if( !strCompare( "Normal", line, &line ) )
-            SCH_PARSE_ERROR( _( "invalid text stype, expected 'Normal' or 'Italic'" ),
-                             aReader, line );
+            SCH_PARSE_ERROR( "invalid text stype, expected 'Normal' or 'Italic'", aReader, line );
 
         if( parseInt( aReader, line, &line ) > 0 )
             text->SetBold( true );
 
-        switch( parseChar( aReader, line, &line ) )
+        // Some old libaries version > 2.0 do not have these options for text justification:
+        if( !is_eol( *line ) )
         {
-        case 'L':
-            text->SetHorizJustify( GR_TEXT_HJUSTIFY_LEFT );
-            break;
+            switch( parseChar( aReader, line, &line ) )
+            {
+            case 'L': text->SetHorizJustify( GR_TEXT_HJUSTIFY_LEFT );   break;
+            case 'C': text->SetHorizJustify( GR_TEXT_HJUSTIFY_CENTER ); break;
+            case 'R': text->SetHorizJustify( GR_TEXT_HJUSTIFY_RIGHT );  break;
+            default: SCH_PARSE_ERROR( "invalid horizontal text justication; expected L, C, or R",
+                                      aReader, line );
+            }
 
-        case 'C':
-            text->SetHorizJustify( GR_TEXT_HJUSTIFY_CENTER );
-            break;
-
-        case 'R':
-            text->SetHorizJustify( GR_TEXT_HJUSTIFY_RIGHT );
-            break;
-
-        default:
-            SCH_PARSE_ERROR( _( "invalid horizontal text justication parameter, expected L, C, or R" ),
-                             aReader, line );
-        }
-
-        switch( parseChar( aReader, line, &line ) )
-        {
-        case 'T':
-            text->SetVertJustify( GR_TEXT_VJUSTIFY_TOP );
-            break;
-
-        case 'C':
-            text->SetVertJustify( GR_TEXT_VJUSTIFY_CENTER );
-            break;
-
-        case 'B':
-            text->SetVertJustify( GR_TEXT_VJUSTIFY_BOTTOM );
-            break;
-
-        default:
-            SCH_PARSE_ERROR( _( "invalid vertical text justication parameter, expected T, C, or B" ),
-                             aReader, line );
+            switch( parseChar( aReader, line, &line ) )
+            {
+            case 'T': text->SetVertJustify( GR_TEXT_VJUSTIFY_TOP );    break;
+            case 'C': text->SetVertJustify( GR_TEXT_VJUSTIFY_CENTER ); break;
+            case 'B': text->SetVertJustify( GR_TEXT_VJUSTIFY_BOTTOM ); break;
+            default: SCH_PARSE_ERROR( "invalid vertical text justication; expected T, C, or B",
+                                      aReader, line );
+            }
         }
     }
 
-    return text.release();
+    return text;
 }
 
 
@@ -2902,7 +3233,7 @@ LIB_RECTANGLE* SCH_LEGACY_PLUGIN_CACHE::loadRectangle( std::unique_ptr< LIB_PART
 
     wxCHECK_MSG( strCompare( "S", line, &line ), NULL, "Invalid LIB_RECTANGLE definition" );
 
-    std::unique_ptr< LIB_RECTANGLE > rectangle( new LIB_RECTANGLE( aPart.get() ) );
+    LIB_RECTANGLE* rectangle = new LIB_RECTANGLE( aPart.get() );
 
     wxPoint pos;
 
@@ -2923,7 +3254,7 @@ LIB_RECTANGLE* SCH_LEGACY_PLUGIN_CACHE::loadRectangle( std::unique_ptr< LIB_PART
     if( *line != 0 )
         rectangle->SetFillMode( parseFillMode( aReader, line, &line ) );
 
-    return rectangle.release();
+    return rectangle;
 }
 
 
@@ -2934,87 +3265,131 @@ LIB_PIN* SCH_LEGACY_PLUGIN_CACHE::loadPin( std::unique_ptr< LIB_PART >& aPart,
 
     wxCHECK_MSG( strCompare( "X", line, &line ), NULL, "Invalid LIB_PIN definition" );
 
-    std::unique_ptr< LIB_PIN > pin( new LIB_PIN( aPart.get() ) );
+    LIB_PIN* pin = new LIB_PIN( aPart.get() );
 
-    wxString name, number;
+    size_t pos = 2;                               // "X" plus ' ' space character.
+    wxString tmp;
+    wxString utf8Line = wxString::FromUTF8( line );
+    wxStringTokenizer tokens( utf8Line, " \r\n\t" );
 
-    parseUnquotedString( name, aReader, line, &line );
-    parseUnquotedString( number, aReader, line, &line );
+    if( tokens.CountTokens() < 11 )
+        SCH_PARSE_ERROR( "invalid pin definition", aReader, line );
 
-    pin->SetName( name );
-    pin->SetPinNumFromString( number );
+    pin->m_name = tokens.GetNextToken();
+    pos += pin->m_name.size() + 1;
+    pin->m_number = tokens.GetNextToken();
+    pos += pin->m_number.size() + 1;
 
-    wxPoint pos;
+    long num;
+    wxPoint position;
 
-    pos.x = parseInt( aReader, line, &line );
-    pos.y = parseInt( aReader, line, &line );
-    pin->SetPosition( pos );
-    pin->SetLength( parseInt( aReader, line, &line ) );
-    pin->SetOrientation( parseChar( aReader, line, &line ) );
-    pin->SetNumberTextSize( parseInt( aReader, line, &line ) );
-    pin->SetNameTextSize( parseInt( aReader, line, &line ) );
-    pin->SetUnit( parseInt( aReader, line, &line ) );
-    pin->SetConvert( parseInt( aReader, line, &line ) );
+    tmp = tokens.GetNextToken();
 
-    char type = parseChar( aReader, line, &line );
+    if( !tmp.ToLong( &num ) )
+        THROW_PARSE_ERROR( "invalid pin X coordinate", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    position.x = (int) num;
+
+    tmp = tokens.GetNextToken();
+
+    if( !tmp.ToLong( &num ) )
+        THROW_PARSE_ERROR( "invalid pin Y coordinate", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    position.y = (int) num;
+    pin->m_position = position;
+
+    tmp = tokens.GetNextToken();
+
+    if( !tmp.ToLong( &num ) )
+        THROW_PARSE_ERROR( "invalid pin length", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    pin->m_length = (int) num;
+
+
+    tmp = tokens.GetNextToken();
+
+    if( tmp.size() > 1 )
+        THROW_PARSE_ERROR( "invalid pin orientation", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    pin->m_orientation = tmp[0];
+
+    tmp = tokens.GetNextToken();
+
+    if( !tmp.ToLong( &num ) )
+        THROW_PARSE_ERROR( "invalid pin number text size", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    pin->m_numTextSize = (int) num;
+
+    tmp = tokens.GetNextToken();
+
+    if( !tmp.ToLong( &num ) )
+        THROW_PARSE_ERROR( "invalid pin name text size", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    pin->m_nameTextSize = (int) num;
+
+    tmp = tokens.GetNextToken();
+
+    if( !tmp.ToLong( &num ) )
+        THROW_PARSE_ERROR( "invalid pin unit", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    pin->m_Unit = (int) num;
+
+    tmp = tokens.GetNextToken();
+
+    if( !tmp.ToLong( &num ) )
+        THROW_PARSE_ERROR( "invalid pin alternate body type", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    pin->m_Convert = (int) num;
+
+    tmp = tokens.GetNextToken();
+
+    if( tmp.size() != 1 )
+        THROW_PARSE_ERROR( "invalid pin type", aReader.GetSource(), aReader.Line(),
+                           aReader.LineNumber(), pos );
+
+    pos += tmp.size() + 1;
+    char type = tmp[0];
 
     wxString attributes;
 
-    // Optional
-    parseUnquotedString( attributes, aReader, line, &line, true );
-
     switch( type )
     {
-    case 'I':
-        pin->SetType( PIN_INPUT );
-        break;
-
-    case 'O':
-        pin->SetType( PIN_OUTPUT );
-        break;
-
-    case 'B':
-        pin->SetType( PIN_BIDI );
-        break;
-
-    case 'T':
-        pin->SetType( PIN_TRISTATE );
-        break;
-
-    case 'P':
-        pin->SetType( PIN_PASSIVE );
-        break;
-
-    case 'U':
-        pin->SetType( PIN_UNSPECIFIED );
-        break;
-
-    case 'W':
-        pin->SetType( PIN_POWER_IN );
-        break;
-
-    case 'w':
-        pin->SetType( PIN_POWER_OUT );
-        break;
-
-    case 'C':
-        pin->SetType( PIN_OPENCOLLECTOR );
-        break;
-
-    case 'E':
-        pin->SetType( PIN_OPENEMITTER );
-        break;
-
-    case 'N':
-        pin->SetType( PIN_NC );
-        break;
-
-    default:
-        SCH_PARSE_ERROR( _( "unknown pin type" ), aReader, line );
+    case 'I': pin->m_type = PIN_INPUT;         break;
+    case 'O': pin->m_type = PIN_OUTPUT;        break;
+    case 'B': pin->m_type = PIN_BIDI;          break;
+    case 'T': pin->m_type = PIN_TRISTATE;      break;
+    case 'P': pin->m_type = PIN_PASSIVE;       break;
+    case 'U': pin->m_type = PIN_UNSPECIFIED;   break;
+    case 'W': pin->m_type = PIN_POWER_IN;      break;
+    case 'w': pin->m_type = PIN_POWER_OUT;     break;
+    case 'C': pin->m_type = PIN_OPENCOLLECTOR; break;
+    case 'E': pin->m_type = PIN_OPENEMITTER;   break;
+    case 'N': pin->m_type = PIN_NC;            break;
+    default: THROW_PARSE_ERROR( "unknown pin type", aReader.GetSource(),
+                                aReader.Line(), aReader.LineNumber(), pos );
     }
 
-    if( !attributes.IsEmpty() )       /* Special Symbol defined */
+    // Optional
+    if( tokens.HasMoreTokens() )       /* Special Symbol defined */
     {
+        tmp = tokens.GetNextToken();
+
         enum
         {
             INVERTED        = 1 << 0,
@@ -3027,90 +3402,41 @@ LIB_PIN* SCH_LEGACY_PLUGIN_CACHE::loadPin( std::unique_ptr< LIB_PART >& aPart,
 
         int flags = 0;
 
-        for( int j = attributes.size(); j > 0; )
+        for( int j = tmp.size(); j > 0; )
         {
-            switch( attributes[--j].GetValue() )
+            switch( tmp[--j].GetValue() )
             {
-            case '~':
-                break;
-
-            case 'N':
-                pin->SetVisible( false );
-                break;
-
-            case 'I':
-                flags |= INVERTED;
-                break;
-
-            case 'C':
-                flags |= CLOCK;
-                break;
-
-            case 'L':
-                flags |= LOWLEVEL_IN;
-                break;
-
-            case 'V':
-                flags |= LOWLEVEL_OUT;
-                break;
-
-            case 'F':
-                flags |= FALLING_EDGE;
-                break;
-
-            case 'X':
-                flags |= NONLOGIC;
-                break;
-
-            default:
-                SCH_PARSE_ERROR( _( "unknown pin attribute" ), aReader, line );
+            case '~': break;
+            case 'N': pin->m_attributes |= PIN_INVISIBLE; break;
+            case 'I': flags |= INVERTED;     break;
+            case 'C': flags |= CLOCK;        break;
+            case 'L': flags |= LOWLEVEL_IN;  break;
+            case 'V': flags |= LOWLEVEL_OUT; break;
+            case 'F': flags |= FALLING_EDGE; break;
+            case 'X': flags |= NONLOGIC;     break;
+            default: THROW_PARSE_ERROR( "invalid pin attribut", aReader.GetSource(),
+                                        aReader.Line(), aReader.LineNumber(), pos );
             }
+
+            pos += 1;
         }
 
         switch( flags )
         {
-        case 0:
-            pin->SetShape( PINSHAPE_LINE );
-            break;
-
-        case INVERTED:
-            pin->SetShape( PINSHAPE_INVERTED );
-            break;
-
-        case CLOCK:
-            pin->SetShape( PINSHAPE_CLOCK );
-            break;
-
-        case INVERTED | CLOCK:
-            pin->SetShape( PINSHAPE_INVERTED_CLOCK );
-            break;
-
-        case LOWLEVEL_IN:
-            pin->SetShape( PINSHAPE_INPUT_LOW );
-            break;
-
-        case LOWLEVEL_IN | CLOCK:
-            pin->SetShape( PINSHAPE_CLOCK_LOW );
-            break;
-
-        case LOWLEVEL_OUT:
-            pin->SetShape( PINSHAPE_OUTPUT_LOW );
-            break;
-
-        case FALLING_EDGE:
-            pin->SetShape( PINSHAPE_FALLING_EDGE_CLOCK );
-            break;
-
-        case NONLOGIC:
-            pin->SetShape( PINSHAPE_NONLOGIC );
-            break;
-
-        default:
-            SCH_PARSE_ERROR( _( "pin attributes do not define a valid pin shape" ), aReader, line );
+        case 0:                   pin->m_shape = PINSHAPE_LINE;               break;
+        case INVERTED:            pin->m_shape = PINSHAPE_INVERTED;           break;
+        case CLOCK:               pin->m_shape = PINSHAPE_CLOCK;              break;
+        case INVERTED | CLOCK:    pin->m_shape = PINSHAPE_INVERTED_CLOCK;     break;
+        case LOWLEVEL_IN:         pin->m_shape = PINSHAPE_INPUT_LOW;          break;
+        case LOWLEVEL_IN | CLOCK: pin->m_shape = PINSHAPE_CLOCK_LOW;          break;
+        case LOWLEVEL_OUT:        pin->m_shape = PINSHAPE_OUTPUT_LOW;         break;
+        case FALLING_EDGE:        pin->m_shape = PINSHAPE_FALLING_EDGE_CLOCK; break;
+        case NONLOGIC:            pin->m_shape = PINSHAPE_NONLOGIC;           break;
+        default: SCH_PARSE_ERROR( "pin attributes do not define a valid pin shape", aReader, line );
         }
     }
 
-    return pin.release();
+    return pin;
 }
 
 
@@ -3121,12 +3447,13 @@ LIB_POLYLINE* SCH_LEGACY_PLUGIN_CACHE::loadPolyLine( std::unique_ptr< LIB_PART >
 
     wxCHECK_MSG( strCompare( "P", line, &line ), NULL, "Invalid LIB_POLYLINE definition" );
 
-    std::unique_ptr< LIB_POLYLINE > polyLine( new LIB_POLYLINE( aPart.get() ) );
+    LIB_POLYLINE* polyLine = new LIB_POLYLINE( aPart.get() );
 
     int points = parseInt( aReader, line, &line );
     polyLine->SetUnit( parseInt( aReader, line, &line ) );
     polyLine->SetConvert( parseInt( aReader, line, &line ) );
     polyLine->SetWidth( parseInt( aReader, line, &line ) );
+    polyLine->Reserve( points );
 
     wxPoint pt;
 
@@ -3140,7 +3467,7 @@ LIB_POLYLINE* SCH_LEGACY_PLUGIN_CACHE::loadPolyLine( std::unique_ptr< LIB_PART >
     if( *line != 0 )
         polyLine->SetFillMode( parseFillMode( aReader, line, &line ) );
 
-    return polyLine.release();
+    return polyLine;
 }
 
 
@@ -3151,7 +3478,7 @@ LIB_BEZIER* SCH_LEGACY_PLUGIN_CACHE::loadBezier( std::unique_ptr< LIB_PART >& aP
 
     wxCHECK_MSG( strCompare( "B", line, &line ), NULL, "Invalid LIB_BEZIER definition" );
 
-    std::unique_ptr< LIB_BEZIER > bezier( new LIB_BEZIER( aPart.get() ) );
+    LIB_BEZIER* bezier = new LIB_BEZIER( aPart.get() );
 
     int points = parseInt( aReader, line, &line );
     bezier->SetUnit( parseInt( aReader, line, &line ) );
@@ -3159,6 +3486,7 @@ LIB_BEZIER* SCH_LEGACY_PLUGIN_CACHE::loadBezier( std::unique_ptr< LIB_PART >& aP
     bezier->SetWidth( parseInt( aReader, line, &line ) );
 
     wxPoint pt;
+    bezier->Reserve( points );
 
     for( int i = 0; i < points; i++ )
     {
@@ -3170,7 +3498,7 @@ LIB_BEZIER* SCH_LEGACY_PLUGIN_CACHE::loadBezier( std::unique_ptr< LIB_PART >& aP
     if( *line != 0 )
         bezier->SetFillMode( parseFillMode( aReader, line, &line ) );
 
-    return bezier.release();
+    return bezier;
 }
 
 
@@ -3191,34 +3519,538 @@ void SCH_LEGACY_PLUGIN_CACHE::loadFootprintFilters( std::unique_ptr< LIB_PART >&
         wxString footprint;
 
         parseUnquotedString( footprint, aReader, line, &line );
-        aPart->GetFootPrints().Add( footprint );
+        aPart->GetFootprints().Add( footprint );
         line = aReader.ReadLine();
     }
 
-    SCH_PARSE_ERROR( _( "file ended prematurely while loading footprint filters" ), aReader, line );
+    SCH_PARSE_ERROR( "file ended prematurely while loading footprint filters", aReader, line );
 }
 
 
-void SCH_LEGACY_PLUGIN_CACHE::Save()
+void SCH_LEGACY_PLUGIN_CACHE::Save( bool aSaveDocFile )
 {
     if( !m_isModified )
         return;
 
-    FILE_OUTPUTFORMATTER formatter( m_libFileName.GetFullPath() );
-    formatter.Print( 0, "%s %d.%d\n", LIBFILE_IDENT, LIB_VERSION_MAJOR, LIB_VERSION_MINOR );
-    formatter.Print( 0, "#encoding utf-8\n");
+    // Write through symlinks, don't replace them
+    wxFileName fn = GetRealFile();
+
+    std::unique_ptr< FILE_OUTPUTFORMATTER > formatter( new FILE_OUTPUTFORMATTER( fn.GetFullPath() ) );
+    formatter->Print( 0, "%s %d.%d\n", LIBFILE_IDENT, LIB_VERSION_MAJOR, LIB_VERSION_MINOR );
+    formatter->Print( 0, "#encoding utf-8\n");
 
     for( LIB_ALIAS_MAP::iterator it = m_aliases.begin();  it != m_aliases.end();  it++ )
     {
         if( !it->second->IsRoot() )
             continue;
 
-        it->second->GetPart()->Save( formatter );
+        saveSymbol( it->second->GetPart(), formatter );
     }
 
-    formatter.Print( 0, "#\n#End Library\n" );
-    m_fileModTime = m_libFileName.GetModificationTime();
+    formatter->Print( 0, "#\n#End Library\n" );
+    formatter.reset();
+
+    m_fileModTime = fn.GetModificationTime();
     m_isModified = false;
+
+    if( aSaveDocFile )
+        saveDocFile();
+}
+
+
+void SCH_LEGACY_PLUGIN_CACHE::saveSymbol( LIB_PART* aSymbol,
+                                          std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter )
+{
+    wxCHECK_RET( aSymbol, "Invalid LIB_PART pointer." );
+
+    LIB_FIELD&  value = aSymbol->GetValueField();
+
+    // First line: it s a comment (component name for readers)
+    aFormatter->Print( 0, "#\n# %s\n#\n", TO_UTF8( value.GetText() ) );
+
+    // Save data
+    aFormatter->Print( 0, "DEF" );
+
+    if( value.IsVisible() )
+    {
+        aFormatter->Print( 0, " %s", TO_UTF8( value.GetText() ) );
+    }
+    else
+    {
+        aFormatter->Print( 0, " ~%s", TO_UTF8( value.GetText() ) );
+    }
+
+    LIB_FIELD& reference = aSymbol->GetReferenceField();
+
+    if( !reference.GetText().IsEmpty() )
+    {
+        aFormatter->Print( 0, " %s", TO_UTF8( reference.GetText() ) );
+    }
+    else
+    {
+        aFormatter->Print( 0, " ~" );
+    }
+
+    aFormatter->Print( 0, " %d %d %c %c %d %c %c\n",
+                       0, aSymbol->GetPinNameOffset(),
+                       aSymbol->ShowPinNumbers() ? 'Y' : 'N',
+                       aSymbol->ShowPinNames() ? 'Y' : 'N',
+                       aSymbol->GetUnitCount(), aSymbol->UnitsLocked() ? 'L' : 'F',
+                       aSymbol->IsPower() ? 'P' : 'N' );
+
+    timestamp_t dateModified = aSymbol->GetDateLastEdition();
+
+    if( dateModified != 0 )
+    {
+        int sec  = dateModified & 63;
+        int min  = ( dateModified >> 6 ) & 63;
+        int hour = ( dateModified >> 12 ) & 31;
+        int day  = ( dateModified >> 17 ) & 31;
+        int mon  = ( dateModified >> 22 ) & 15;
+        int year = ( dateModified >> 26 ) + 1990;
+
+        aFormatter->Print( 0, "Ti %d/%d/%d %d:%d:%d\n", year, mon, day, hour, min, sec );
+    }
+
+    LIB_FIELDS fields;
+    aSymbol->GetFields( fields );
+
+    // Mandatory fields:
+    // may have their own save policy so there is a separate loop for them.
+    // Empty fields are saved, because the user may have set visibility,
+    // size and orientation
+    for( int i = 0;  i < MANDATORY_FIELDS;  ++i )
+    {
+        saveField( &fields[i], aFormatter );
+    }
+
+    // User defined fields:
+    // may have their own save policy so there is a separate loop for them.
+
+    int fieldId = MANDATORY_FIELDS;     // really wish this would go away.
+
+    for( unsigned i = MANDATORY_FIELDS; i < fields.size(); ++i )
+    {
+        // There is no need to save empty fields, i.e. no reason to preserve field
+        // names now that fields names come in dynamically through the template
+        // fieldnames.
+        if( !fields[i].GetText().IsEmpty() )
+        {
+            fields[i].SetId( fieldId++ );
+            saveField( &fields[i], aFormatter );
+        }
+    }
+
+    // Save the alias list: a line starting by "ALIAS".  The first alias is the root
+    // and has the same name as the component.  In the old library file format this
+    // alias does not get added to the alias list.
+    if( aSymbol->GetAliasCount() > 1 )
+    {
+        wxArrayString aliases = aSymbol->GetAliasNames();
+
+        aFormatter->Print( 0, "ALIAS" );
+
+        for( unsigned i = 1; i < aliases.size(); i++ )
+        {
+            aFormatter->Print( 0, " %s", TO_UTF8( aliases[i] ) );
+        }
+
+        aFormatter->Print( 0, "\n" );
+    }
+
+    wxArrayString footprints = aSymbol->GetFootprints();
+
+    // Write the footprint filter list
+    if( footprints.GetCount() != 0 )
+    {
+        aFormatter->Print( 0, "$FPLIST\n" );
+
+        for( unsigned i = 0; i < footprints.GetCount(); i++ )
+        {
+            aFormatter->Print( 0, " %s\n", TO_UTF8( footprints[i] ) );
+        }
+
+        aFormatter->Print( 0, "$ENDFPLIST\n" );
+    }
+
+    // Save graphics items (including pins)
+    if( !aSymbol->GetDrawItems().empty() )
+    {
+        // Sort the draw items in order to editing a file editing by hand.
+        aSymbol->GetDrawItems().sort();
+
+        aFormatter->Print( 0, "DRAW\n" );
+
+        for( LIB_ITEM& item : aSymbol->GetDrawItems() )
+        {
+            switch( item.Type() )
+            {
+            case LIB_FIELD_T:              // Fields have already been saved above.
+                continue;
+
+            case LIB_ARC_T:
+                saveArc( (LIB_ARC*) &item, aFormatter );
+                break;
+
+            case LIB_BEZIER_T:
+                saveBezier( (LIB_BEZIER*) &item, aFormatter );
+                break;
+
+            case LIB_CIRCLE_T:
+                saveCircle( ( LIB_CIRCLE* ) &item, aFormatter );
+                break;
+
+            case LIB_PIN_T:
+                savePin( (LIB_PIN* ) &item, aFormatter );
+                break;
+
+            case LIB_POLYLINE_T:
+                savePolyLine( ( LIB_POLYLINE* ) &item, aFormatter );
+                break;
+
+            case LIB_RECTANGLE_T:
+                saveRectangle( ( LIB_RECTANGLE* ) &item, aFormatter );
+                break;
+
+            case LIB_TEXT_T:
+                saveText( ( LIB_TEXT* ) &item, aFormatter );
+                break;
+
+            default:
+                ;
+            }
+        }
+
+        aFormatter->Print( 0, "ENDDRAW\n" );
+    }
+
+    aFormatter->Print( 0, "ENDDEF\n" );
+}
+
+
+void SCH_LEGACY_PLUGIN_CACHE::saveArc( LIB_ARC* aArc,
+                                       std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter )
+{
+    wxCHECK_RET( aArc && aArc->Type() == LIB_ARC_T, "Invalid LIB_ARC object." );
+
+    int x1 = aArc->GetFirstRadiusAngle();
+
+    if( x1 > 1800 )
+        x1 -= 3600;
+
+    int x2 = aArc->GetSecondRadiusAngle();
+
+    if( x2 > 1800 )
+        x2 -= 3600;
+
+    aFormatter->Print( 0, "A %d %d %d %d %d %d %d %d %c %d %d %d %d\n",
+                       aArc->GetPosition().x, aArc->GetPosition().y,
+                       aArc->GetRadius(), x1, x2, aArc->GetUnit(), aArc->GetConvert(),
+                       aArc->GetWidth(), fill_tab[aArc->GetFillMode()],
+                       aArc->GetStart().x, aArc->GetStart().y,
+                       aArc->GetEnd().x, aArc->GetEnd().y );
+}
+
+
+void SCH_LEGACY_PLUGIN_CACHE::saveBezier( LIB_BEZIER* aBezier,
+                                          std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter )
+{
+    wxCHECK_RET( aBezier && aBezier->Type() == LIB_BEZIER_T, "Invalid LIB_BEZIER object." );
+
+    aFormatter->Print( 0, "B %u %d %d %d", (unsigned)aBezier->GetPoints().size(),
+                       aBezier->GetUnit(), aBezier->GetConvert(), aBezier->GetWidth() );
+
+    for( const auto& pt : aBezier->GetPoints() )
+        aFormatter->Print( 0, " %d %d", pt.x, pt.y );
+
+    aFormatter->Print( 0, " %c\n", fill_tab[aBezier->GetFillMode()] );
+}
+
+
+void SCH_LEGACY_PLUGIN_CACHE::saveCircle( LIB_CIRCLE* aCircle,
+                                          std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter )
+{
+    wxCHECK_RET( aCircle && aCircle->Type() == LIB_CIRCLE_T, "Invalid LIB_CIRCLE object." );
+
+    aFormatter->Print( 0, "C %d %d %d %d %d %d %c\n",
+                       aCircle->GetPosition().x, aCircle->GetPosition().y,
+                       aCircle->GetRadius(), aCircle->GetUnit(), aCircle->GetConvert(),
+                       aCircle->GetWidth(), fill_tab[aCircle->GetFillMode()] );
+}
+
+
+void SCH_LEGACY_PLUGIN_CACHE::saveField( LIB_FIELD* aField,
+                                         std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter )
+{
+    wxCHECK_RET( aField && aField->Type() == LIB_FIELD_T, "Invalid LIB_FIELD object." );
+
+    int      hjustify, vjustify;
+    int      id = aField->GetId();
+    wxString text = aField->m_Text;
+
+    hjustify = 'C';
+
+    if( aField->GetHorizJustify() == GR_TEXT_HJUSTIFY_LEFT )
+        hjustify = 'L';
+    else if( aField->GetHorizJustify() == GR_TEXT_HJUSTIFY_RIGHT )
+        hjustify = 'R';
+
+    vjustify = 'C';
+
+    if( aField->GetVertJustify() == GR_TEXT_VJUSTIFY_BOTTOM )
+        vjustify = 'B';
+    else if( aField->GetVertJustify() == GR_TEXT_VJUSTIFY_TOP )
+        vjustify = 'T';
+
+    aFormatter->Print( 0, "F%d %s %d %d %d %c %c %c %c%c%c",
+                       id,
+                       EscapedUTF8( text ).c_str(),       // wraps in quotes
+                       aField->GetTextPos().x, aField->GetTextPos().y, aField->GetTextWidth(),
+                       aField->GetTextAngle() == 0 ? 'H' : 'V',
+                       aField->IsVisible() ? 'V' : 'I',
+                       hjustify, vjustify,
+                       aField->IsItalic() ? 'I' : 'N',
+                       aField->IsBold() ? 'B' : 'N' );
+
+    /* Save field name, if necessary
+     * Field name is saved only if it is not the default name.
+     * Just because default name depends on the language and can change from
+     * a country to another
+     */
+    wxString defName = TEMPLATE_FIELDNAME::GetDefaultFieldName( id );
+
+    if( id >= FIELD1 && !aField->m_name.IsEmpty() && aField->m_name != defName )
+        aFormatter->Print( 0, " %s", EscapedUTF8( aField->m_name ).c_str() );
+
+    aFormatter->Print( 0, "\n" );
+}
+
+
+void SCH_LEGACY_PLUGIN_CACHE::savePin( LIB_PIN* aPin,
+                                       std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter )
+{
+    wxCHECK_RET( aPin && aPin->Type() == LIB_PIN_T, "Invalid LIB_PIN object." );
+
+    int      Etype;
+
+    switch( aPin->GetType() )
+    {
+    default:
+    case PIN_INPUT:
+        Etype = 'I';
+        break;
+
+    case PIN_OUTPUT:
+        Etype = 'O';
+        break;
+
+    case PIN_BIDI:
+        Etype = 'B';
+        break;
+
+    case PIN_TRISTATE:
+        Etype = 'T';
+        break;
+
+    case PIN_PASSIVE:
+        Etype = 'P';
+        break;
+
+    case PIN_UNSPECIFIED:
+        Etype = 'U';
+        break;
+
+    case PIN_POWER_IN:
+        Etype = 'W';
+        break;
+
+    case PIN_POWER_OUT:
+        Etype = 'w';
+        break;
+
+    case PIN_OPENCOLLECTOR:
+        Etype = 'C';
+        break;
+
+    case PIN_OPENEMITTER:
+        Etype = 'E';
+        break;
+
+    case PIN_NC:
+        Etype = 'N';
+        break;
+    }
+
+    if( !aPin->GetName().IsEmpty() )
+        aFormatter->Print( 0, "X %s", TO_UTF8( aPin->GetName() ) );
+    else
+        aFormatter->Print( 0, "X ~" );
+
+    aFormatter->Print( 0, " %s %d %d %d %c %d %d %d %d %c",
+                       aPin->GetNumber().IsEmpty() ? "~" : TO_UTF8( aPin->GetNumber() ),
+                       aPin->GetPosition().x, aPin->GetPosition().y,
+                       (int) aPin->GetLength(), (int) aPin->GetOrientation(),
+                       aPin->GetNumberTextSize(), aPin->GetNameTextSize(),
+                       aPin->GetUnit(), aPin->GetConvert(), Etype );
+
+    if( aPin->GetShape() || !aPin->IsVisible() )
+        aFormatter->Print( 0, " " );
+
+    if( !aPin->IsVisible() )
+        aFormatter->Print( 0, "N" );
+
+    switch( aPin->GetShape() )
+    {
+    case PINSHAPE_LINE:
+        break;
+
+    case PINSHAPE_INVERTED:
+        aFormatter->Print( 0, "I" );
+        break;
+
+    case PINSHAPE_CLOCK:
+        aFormatter->Print( 0, "C" );
+        break;
+
+    case PINSHAPE_INVERTED_CLOCK:
+        aFormatter->Print( 0, "IC" );
+        break;
+
+    case PINSHAPE_INPUT_LOW:
+        aFormatter->Print( 0, "L" );
+        break;
+
+    case PINSHAPE_CLOCK_LOW:
+        aFormatter->Print( 0, "CL" );
+        break;
+
+    case PINSHAPE_OUTPUT_LOW:
+        aFormatter->Print( 0, "V" );
+        break;
+
+    case PINSHAPE_FALLING_EDGE_CLOCK:
+        aFormatter->Print( 0, "F" );
+        break;
+
+    case PINSHAPE_NONLOGIC:
+        aFormatter->Print( 0, "X" );
+        break;
+
+    default:
+        assert( !"Invalid pin shape" );
+    }
+
+    aFormatter->Print( 0, "\n" );
+
+    aPin->ClearFlags( IS_CHANGED );
+}
+
+
+void SCH_LEGACY_PLUGIN_CACHE::savePolyLine( LIB_POLYLINE* aPolyLine,
+                                            std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter )
+{
+    wxCHECK_RET( aPolyLine && aPolyLine->Type() == LIB_POLYLINE_T, "Invalid LIB_POLYLINE object." );
+
+    int ccount = aPolyLine->GetCornerCount();
+
+    aFormatter->Print( 0, "P %d %d %d %d", ccount, aPolyLine->GetUnit(), aPolyLine->GetConvert(),
+                       aPolyLine->GetWidth() );
+
+    for( const auto& pt : aPolyLine->GetPolyPoints() )
+    {
+        aFormatter->Print( 0, " %d %d", pt.x, pt.y );
+    }
+
+    aFormatter->Print( 0, " %c\n", fill_tab[aPolyLine->GetFillMode()] );
+}
+
+
+void SCH_LEGACY_PLUGIN_CACHE::saveRectangle( LIB_RECTANGLE* aRectangle,
+                                             std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter )
+{
+    wxCHECK_RET( aRectangle && aRectangle->Type() == LIB_RECTANGLE_T,
+                 "Invalid LIB_RECTANGLE object." );
+
+    aFormatter->Print( 0, "S %d %d %d %d %d %d %d %c\n",
+                       aRectangle->GetPosition().x, aRectangle->GetPosition().y,
+                       aRectangle->GetEnd().x, aRectangle->GetEnd().y,
+                       aRectangle->GetUnit(), aRectangle->GetConvert(),
+                       aRectangle->GetWidth(), fill_tab[aRectangle->GetFillMode()] );
+}
+
+
+void SCH_LEGACY_PLUGIN_CACHE::saveText( LIB_TEXT* aText,
+                                        std::unique_ptr< FILE_OUTPUTFORMATTER >& aFormatter )
+{
+    wxCHECK_RET( aText && aText->Type() == LIB_TEXT_T, "Invalid LIB_TEXT object." );
+
+    wxString text = aText->GetText();
+
+    if( text.Contains( wxT( " " ) ) || text.Contains( wxT( "~" ) ) || text.Contains( wxT( "\"" ) ) )
+    {
+        // convert double quote to similar-looking two apostrophes
+        text.Replace( wxT( "\"" ), wxT( "''" ) );
+        text = wxT( "\"" ) + text + wxT( "\"" );
+    }
+
+    aFormatter->Print( 0, "T %g %d %d %d %d %d %d %s", aText->GetTextAngle(),
+                       aText->GetTextPos().x, aText->GetTextPos().y,
+                       aText->GetTextWidth(), !aText->IsVisible(),
+                       aText->GetUnit(), aText->GetConvert(), TO_UTF8( text ) );
+
+    aFormatter->Print( 0, " %s %d", aText->IsItalic() ? "Italic" : "Normal", aText->IsBold() );
+
+    char hjustify = 'C';
+
+    if( aText->GetHorizJustify() == GR_TEXT_HJUSTIFY_LEFT )
+        hjustify = 'L';
+    else if( aText->GetHorizJustify() == GR_TEXT_HJUSTIFY_RIGHT )
+        hjustify = 'R';
+
+    char vjustify = 'C';
+
+    if( aText->GetVertJustify() == GR_TEXT_VJUSTIFY_BOTTOM )
+        vjustify = 'B';
+    else if( aText->GetVertJustify() == GR_TEXT_VJUSTIFY_TOP )
+        vjustify = 'T';
+
+    aFormatter->Print( 0, " %c %c\n", hjustify, vjustify );
+}
+
+
+void SCH_LEGACY_PLUGIN_CACHE::saveDocFile()
+{
+    wxFileName fileName = m_libFileName;
+
+    fileName.SetExt( DOC_EXT );
+    FILE_OUTPUTFORMATTER formatter( fileName.GetFullPath() );
+
+    formatter.Print( 0, "%s\n", DOCFILE_IDENT );
+
+    for( LIB_ALIAS_MAP::iterator it = m_aliases.begin();  it != m_aliases.end();  it++ )
+    {
+        wxString description =  it->second->GetDescription();
+        wxString keyWords = it->second->GetKeyWords();
+        wxString docFileName = it->second->GetDocFileName();
+
+        if( description.IsEmpty() && keyWords.IsEmpty() && docFileName.IsEmpty() )
+            continue;
+
+        formatter.Print( 0, "#\n$CMP %s\n", TO_UTF8( it->second->GetName() ) );
+
+        if( !description.IsEmpty() )
+            formatter.Print( 0, "D %s\n", TO_UTF8( description ) );
+
+        if( !keyWords.IsEmpty() )
+            formatter.Print( 0, "K %s\n", TO_UTF8( keyWords ) );
+
+        if( !docFileName.IsEmpty() )
+            formatter.Print( 0, "F %s\n", TO_UTF8( docFileName ) );
+
+        formatter.Print( 0, "$ENDCMP\n" );
+    }
+
+    formatter.Print( 0, "#\n#End Doc Library\n" );
 }
 
 
@@ -3283,8 +4115,55 @@ void SCH_LEGACY_PLUGIN::cacheLib( const wxString& aLibraryFileName )
         // a spectacular episode in memory management:
         delete m_cache;
         m_cache = new SCH_LEGACY_PLUGIN_CACHE( aLibraryFileName );
-        m_cache->Load();
+
+        // Because m_cache is rebuilt, increment PART_LIBS::s_modify_generation
+        // to modify the hash value that indicate component to symbol links
+        // must be updated.
+        PART_LIBS::s_modify_generation++;
+
+        if( !isBuffering( m_props ) )
+            m_cache->Load();
     }
+}
+
+
+bool SCH_LEGACY_PLUGIN::writeDocFile( const PROPERTIES* aProperties )
+{
+    std::string propName( SCH_LEGACY_PLUGIN::PropNoDocFile );
+
+    if( aProperties && aProperties->find( propName ) != aProperties->end() )
+        return false;
+
+    return true;
+}
+
+
+bool SCH_LEGACY_PLUGIN::isBuffering( const PROPERTIES* aProperties )
+{
+    return ( aProperties && aProperties->Exists( SCH_LEGACY_PLUGIN::PropBuffering ) );
+}
+
+
+int SCH_LEGACY_PLUGIN::GetModifyHash() const
+{
+    if( m_cache )
+        return m_cache->GetModifyHash();
+
+    // If the cache hasn't been loaded, it hasn't been modified.
+    return 0;
+}
+
+
+size_t SCH_LEGACY_PLUGIN::GetSymbolLibCount( const wxString&   aLibraryPath,
+                                             const PROPERTIES* aProperties )
+{
+    LOCALE_IO toggle;
+
+    m_props = aProperties;
+
+    cacheLib( aLibraryPath );
+
+    return m_cache->m_aliases.size();
 }
 
 
@@ -3294,32 +4173,41 @@ void SCH_LEGACY_PLUGIN::EnumerateSymbolLib( wxArrayString&    aAliasNameList,
 {
     LOCALE_IO   toggle;     // toggles on, then off, the C locale.
 
-    init( NULL, aProperties );
+    m_props = aProperties;
 
+    bool powerSymbolsOnly = ( aProperties &&
+                              aProperties->find( SYMBOL_LIB_TABLE::PropPowerSymsOnly ) != aProperties->end() );
     cacheLib( aLibraryPath );
 
     const LIB_ALIAS_MAP& aliases = m_cache->m_aliases;
 
     for( LIB_ALIAS_MAP::const_iterator it = aliases.begin();  it != aliases.end();  ++it )
-        aAliasNameList.Add( FROM_UTF8( it->first.c_str() ) );
+    {
+        if( !powerSymbolsOnly || it->second->GetPart()->IsPower() )
+            aAliasNameList.Add( it->first );
+    }
 }
 
 
-void SCH_LEGACY_PLUGIN::TransferCache( PART_LIB& aTarget )
+void SCH_LEGACY_PLUGIN::EnumerateSymbolLib( std::vector<LIB_ALIAS*>& aAliasList,
+                                            const wxString&   aLibraryPath,
+                                            const PROPERTIES* aProperties )
 {
-    aTarget.m_amap = m_cache->m_aliases;
+    LOCALE_IO   toggle;     // toggles on, then off, the C locale.
 
-    for( LIB_ALIAS_MAP::iterator it = aTarget.m_amap.begin();  it != aTarget.m_amap.end();  ++it )
-        it->second->GetPart()->SetLib( &aTarget );
+    m_props = aProperties;
 
-    aTarget.type = m_cache->m_libType;
-    aTarget.fileName = m_cache->m_libFileName;
-    aTarget.versionMajor = m_cache->m_versionMajor;
-    aTarget.versionMinor = m_cache->m_versionMinor;
+    bool powerSymbolsOnly = ( aProperties &&
+                              aProperties->find( SYMBOL_LIB_TABLE::PropPowerSymsOnly ) != aProperties->end() );
+    cacheLib( aLibraryPath );
 
-    m_cache->m_aliases.clear();
-    delete m_cache;
-    m_cache = NULL;
+    const LIB_ALIAS_MAP& aliases = m_cache->m_aliases;
+
+    for( LIB_ALIAS_MAP::const_iterator it = aliases.begin();  it != aliases.end();  ++it )
+    {
+        if( !powerSymbolsOnly || it->second->GetPart()->IsPower() )
+            aAliasList.push_back( it->second );
+    }
 }
 
 
@@ -3332,7 +4220,7 @@ LIB_ALIAS* SCH_LEGACY_PLUGIN::LoadSymbol( const wxString& aLibraryPath, const wx
 
     cacheLib( aLibraryPath );
 
-    LIB_ALIAS_MAP::const_iterator it = m_cache->m_aliases.find( TO_UTF8( aAliasName ) );
+    LIB_ALIAS_MAP::const_iterator it = m_cache->m_aliases.find( aAliasName );
 
     if( it == m_cache->m_aliases.end() )
         return NULL;
@@ -3349,7 +4237,9 @@ void SCH_LEGACY_PLUGIN::SaveSymbol( const wxString& aLibraryPath, const LIB_PART
     cacheLib( aLibraryPath );
 
     m_cache->AddSymbol( aSymbol );
-    m_cache->Save();
+
+    if( !isBuffering( aProperties ) )
+        m_cache->Save( writeDocFile( aProperties ) );
 }
 
 
@@ -3361,6 +4251,9 @@ void SCH_LEGACY_PLUGIN::DeleteAlias( const wxString& aLibraryPath, const wxStrin
     cacheLib( aLibraryPath );
 
     m_cache->DeleteAlias( aAliasName );
+
+    if( !isBuffering( aProperties ) )
+        m_cache->Save( writeDocFile( aProperties ) );
 }
 
 
@@ -3372,4 +4265,99 @@ void SCH_LEGACY_PLUGIN::DeleteSymbol( const wxString& aLibraryPath, const wxStri
     cacheLib( aLibraryPath );
 
     m_cache->DeleteSymbol( aAliasName );
+
+    if( !isBuffering( aProperties ) )
+        m_cache->Save( writeDocFile( aProperties ) );
 }
+
+
+void SCH_LEGACY_PLUGIN::CreateSymbolLib( const wxString& aLibraryPath,
+                                         const PROPERTIES* aProperties )
+{
+    if( wxFileExists( aLibraryPath ) )
+    {
+        THROW_IO_ERROR( wxString::Format(
+            _( "symbol library \"%s\" already exists, cannot create a new library" ),
+            aLibraryPath.GetData() ) );
+    }
+
+    LOCALE_IO toggle;
+
+    m_props = aProperties;
+
+    delete m_cache;
+    m_cache = new SCH_LEGACY_PLUGIN_CACHE( aLibraryPath );
+    m_cache->SetModified();
+    m_cache->Save( writeDocFile( aProperties ) );
+    m_cache->Load();    // update m_writable and m_mod_time
+}
+
+
+bool SCH_LEGACY_PLUGIN::DeleteSymbolLib( const wxString& aLibraryPath,
+                                         const PROPERTIES* aProperties )
+{
+    wxFileName fn = aLibraryPath;
+
+    if( !fn.FileExists() )
+        return false;
+
+    // Some of the more elaborate wxRemoveFile() crap puts up its own wxLog dialog
+    // we don't want that.  we want bare metal portability with no UI here.
+    if( wxRemove( aLibraryPath ) )
+    {
+        THROW_IO_ERROR( wxString::Format( _( "library \"%s\" cannot be deleted" ),
+                                          aLibraryPath.GetData() ) );
+    }
+
+    if( m_cache && m_cache->IsFile( aLibraryPath ) )
+    {
+        delete m_cache;
+        m_cache = 0;
+    }
+
+    return true;
+}
+
+
+void SCH_LEGACY_PLUGIN::SaveLibrary( const wxString& aLibraryPath, const PROPERTIES* aProperties )
+{
+    if( !m_cache )
+        m_cache = new SCH_LEGACY_PLUGIN_CACHE( aLibraryPath );
+
+    wxString oldFileName = m_cache->GetFileName();
+
+    if( !m_cache->IsFile( aLibraryPath ) )
+    {
+        m_cache->SetFileName( aLibraryPath );
+    }
+
+    // This is a forced save.
+    m_cache->SetModified();
+    m_cache->Save( writeDocFile( aProperties ) );
+    m_cache->SetFileName( oldFileName );
+}
+
+
+bool SCH_LEGACY_PLUGIN::CheckHeader( const wxString& aFileName )
+{
+    // Open file and check first line
+    wxTextFile tempFile;
+
+    tempFile.Open( aFileName );
+    wxString firstline;
+    // read the first line
+    firstline = tempFile.GetFirstLine();
+    tempFile.Close();
+
+    return firstline.StartsWith( "EESchema" );
+}
+
+
+bool SCH_LEGACY_PLUGIN::IsSymbolLibWritable( const wxString& aLibraryPath )
+{
+    return wxFileName::IsFileWritable( aLibraryPath );
+}
+
+
+const char* SCH_LEGACY_PLUGIN::PropBuffering = "buffering";
+const char* SCH_LEGACY_PLUGIN::PropNoDocFile = "no_doc_file";

@@ -31,7 +31,6 @@ DIALOG_SIGNAL_LIST::DIALOG_SIGNAL_LIST( SIM_PLOT_FRAME* aParent, NETLIST_EXPORTE
     : DIALOG_SIGNAL_LIST_BASE( aParent ), m_plotFrame( aParent ), m_exporter( aExporter )
 {
 
-    FixOSXCancelButtonIssue();
 }
 
 
@@ -55,12 +54,13 @@ bool DIALOG_SIGNAL_LIST::TransferDataToWindow()
         // Voltage list
         for( const auto& net : m_exporter->GetNetIndexMap() )
         {
-            if( net.first != "GND" )
+            if( net.first != "GND" && net.first != "0" )
                 m_signals->Append( wxString::Format( "V(%s)", net.first ) );
         }
 
-        // For some reason, it is not possible to plot currents in any but transient analysis
-        if( m_exporter->GetSimType() == ST_TRANSIENT )
+        auto simType = m_exporter->GetSimType();
+
+        if( simType == ST_TRANSIENT || simType == ST_DC )
         {
             for( const auto& item : m_exporter->GetSpiceItems() )
             {

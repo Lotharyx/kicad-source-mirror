@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2011 jean-pierre.charras
- * Copyright (C) 2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2011-2017 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -27,18 +27,15 @@
  */
 
 #include <fctsys.h>
-#include <class_drawpanel.h>
+#include <sch_draw_panel.h>
 #include <trigo.h>
 #include <macros.h>
+#include <bitmaps.h>
+
 #include <sch_bitmap.h>
 
 #include <wx/mstream.h>
 
-
-/*
- * class SCH_BITMAP
- * This class handle a bitmap image that can be inserted in a schematic.
- */
 
 SCH_BITMAP::SCH_BITMAP( const wxPoint& pos ) :
     SCH_ITEM( NULL, SCH_BITMAP_T )
@@ -86,34 +83,6 @@ bool SCH_BITMAP::ReadImageFile( const wxString& aFullFilename )
 }
 
 
-bool SCH_BITMAP::Save( FILE* aFile ) const
-{
-    if( fprintf( aFile, "$Bitmap\n" ) == EOF )
-        return false;
-
-    if( fprintf( aFile, "Pos %-4d %-4d\n", m_pos.x, m_pos.y ) == EOF )
-        return false;
-
-    if( fprintf( aFile, "Scale %f\n", m_image->GetScale() ) == EOF )
-        return false;
-
-    if( fprintf( aFile, "Data\n" ) == EOF )
-        return false;
-
-    if( !m_image->SaveData( aFile ) )
-        return false;
-
-    if( fprintf( aFile, "\nEndData\n" ) == EOF )
-        return false;
-
-
-    if( fprintf( aFile, "$EndBitmap\n" ) == EOF )
-        return false;
-
-    return true;
-}
-
-
 EDA_ITEM* SCH_BITMAP::Clone() const
 {
     return new SCH_BITMAP( *this );
@@ -132,52 +101,6 @@ void SCH_BITMAP::SwapData( SCH_ITEM* aItem )
 }
 
 
-bool SCH_BITMAP::Load( LINE_READER& aLine, wxString& aErrorMsg )
-{
-    char* line = aLine.Line();
-
-    if( strncasecmp( line, "$Bitmap", 7 ) != 0 )
-    {
-        aErrorMsg.Printf( wxT( "Eeschema file bitmap image load error at line %d, aborted" ),
-                          aLine.LineNumber() );
-        aErrorMsg << wxT( "\n" ) << FROM_UTF8( (char*) aLine );
-        return false;
-    }
-
-    for( ; ; )
-    {
-        if( !aLine.ReadLine() )
-            return false;
-
-        line = aLine.Line();
-
-        if( strncasecmp( line, "Pos", 3 ) == 0 )
-        {
-            sscanf( line + 3, "%d %d", &m_pos.x, &m_pos.y );
-            continue;
-        }
-
-        if( strncasecmp( line, "Scale", 5 ) == 0 )
-        {
-            double scale = 1.0;
-            sscanf( line + 5, "%lf", &scale );
-            m_image->SetScale( scale );
-            continue;
-        }
-
-        if( strncasecmp( line, "Data", 4 ) == 0 )
-        {
-            m_image->LoadData( aLine, aErrorMsg );
-        }
-
-        if( strncasecmp( line, "$EndBitmap", 4 ) == 0 )
-            break;
-    }
-
-    return true;
-}
-
-
 const EDA_RECT SCH_BITMAP::GetBoundingBox() const
 {
     EDA_RECT rect = m_image->GetBoundingBox();
@@ -189,11 +112,11 @@ const EDA_RECT SCH_BITMAP::GetBoundingBox() const
 
 
 void SCH_BITMAP::Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                       GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor )
+                       GR_DRAWMODE aDrawMode, COLOR4D aColor )
 {
     wxPoint pos = m_pos + aOffset;
 
-    if( aColor < 0 )    // Use normal drawing function
+    if( aColor == COLOR4D::UNSPECIFIED )    // Use normal drawing function
     {
         // https://bugs.launchpad.net/kicad/+bug/1529163
         // "Moving images in eeschema on OS X uses
@@ -205,7 +128,7 @@ void SCH_BITMAP::Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset
         GRSetDrawMode( aDC, aDrawMode );
 #endif
 
-        m_image->DrawBitmap( aPanel, aDC, pos );
+        m_image->DrawBitmap( aDC, pos );
     }
     else    // draws bounding box only (used to move items)
     {
@@ -220,18 +143,12 @@ void SCH_BITMAP::Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset
 }
 
 
-/* Function GetSize
- * returns the actual size (in user units, not in pixels) of the image
- */
 wxSize SCH_BITMAP::GetSize() const
 {
     return m_image->GetSize();
 }
 
 
-/*
- * Mirror image relative to a horizontal X axis )
- */
 void SCH_BITMAP::MirrorX( int aXaxis_position )
 {
     MIRROR( m_pos.y, aXaxis_position );
@@ -239,9 +156,6 @@ void SCH_BITMAP::MirrorX( int aXaxis_position )
 }
 
 
-/*
- * Mirror image relative to a vertical Y axis
- */
 void SCH_BITMAP::MirrorY( int aYaxis_position )
 {
     MIRROR( m_pos.x, aYaxis_position );
@@ -308,4 +222,17 @@ bool SCH_BITMAP::HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy 
 void SCH_BITMAP::Plot( PLOTTER* aPlotter )
 {
     m_image->PlotImage( aPlotter, m_pos, GetLayerColor( GetLayer() ), GetPenSize() );
+}
+
+
+BITMAP_DEF SCH_BITMAP::GetMenuImage() const
+{
+    return image_xpm;
+}
+
+
+void SCH_BITMAP::ViewGetLayers( int aLayers[], int& aCount ) const
+{
+    aCount = 1;
+    aLayers[0] = LAYER_DRAW_BITMAPS;
 }

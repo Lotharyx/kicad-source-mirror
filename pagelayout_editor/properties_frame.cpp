@@ -27,10 +27,9 @@
  */
 
 #include <fctsys.h>
-#include <wxstruct.h>
 #include <class_drawpanel.h>
 #include <worksheet_shape_builder.h>
-#include <class_worksheet_dataitem.h>
+#include <worksheet_dataitem.h>
 #include <properties_frame.h>
 
 PROPERTIES_FRAME::PROPERTIES_FRAME( PL_EDITOR_FRAME* aParent ):
@@ -183,8 +182,9 @@ void PROPERTIES_FRAME::CopyPrmsFromItemToPanel( WORKSHEET_DATAITEM* aItem )
     // and be sure widgets which are relevant are enabled
     if( aItem->GetType() == WORKSHEET_DATAITEM::WS_TEXT )
     {
-        m_SizerTextOptions->Show(true);
-        m_SizerTextIncrementLabel->Show( true );
+        m_SizerTextOptions->Show( true );
+        m_staticTextInclabel->Show( true );
+        m_textCtrlTextIncrement->Show( true );
 
         WORKSHEET_DATAITEM_TEXT* item = (WORKSHEET_DATAITEM_TEXT*) aItem;
         item->m_FullText = item->m_TextBase;
@@ -229,8 +229,9 @@ void PROPERTIES_FRAME::CopyPrmsFromItemToPanel( WORKSHEET_DATAITEM* aItem )
     }
     else
     {
-        m_SizerTextOptions->Show(false);
-        m_SizerTextIncrementLabel->Show(false);
+        m_SizerTextOptions->Show( false );
+        m_staticTextInclabel->Show( false );
+        m_textCtrlTextIncrement->Show( false );
     }
 
     if( aItem->GetType() == WORKSHEET_DATAITEM::WS_POLYPOLYGON )
@@ -253,33 +254,41 @@ void PROPERTIES_FRAME::CopyPrmsFromItemToPanel( WORKSHEET_DATAITEM* aItem )
     {
         case WORKSHEET_DATAITEM::WS_SEGMENT:
         case WORKSHEET_DATAITEM::WS_RECT:
-            m_SizerBitmapPPI->Show( false );
+            m_SizerRotAndPPI->Show( false );
             m_SizerLineThickness->Show( true );
             m_staticTextInfoThickness->Show( true );
-            m_SizerRotation->Show( false );
             m_SizerEndPosition->Show(true);
             break;
 
         case WORKSHEET_DATAITEM::WS_TEXT:
-            m_SizerBitmapPPI->Show( false );
+            m_SizerRotAndPPI->Show( true );
+            m_staticTextRot->Show( true );
+            m_textCtrlRotation->Show( true );
+            m_staticTextBitmapPPI->Show( false );
+            m_textCtrlBitmapPPI->Show( false );
             m_SizerLineThickness->Show( true );
             m_staticTextInfoThickness->Show( true );
-            m_SizerRotation->Show( true );
             m_SizerEndPosition->Show(false);
             break;
 
         case WORKSHEET_DATAITEM::WS_POLYPOLYGON:
-            m_SizerBitmapPPI->Show( false );
+            m_SizerRotAndPPI->Show( true );
+            m_staticTextRot->Show( true );
+            m_textCtrlRotation->Show( true );
+            m_staticTextBitmapPPI->Show( false );
+            m_textCtrlBitmapPPI->Show( false );
             m_SizerLineThickness->Show( true );
             m_staticTextInfoThickness->Show( false );   // No defaut value for thickness
-            m_SizerRotation->Show( true );
             m_SizerEndPosition->Show(false);
             break;
 
         case WORKSHEET_DATAITEM::WS_BITMAP:
-            m_SizerBitmapPPI->Show( true );
+            m_SizerRotAndPPI->Show( true );
+            m_staticTextRot->Show( false );
+            m_textCtrlRotation->Show( false );
+            m_staticTextBitmapPPI->Show( true );
+            m_textCtrlBitmapPPI->Show( true );
             m_SizerLineThickness->Show( false );
-            m_SizerRotation->Show( false );
             m_SizerEndPosition->Show(false);
             break;
     }

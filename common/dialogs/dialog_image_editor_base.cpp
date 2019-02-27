@@ -1,15 +1,15 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version Jun 30 2011)
+// C++ code generated with wxFormBuilder (version Jun  5 2018)
 // http://www.wxformbuilder.org/
 //
-// PLEASE DO "NOT" EDIT THIS FILE!
+// PLEASE DO *NOT* EDIT THIS FILE!
 ///////////////////////////////////////////////////////////////////////////
 
 #include "dialog_image_editor_base.h"
 
 ///////////////////////////////////////////////////////////////////////////
 
-DIALOG_IMAGE_EDITOR_BASE::DIALOG_IMAGE_EDITOR_BASE( wxWindow* parent, wxWindowID id, const wxString& title, const wxPoint& pos, const wxSize& size, long style ) : wxDialog( parent, id, title, pos, size, style )
+DIALOG_IMAGE_EDITOR_BASE::DIALOG_IMAGE_EDITOR_BASE( wxWindow* parent, wxWindowID id, const wxString& title, const wxPoint& pos, const wxSize& size, long style ) : DIALOG_SHIM( parent, id, title, pos, size, style )
 {
 	this->SetSizeHints( wxDefaultSize, wxDefaultSize );
 	
@@ -43,7 +43,6 @@ DIALOG_IMAGE_EDITOR_BASE::DIALOG_IMAGE_EDITOR_BASE( wxWindow* parent, wxWindowID
 	bSizerRight->Add( m_buttonGrey, 0, wxEXPAND|wxTOP|wxRIGHT|wxLEFT, 5 );
 	
 	m_buttonHalfSize = new wxButton( this, wxID_ANY, _("Half Size"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_buttonHalfSize->SetDefault(); 
 	bSizerRight->Add( m_buttonHalfSize, 0, wxALL|wxEXPAND, 5 );
 	
 	m_buttonUndoLast = new wxButton( this, wxID_ANY, _("Undo Last"), wxDefaultPosition, wxDefaultSize, 0 );
@@ -56,22 +55,28 @@ DIALOG_IMAGE_EDITOR_BASE::DIALOG_IMAGE_EDITOR_BASE( wxWindow* parent, wxWindowID
 	m_textCtrlScale = new wxTextCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
 	bSizerRight->Add( m_textCtrlScale, 0, wxBOTTOM|wxRIGHT|wxLEFT|wxEXPAND, 5 );
 	
+	
 	bSizerLeft->Add( bSizerRight, 0, wxEXPAND, 5 );
+	
 	
 	bUpperSizer->Add( bSizerLeft, 1, wxEXPAND, 5 );
 	
+	
 	bSizerMain->Add( bUpperSizer, 1, wxEXPAND, 5 );
 	
-	m_sdbSizer1 = new wxStdDialogButtonSizer();
-	m_sdbSizer1OK = new wxButton( this, wxID_OK );
-	m_sdbSizer1->AddButton( m_sdbSizer1OK );
-	m_sdbSizer1Cancel = new wxButton( this, wxID_CANCEL );
-	m_sdbSizer1->AddButton( m_sdbSizer1Cancel );
-	m_sdbSizer1->Realize();
-	bSizerMain->Add( m_sdbSizer1, 0, wxALIGN_RIGHT, 5 );
+	m_sdbSizer = new wxStdDialogButtonSizer();
+	m_sdbSizerOK = new wxButton( this, wxID_OK );
+	m_sdbSizer->AddButton( m_sdbSizerOK );
+	m_sdbSizerCancel = new wxButton( this, wxID_CANCEL );
+	m_sdbSizer->AddButton( m_sdbSizerCancel );
+	m_sdbSizer->Realize();
+	
+	bSizerMain->Add( m_sdbSizer, 0, wxALIGN_RIGHT|wxALL, 5 );
+	
 	
 	this->SetSizer( bSizerMain );
 	this->Layout();
+	bSizerMain->Fit( this );
 	
 	this->Centre( wxBOTH );
 	
@@ -83,8 +88,6 @@ DIALOG_IMAGE_EDITOR_BASE::DIALOG_IMAGE_EDITOR_BASE( wxWindow* parent, wxWindowID
 	m_buttonGrey->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMAGE_EDITOR_BASE::OnGreyScaleConvert ), NULL, this );
 	m_buttonHalfSize->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMAGE_EDITOR_BASE::OnHalfSize ), NULL, this );
 	m_buttonUndoLast->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMAGE_EDITOR_BASE::OnUndoLastChange ), NULL, this );
-	m_sdbSizer1Cancel->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMAGE_EDITOR_BASE::OnCancel_Button ), NULL, this );
-	m_sdbSizer1OK->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMAGE_EDITOR_BASE::OnOK_Button ), NULL, this );
 }
 
 DIALOG_IMAGE_EDITOR_BASE::~DIALOG_IMAGE_EDITOR_BASE()
@@ -97,7 +100,5 @@ DIALOG_IMAGE_EDITOR_BASE::~DIALOG_IMAGE_EDITOR_BASE()
 	m_buttonGrey->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMAGE_EDITOR_BASE::OnGreyScaleConvert ), NULL, this );
 	m_buttonHalfSize->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMAGE_EDITOR_BASE::OnHalfSize ), NULL, this );
 	m_buttonUndoLast->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMAGE_EDITOR_BASE::OnUndoLastChange ), NULL, this );
-	m_sdbSizer1Cancel->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMAGE_EDITOR_BASE::OnCancel_Button ), NULL, this );
-	m_sdbSizer1OK->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMAGE_EDITOR_BASE::OnOK_Button ), NULL, this );
 	
 }

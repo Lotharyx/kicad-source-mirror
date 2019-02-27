@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2011 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2011-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2011-2015 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -30,8 +30,9 @@
 #define _SCH_COLLECTORS_H_
 
 
-#include <class_collector.h>
+#include <collector.h>
 #include <sch_item_struct.h>
+#include <sch_sheet_path.h>
 #include <dialogs/dialog_schematic_find.h>
 
 
@@ -66,6 +67,11 @@ public:
      * A scan list for a specific editable field: Footprint.
      */
     static const KICAD_T CmpFieldFootprintOnly[];
+
+    /**
+     * A scan list for a specific editable field: Datasheet.
+     */
+    static const KICAD_T CmpFieldDatasheetOnly[];
 
     /**
      * A scan list for all movable schematic items.
@@ -113,6 +119,16 @@ public:
     static const KICAD_T OrientableItems[];
 
     /**
+     * A scan list for schematic items that can be copied/duplicated.
+     */
+    static const KICAD_T CopyableItems[];
+
+    /**
+     * A scan list for schematic items that react to a double-click.
+     */
+    static const KICAD_T DoubleClickItems[];
+
+    /**
      * Constructor SCH_COLLECTOR
      */
     SCH_COLLECTOR( const KICAD_T* aScanTypes = SCH_COLLECTOR::AllItems )
@@ -121,9 +137,8 @@ public:
     }
 
     /**
-     * Operator []
-     * overloads COLLECTOR::operator[](int) to return a SCH_ITEM* instead of
-     * an EDA_ITEM* type.
+     * Overload COLLECTOR::operator[](int) to return a SCH_ITEM instead of an EDA_ITEM.
+     *
      * @param aIndex The index into the list.
      * @return SCH_ITEM* at \a aIndex or NULL.
      */
@@ -227,8 +242,11 @@ class SCH_FIND_COLLECTOR : public COLLECTOR
     /// The criteria used to test for matching items.
     SCH_FIND_REPLACE_DATA m_findReplaceData;
 
-    /// The path of the sheet currently being iterated over.
-    SCH_SHEET_PATH* m_sheetPath;
+    /// The path of the sheet *currently* being iterated over.
+    SCH_SHEET_PATH* m_currentSheetPath;
+
+    /// The paths of the all the sheets in the collector.
+    SCH_SHEET_PATHS m_sheetPaths;
 
     /// The current found item list index.
     int     m_foundIndex;
@@ -259,7 +277,7 @@ public:
         SetScanTypes( aScanTypes );
         m_foundIndex = 0;
         SetForceSearch( false );
-        m_sheetPath = NULL;
+        m_currentSheetPath = NULL;
         m_lib_hash = 0;
     }
 
@@ -269,6 +287,9 @@ public:
         COLLECTOR::Empty();
         m_data.clear();
     }
+
+    SCH_ITEM* GetItem( int ndx ) const;
+    SCH_ITEM* operator[]( int ndx ) const;
 
     void SetForceSearch( bool doSearch = true ) { m_forceSearch = doSearch; }
 
@@ -328,7 +349,7 @@ public:
      *         current index or a wxEmptyString if the list is empty or the index is
      *         invalid.
      */
-    wxString GetText();
+    wxString GetText( EDA_UNITS_T aUnits );
 
     /**
      * Function GetItem

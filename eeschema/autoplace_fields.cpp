@@ -52,12 +52,12 @@
 
 #include <boost/range/adaptor/reversed.hpp>
 
-#include <schframe.h>
+#include <sch_edit_frame.h>
 #include <hotkeys_basic.h>
 #include <sch_component.h>
 #include <sch_line.h>
 #include <lib_pin.h>
-#include <class_drawpanel.h>
+#include <sch_draw_panel.h>
 #include <class_libentry.h>
 #include <eeschema_config.h>
 #include <kiface_i.h>
@@ -195,11 +195,11 @@ protected:
 
             if( m_component->GetTransform().y1 )
             {
-                field->SetOrientation( TEXT_ORIENT_VERT );
+                field->SetTextAngle( TEXT_ANGLE_VERT );
             }
             else
             {
-                field->SetOrientation( TEXT_ORIENT_HORIZ );
+                field->SetTextAngle( TEXT_ANGLE_HORIZ );
             }
 
             field_width = field->GetBoundingBox().GetWidth();
@@ -322,7 +322,7 @@ protected:
             { SIDE_LEFT,    pins_on_side( SIDE_LEFT ) },
             { SIDE_BOTTOM,  pins_on_side( SIDE_BOTTOM ) },
         };
-        std::vector<SIDE_AND_NPINS> sides( sides_init, sides_init + DIM( sides_init ) );
+        std::vector<SIDE_AND_NPINS> sides( sides_init, sides_init + arrayDim( sides_init ) );
 
         int orient = m_component->GetOrientation();
         int orient_angle = orient & 0xff; // enum is a bitmask
@@ -386,7 +386,7 @@ protected:
     std::vector<SIDE_AND_COLL> get_colliding_sides()
     {
         SIDE sides_init[] = { SIDE_RIGHT, SIDE_TOP, SIDE_LEFT, SIDE_BOTTOM };
-        std::vector<SIDE> sides( sides_init, sides_init + DIM( sides_init ) );
+        std::vector<SIDE> sides( sides_init, sides_init + arrayDim( sides_init ) );
         std::vector<SIDE_AND_COLL> colliding;
 
         // Iterate over all sides and find the ones that collide
@@ -709,7 +709,7 @@ void SCH_EDIT_FRAME::OnAutoplaceFields( wxCommandEvent& aEvent )
 
     component->AutoplaceFields( screen, /* aManual */ true );
 
-    GetCanvas()->Refresh();
+    RefreshItem( component );
     OnModify();
 }
 

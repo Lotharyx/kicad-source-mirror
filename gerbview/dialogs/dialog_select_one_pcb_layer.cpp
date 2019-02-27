@@ -31,7 +31,7 @@
 #include <gerbview_frame.h>
 #include <select_layers_to_pcb.h>
 
-#define NB_PCB_LAYERS LAYER_ID_COUNT
+#define NB_PCB_LAYERS PCB_LAYER_ID_COUNT
 #define FIRST_COPPER_LAYER 0
 #define LAST_COPPER_LAYER 31
 
@@ -137,8 +137,11 @@ SELECT_LAYER_DIALOG::SELECT_LAYER_DIALOG( GERBVIEW_FRAME* parent,
     }
 
     // Build the layer list; build non copper layers list
-    for( ; ii < NB_PCB_LAYERS; ++ii )
+    for( ; ; ++ii )
     {
+        if( GetPCBDefaultLayerName( ii ) == "" )    // End of list
+            break;
+
         layerList.Add( GetPCBDefaultLayerName( ii ) );
 
         if( ii == aDefaultLayer )
@@ -202,7 +205,7 @@ void SELECT_LAYER_DIALOG::OnCancelClick( wxCommandEvent& event )
 }
 
 // This function is a duplicate of
-// const wxChar* LSET::Name( LAYER_ID aLayerId )
+// const wxChar* LSET::Name( PCB_LAYER_ID aLayerId )
 // However it avoids a dependency to Pcbnew code.
 const wxString GetPCBDefaultLayerName( int aLayerId )
 {
@@ -260,17 +263,11 @@ const wxString GetPCBDefaultLayerName( int aLayerId )
     case Eco1_User:         txt = wxT( "Eco1.User" );       break;
     case Eco2_User:         txt = wxT( "Eco2.User" );       break;
     case Edge_Cuts:         txt = wxT( "Edge.Cuts" );       break;
-    case Margin:            txt = wxT( "Margin" );          break;
 
-    // Footprint
-    case F_CrtYd:           txt = wxT( "F.CrtYd" );         break;
-    case B_CrtYd:           txt = wxT( "B.CrtYd" );         break;
-    case F_Fab:             txt = wxT( "F.Fab" );           break;
-    case B_Fab:             txt = wxT( "B.Fab" );           break;
+    // Pcbnew konws some oter layers. But any other layer is not suitable for export.
 
-    default:
-        wxASSERT_MSG( 0, wxT( "aLayerId out of range" ) );
-                            txt = wxT( "BAD INDEX!" );      break;
+    default:    // Sentinel
+        txt = wxT( "" ); break;
     }
 
     return wxString( txt );

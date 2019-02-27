@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2013 NBEE Embedded Systems SL, Miguel Angel Ajo <miguelangel@ajo.es>
- * Copyright (C) 2016 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,9 +29,13 @@
 
 #ifndef PCBNEW_FOOTPRINT_WIZARDS_H
 #define PCBNEW_FOOTPRINT_WIZARDS_H
+
+#undef HAVE_CLOCK_GETTIME  // macro is defined in Python.h and causes redefine warning
 #include <Python.h>
+#undef HAVE_CLOCK_GETTIME
+
 #include <vector>
-#include <class_footprint_wizard.h>
+#include <footprint_wizard.h>
 
 
 class PYTHON_FOOTPRINT_WIZARD : public FOOTPRINT_WIZARD
@@ -45,6 +49,7 @@ class PYTHON_FOOTPRINT_WIZARD : public FOOTPRINT_WIZARD
 public:
     PYTHON_FOOTPRINT_WIZARD( PyObject* wizard );
     ~PYTHON_FOOTPRINT_WIZARD();
+
     wxString        GetName() override;
     wxString        GetImage() override;
     wxString        GetDescription() override;
@@ -54,14 +59,18 @@ public:
     wxArrayString   GetParameterTypes( int aPage ) override;
     wxArrayString   GetParameterValues( int aPage ) override;
     wxArrayString   GetParameterErrors( int aPage ) override;
-    // must return an empty string or an error description
+    // must return an empty string or an error description:
     wxString        SetParameterValues( int aPage, wxArrayString& aValues ) override;
     MODULE*         GetFootprint( wxString * aMessages ) override;
     void*           GetObject() override;
+    wxArrayString   GetParameterHints( int aPage ) override;
+    wxArrayString   GetParameterDesignators( int aPage = 0) override;
+
+    void            ResetParameters() override;
 };
 
 
-class PYTHON_FOOTPRINT_WIZARDS
+class PYTHON_FOOTPRINT_WIZARD_LIST
 {
 public:
     static void register_wizard( PyObject* aPyWizard );

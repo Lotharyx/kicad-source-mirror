@@ -29,28 +29,23 @@
 #include <climits>
 
 #include <math/vector2d.h>
+#include <core/optional.h>
 
-#include <boost/optional/optional.hpp>
-
-typedef boost::optional<VECTOR2I> OPT_VECTOR2I;
+typedef OPT<VECTOR2I> OPT_VECTOR2I;
 
 class SEG
 {
-private:
-    typedef VECTOR2I::extended_type ecoord;
-
 public:
+    using ecoord = VECTOR2I::extended_type;
     friend inline std::ostream& operator<<( std::ostream& aStream, const SEG& aSeg );
 
-    /* Start and the of the segment. Public, to make access simpler. These are references
-     * to an object the segment belongs to (e.g. a line chain) or references to locally stored
-     * points (m_a, m_b).
+    /* Start and the of the segment. Public, to make access simpler.
      */
     VECTOR2I A;
     VECTOR2I B;
 
     /** Default constructor
-     * Creates an empty (0, 0) segment, locally-referenced
+     * Creates an empty (0, 0) segment
      */
     SEG()
     {
@@ -59,7 +54,7 @@ public:
 
     /**
      * Constructor
-     * Creates a segment between (aX1, aY1) and (aX2, aY2), locally referenced
+     * Creates a segment between (aX1, aY1) and (aX2, aY2)
      */
     SEG( int aX1, int aY1, int aX2, int aY2 ) :
         A ( VECTOR2I( aX1, aY1 ) ),
@@ -70,7 +65,7 @@ public:
 
     /**
      * Constructor
-     * Creates a segment between (aA) and (aB), locally referenced
+     * Creates a segment between (aA) and (aB)
      */
     SEG( const VECTOR2I& aA, const VECTOR2I& aB ) : A( aA ), B( aB )
     {
@@ -105,6 +100,16 @@ public:
         return *this;
     }
 
+    bool operator==( const SEG& aSeg ) const
+    {
+        return (A == aSeg.A && B == aSeg.B) ;
+    }
+
+    bool operator!=( const SEG& aSeg ) const
+    {
+        return (A != aSeg.A || B != aSeg.B);
+    }
+
     /**
       * Function LineProject()
       *
@@ -134,6 +139,7 @@ public:
       *
       * Returns the closest Euclidean distance between point aP and the line defined by
       * the ends of segment (this).
+      * @param aP the point to test
       * @param aDetermineSide: when true, the sign of the returned value indicates
       * the side of the line at which we are (negative = left)
       * @return the distance
@@ -144,9 +150,15 @@ public:
       * Function NearestPoint()
       *
       * Computes a point on the segment (this) that is closest to point aP.
-      * @return: nearest point
+      * @return the nearest point
       */
     const VECTOR2I NearestPoint( const VECTOR2I &aP ) const;
+
+    /**
+      * Computes a point on the segment (this) that is closest to any point on aSeg.
+      * @return the nearest point
+      */
+    const VECTOR2I NearestPoint( const SEG &aSeg ) const;
 
     /**
      * Function Intersect()
@@ -311,6 +323,12 @@ public:
     void Reverse()
     {
         std::swap( A, B );
+    }
+
+    ///> Returns the center point of the line
+    VECTOR2I Center() const
+    {
+        return A + ( B - A ) / 2;
     }
 
 private:

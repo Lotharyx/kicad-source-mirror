@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2013 NBEE Embedded Systems SL, Miguel Angel Ajo <miguelangel@ajo.es>
- * Copyright (C) 2013 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -24,7 +24,7 @@
 
 /**
  * @file  pcbnew_footprint_wizards.cpp
- * @brief Class PCBNEW_PYTHON_FOOTPRINT_WIZARDS
+ * @brief Class  and PYTHON_FOOTPRINT_WIZARD_LIST and PYTHON_FOOTPRINT_WIZARD_LIST
  */
 
 #include "pcbnew_footprint_wizards.h"
@@ -66,7 +66,7 @@ PyObject* PYTHON_FOOTPRINT_WIZARD::CallMethod( const char* aMethod, PyObject* aA
         {
 #if 1 // defined(DEBUG)
             wxMessageBox( PyErrStringWithTraceback(),
-                          wxT( "Exception on python footprint wizard code" ),
+                          _( "Exception on python footprint wizard code" ),
                           wxICON_ERROR | wxOK );
 #endif
         }
@@ -79,7 +79,8 @@ PyObject* PYTHON_FOOTPRINT_WIZARD::CallMethod( const char* aMethod, PyObject* aA
     }
     else
     {
-        printf( "method not found, or not callable: %s\n", aMethod );
+        wxString msg = wxString::Format(_( "Method \"%s\" not found, or not callable" ), aMethod );
+        wxMessageBox( msg, _( "Unknown Method" ), wxICON_ERROR | wxOK );
     }
 
     if( pFunc )
@@ -98,12 +99,14 @@ wxString PYTHON_FOOTPRINT_WIZARD::CallRetStrMethod( const char* aMethod, PyObjec
 
     PyObject*   result = CallMethod( aMethod, aArglist );
 
-    if( result )
+    if( result == Py_None )
     {
-        const char* str_res = PyString_AsString( result );
-        ret = FROM_UTF8( str_res );
         Py_DECREF( result );
+        return ret;
     }
+
+    ret = PyStringToWx( result );
+    Py_XDECREF( result );
 
     return ret;
 }
@@ -172,10 +175,17 @@ int PYTHON_FOOTPRINT_WIZARD::GetNumParameterPages()
 
     if( result )
     {
+#if PY_MAJOR_VERSION >= 3
+        if( !PyLong_Check( result ) )
+            return -1;
+
+        ret = PyLong_AsLong( result );
+#else
         if( !PyInt_Check( result ) )
             return -1;
 
         ret = PyInt_AsLong( result );
+#endif
         Py_DECREF( result );
     }
 
@@ -194,12 +204,14 @@ wxString PYTHON_FOOTPRINT_WIZARD::GetParameterPageName( int aPage )
 
     Py_DECREF( arglist );
 
-    if( result )
+    if( result == Py_None )
     {
-        const char* str_res = PyString_AsString( result );
-        ret = FROM_UTF8( str_res );
         Py_DECREF( result );
+        return ret;
     }
+
+    ret = PyStringToWx( result );
+    Py_XDECREF( result );
 
     return ret;
 }
@@ -237,23 +249,8 @@ wxArrayString PYTHON_FOOTPRINT_WIZARD::GetParameterTypes( int aPage )
 
     PyObject*       arglist = Py_BuildValue( "(i)", aPage );
 
-    ret = CallRetArrayStrMethod( "GetParameterNames", arglist );
+    ret = CallRetArrayStrMethod( "GetParameterTypes", arglist );
     Py_DECREF( arglist );
-
-    for( unsigned i = 0; i<ret.GetCount(); i++ )
-    {
-        wxString    rest;
-        wxString    item = ret[i];
-
-        if( item.StartsWith( wxT( "*" ), &rest ) )
-        {
-            ret[i] = wxT( "UNITS" );    // units
-        }
-        else
-        {
-            ret[i] = wxT( "IU" );       // internal units
-        }
-    }
 
     return ret;
 }
@@ -284,6 +281,29 @@ wxArrayString PYTHON_FOOTPRINT_WIZARD::GetParameterErrors( int aPage )
     return ret;
 }
 
+wxArrayString PYTHON_FOOTPRINT_WIZARD::GetParameterHints( int aPage )
+{
+    PyLOCK          lock;
+
+    PyObject*       arglist = Py_BuildValue( "(i)", aPage );
+    wxArrayString   ret = CallRetArrayStrMethod( "GetParameterHints", arglist );
+
+    Py_DECREF( arglist );
+
+    return ret;
+}
+
+wxArrayString PYTHON_FOOTPRINT_WIZARD::GetParameterDesignators( int aPage )
+{
+    PyLOCK          lock;
+
+    PyObject*       arglist = Py_BuildValue( "(i)", aPage );
+    wxArrayString   ret = CallRetArrayStrMethod( "GetParameterDesignators", arglist );
+
+    Py_DECREF( arglist );
+
+    return ret;
+}
 
 wxString PYTHON_FOOTPRINT_WIZARD::SetParameterValues( int aPage, wxArrayString& aValues )
 {
@@ -296,7 +316,11 @@ wxString PYTHON_FOOTPRINT_WIZARD::SetParameterValues( int aPage, wxArrayString& 
     for( int i = 0; i < len; i++ )
     {
         wxString&    str     = aValues[i];
+#if PY_MAJOR_VERSION >= 3
+        PyObject*   py_str  = PyUnicode_FromString( (const char*) str.mb_str() );
+#else
         PyObject*   py_str  = PyString_FromString( (const char*) str.mb_str() );
+#endif
         PyList_SetItem( py_list, i, py_str );
     }
 
@@ -307,6 +331,13 @@ wxString PYTHON_FOOTPRINT_WIZARD::SetParameterValues( int aPage, wxArrayString& 
     Py_DECREF( arglist );
 
     return res;
+}
+
+void PYTHON_FOOTPRINT_WIZARD::ResetParameters()
+{
+    PyLOCK     lock;
+
+    CallMethod( "ResetWizard", NULL );
 }
 
 
@@ -346,7 +377,7 @@ void* PYTHON_FOOTPRINT_WIZARD::GetObject()
 }
 
 
-void PYTHON_FOOTPRINT_WIZARDS::register_wizard( PyObject* aPyWizard )
+void PYTHON_FOOTPRINT_WIZARD_LIST::register_wizard( PyObject* aPyWizard )
 {
     PYTHON_FOOTPRINT_WIZARD* fw = new PYTHON_FOOTPRINT_WIZARD( aPyWizard );
 
@@ -354,8 +385,8 @@ void PYTHON_FOOTPRINT_WIZARDS::register_wizard( PyObject* aPyWizard )
 }
 
 
-void PYTHON_FOOTPRINT_WIZARDS::deregister_wizard( PyObject* aPyWizard )
+void PYTHON_FOOTPRINT_WIZARD_LIST::deregister_wizard( PyObject* aPyWizard )
 {
     // deregister also destroyes the previously created "PYTHON_FOOTPRINT_WIZARD object"
-    FOOTPRINT_WIZARDS::deregister_object( (void*) aPyWizard );
+    FOOTPRINT_WIZARD_LIST::deregister_object( (void*) aPyWizard );
 }

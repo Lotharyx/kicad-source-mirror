@@ -1,8 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version Mar  9 2015)
+// C++ code generated with wxFormBuilder (version Dec 30 2017)
 // http://www.wxformbuilder.org/
 //
-// PLEASE DO "NOT" EDIT THIS FILE!
+// PLEASE DO *NOT* EDIT THIS FILE!
 ///////////////////////////////////////////////////////////////////////////
 
 #ifndef __DIALOG_PAGE_SETTINGS_BASE_H__
@@ -11,8 +11,6 @@
 #include <wx/artprov.h>
 #include <wx/xrc/xmlres.h>
 #include <wx/intl.h>
-class DIALOG_SHIM;
-
 #include "dialog_shim.h"
 #include <wx/string.h>
 #include <wx/stattext.h>
@@ -23,8 +21,8 @@ class DIALOG_SHIM;
 #include <wx/statline.h>
 #include <wx/choice.h>
 #include <wx/textctrl.h>
-#include <wx/sizer.h>
 #include <wx/valtext.h>
+#include <wx/sizer.h>
 #include <wx/bitmap.h>
 #include <wx/image.h>
 #include <wx/icon.h>
@@ -53,13 +51,14 @@ class DIALOG_PAGES_SETTINGS_BASE : public DIALOG_SHIM
 		wxStaticText* m_staticTextOrient;
 		wxChoice* m_orientationComboBox;
 		wxStaticText* m_staticTextCustSize;
-		wxStaticText* m_staticTextHeight;
-		wxTextCtrl* m_TextUserSizeY;
-		wxStaticText* m_staticTextWidth;
-		wxTextCtrl* m_TextUserSizeX;
+		wxStaticText* m_userSizeYLabel;
+		wxTextCtrl* m_userSizeYCtrl;
+		wxStaticText* m_userSizeYUnits;
+		wxStaticText* m_userSizeXLabel;
+		wxTextCtrl* m_userSizeXCtrl;
+		wxStaticText* m_userSizeXUnits;
 		wxStaticText* m_staticTextPreview;
 		wxStaticBitmap* m_PageLayoutExampleBitmap;
-		wxStaticLine* m_staticline1;
 		wxStaticText* m_staticTexttbprm;
 		wxStaticLine* m_staticline3;
 		wxStaticText* m_TextSheetCount;
@@ -118,7 +117,7 @@ class DIALOG_PAGES_SETTINGS_BASE : public DIALOG_SHIM
 	
 	public:
 		
-		DIALOG_PAGES_SETTINGS_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Page Settings"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( 748,470 ), long style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER ); 
+		DIALOG_PAGES_SETTINGS_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Page Settings"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( -1,-1 ), long style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER ); 
 		~DIALOG_PAGES_SETTINGS_BASE();
 	
 };

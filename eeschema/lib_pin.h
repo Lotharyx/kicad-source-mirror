@@ -2,8 +2,8 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2015 Jean-Pierre Charras, jaen-pierre.charras at wanadoo.fr
- * Copyright (C) 2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2004-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2015 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 2004-2017 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -30,15 +30,20 @@
 #ifndef CLASS_PIN_H
 #define CLASS_PIN_H
 
+class SCH_COMPONENT;
+
+#include <eda_rect.h>
 #include <lib_draw_item.h>
 
 #include "pin_shape.h"
 #include "pin_type.h"
+#include "class_libentry.h"
 
-#define TARGET_PIN_RADIUS   12  // Circle diameter drawn at the active end of pins
+// Circle diameter drawn at the active end of pins:
+#define TARGET_PIN_RADIUS   15
 
-/* Pin visibility flag bit. */
-#define PIN_INVISIBLE 1    /* Set makes pin invisible */
+// Pin visibility flag bit:
+#define PIN_INVISIBLE 1    // Set makes pin invisible
 
 
 /**
@@ -55,11 +60,18 @@ enum LibPinDrawFlags {
     PIN_DRAW_TEXTS = 1,
     PIN_DRAW_DANGLING = 2,      // Draw this pin with a 'dangling' indicator
     PIN_DANGLING_HIDDEN = 4,    // Draw (only!) the dangling indicator if the pin is hidden
+    PIN_DRAW_ELECTRICAL_TYPE_NAME = 8   // Draw the pin electrical type name
+                                        // used only in component editor and component viewer
 };
 
 
 class LIB_PIN : public LIB_ITEM
 {
+    // Unlike most of the other LIB_ITEMs, the SetXXX() routines on LIB_PINs are at the UI
+    // level, performing additional pin checking, multi-pin editing, and setting the modified
+    // flag.  So the LEGACY_PLUGIN_CACHE needs direct access to the member variables.
+    friend class SCH_LEGACY_PLUGIN_CACHE;
+
     wxPoint  m_position;     ///< Position of the pin.
     int      m_length;       ///< Length of the pin.
     int      m_orientation;  ///< Pin orientation (Up, Down, Left, Right)
@@ -68,9 +80,7 @@ class LIB_PIN : public LIB_ITEM
     ELECTRICAL_PINTYPE m_type;  ///< Electrical type of the pin.  See enum ELECTRICAL_PINTYPE.
     int      m_attributes;   ///< Set bit 0 to indicate pin is invisible.
     wxString m_name;
-    long     m_number;       ///< Pin number defined as 4 ASCII characters like "12", "anod",
-                             ///< "G6", or "12".  It is stored as "12\0\0" and does not
-                             ///< depend on endian type.
+    wxString m_number;
     int      m_numTextSize;
     int      m_nameTextSize; ///< Pin num and Pin name sizes
 
@@ -80,16 +90,17 @@ class LIB_PIN : public LIB_ITEM
      * @param aPanel DrawPanel to use (can be null) mainly used for clipping purposes.
      * @param aDC Device Context (can be null)
      * @param aOffset Offset to draw
-     * @param aColor -1 to use the normal body item color, or use this color if >= 0
+     * @param aColor COLOR4D::UNSPECIFIED to use the normal body item color, or else use this color
      * @param aDrawMode GR_OR, GR_XOR, ...
      * @param aData = used here as uintptr_t containing bitwise OR'd flags:
      *      PIN_DRAW_TEXTS,     -- false to draw only pin shape, useful for fast mode
      *      PIN_DRAW_DANGLING,  -- true to draw the pin with its target
      *      PIN_DANGLING_HIDDEN -- draw the target even if the pin is hidden
+     *      PIN_DRAW_ELECTRICAL_TYPE_NAME -- Draw the pin electrical type name
      * @param aTransform Transform Matrix (rotation, mirror ..)
      */
     void drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                      EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
+                      COLOR4D aColor, GR_DRAWMODE aDrawMode, void* aData,
                       const TRANSFORM& aTransform ) override;
 
 public:
@@ -104,19 +115,29 @@ public:
         return wxT( "LIB_PIN" );
     }
 
+    wxString GetTypeName() override
+    {
+        return _( "Pin" );
+    }
+
 #if defined(DEBUG)
     void Show( int nestLevel, std::ostream& os ) const override;
 #endif
-
-    bool Save( OUTPUTFORMATTER& aFormatter ) override;
-
-    bool Load( LINE_READER& aLineReader, wxString& aErrorMsg ) override;
 
     bool HitTest( const wxPoint& aPosition ) const override;
 
     bool HitTest( const wxPoint &aPosRef, int aThreshold, const TRANSFORM& aTransform ) const override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
+
+    /**
+     * Display pin info (given by GetMsgPanelInfo) and add some info related to aComponent
+     * (schematic pin position, and sheet path)
+     * @param aList is the message list to fill
+     * @param aComponent is the component which "owns" the pin
+     */
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList,
+                          SCH_COMPONENT* aComponent );
 
     bool Matches( wxFindReplaceData& aSearchData, void* aAuxData, wxPoint* aFindLocation ) override;
 
@@ -124,58 +145,28 @@ public:
     const EDA_RECT GetBoundingBox() const override { return GetBoundingBox( false ); }
 
     /**
-     * Function GetBoundingBox
      * @param aIncludeInvisibles - if false, do not include labels for invisible pins
      *      in the calculation.
      */
     const EDA_RECT GetBoundingBox( bool aIncludeInvisibles ) const;
 
     /**
-     * Function PinEndPoint
-     *
      * @return The pin end position for a component in the normal orientation.
      */
     wxPoint PinEndPoint() const;
 
     /**
-     * Function PinDrawOrient
-     * returns the pin real orientation (PIN_UP, PIN_DOWN, PIN_RIGHT, PIN_LEFT),
-     * according to its orientation and the matrix transform (rot, mirror) \a aTransform
+     * Return the pin real orientation (PIN_UP, PIN_DOWN, PIN_RIGHT, PIN_LEFT),
+     * according to its orientation and the matrix transform (rot, mirror) \a aTransform.
      *
      * @param aTransform Transform matrix
      */
     int PinDrawOrient( const TRANSFORM& aTransform ) const;
 
-    /**
-     * Fill a string buffer with pin number.
-     *
-     * Pin numbers are coded as a long or 4 ASCII characters.  Used to print
-     * or draw the pin number.
-     *
-     * @param aStringBuffer - the wxString to store the pin num as an unicode string
-     */
-    void PinStringNum( wxString& aStringBuffer ) const;
-
-    long GetNumber() const { return m_number; }
-
-    wxString GetNumberString() const { return PinStringNum( m_number ); }
-
-    /**
-     * Function PinStringNum (static function)
-     * Pin num is coded as a long or 4 ascii chars
-     * @param aPinNum = a long containing a pin num
-     * @return aStringBuffer = the wxString to store the pin num as an
-     *                         unicode string
-     */
-    static wxString PinStringNum( long aPinNum );
-
-    /**
-     * Function SetPinNumFromString
-     * fill the pin number buffer with \a aBuffer.
-     */
-    void SetPinNumFromString( wxString& aBuffer );
-
-    wxString GetName() const { return m_name; }
+    const wxString& GetName() const
+    {
+        return m_name;
+    }
 
     /**
      * Set the pin name.
@@ -183,8 +174,9 @@ public:
      * This will also all of the pin names marked by EnableEditMode().
      *
      * @param aName New pin name.
+     * @param aTestOtherPins determines if other pins need to be updated
      */
-    void SetName( const wxString& aName );
+    void SetName( const wxString& aName, bool aTestOtherPins = true );
 
     /**
      * Set the \a aSize of the pin name text.
@@ -193,10 +185,16 @@ public:
      * by EnableEditMode().
      *
      * @param aSize The text size of the pin name in schematic units ( mils ).
+     * @param aTestOtherPins determines if other pins need to be updated
      */
-    void SetNameTextSize( int aSize );
+    void SetNameTextSize( int aSize, bool aTestOtherPins = true );
 
     int GetNameTextSize() const { return m_nameTextSize; }
+
+    const wxString& GetNumber() const
+    {
+        return m_number;
+    }
 
     /**
      * Set the pin number.
@@ -214,8 +212,9 @@ public:
      * by EnableEditMode().
      *
      * @param aSize The text size of the pin number in schematic units ( mils ).
+     * @param aTestOtherPins determines if other pins need to be updated
      */
-    void SetNumberTextSize( int aSize );
+    void SetNumberTextSize( int aSize, bool aTestOtherPins = true );
 
     int GetNumberTextSize() const { return m_numTextSize; }
 
@@ -227,8 +226,9 @@ public:
      * This will also update the orientation of the pins marked by EnableEditMode().
      *
      * @param aOrientation - The orientation of the pin.
+     * @param aTestOtherPins determines if other pins need to be updated
      */
-    void SetOrientation( int aOrientation );
+    void SetOrientation( int aOrientation, bool aTestOtherPins = true );
 
     void Rotate() override;
 
@@ -284,8 +284,9 @@ public:
      * EnableEditMode().
      *
      * @param aType - The electrical type of the pin(see enun ELECTRICAL_PINTYPE for values).
+     * @param aTestOtherPins determines if other pins need to be updated
      */
-    void SetType( ELECTRICAL_PINTYPE aType );
+    void SetType( ELECTRICAL_PINTYPE aType, bool aTestOtherPins = true );
 
     /**
      * Set the pin length.
@@ -293,8 +294,9 @@ public:
      * This will also update the length of the pins marked by EnableEditMode().
      *
      * @param aLength - The length of the pin in mils.
+     * @param aTestOtherPins determines if other pins need to be updated
      */
-    void SetLength( int aLength );
+    void SetLength( int aLength, bool aTestOtherPins = true );
 
     int GetLength() { return m_length; }
 
@@ -344,9 +346,11 @@ public:
      * parts or body styles in the component.  See SetCommonToAllParts()
      * and SetCommonToAllBodyStyles() for more information.
      *
-     * @param aEnable True marks all common pins for editing mode.  False
+     * @param aEnable = true marks all common pins for editing mode.  False
      *                clears the editing mode.
-     * @param aEditPinByPin Enables the edit pin by pin mode.
+     * @param aEditPinByPin == true enables the edit pin by pin mode.
+     * aEditPinByPin == false enables the pin edit coupling between pins at the same location
+     * if aEnable == false, aEditPinByPin is not used
      */
     void EnableEditMode( bool aEnable, bool aEditPinByPin = false );
 
@@ -361,24 +365,28 @@ public:
      * Return whether this pin forms an implicit power connection: i.e., is hidden
      * and of type POWER_IN.
      */
-    bool IsPowerConnection() const { return !IsVisible() && GetType() == PIN_POWER_IN; }
+    bool IsPowerConnection() const {
+
+        return (
+            ( !IsVisible() && GetType() == PIN_POWER_IN )
+            ||
+            ( (LIB_PART*)GetParent()->IsPower()  && GetType() == PIN_POWER_IN )
+        ) ; }
 
     int GetPenSize() const override;
 
     /**
-     * Function DrawPinSymbol
      * Draw the pin symbol without text.
      * If \a aColor != 0, draw with \a aColor, else with the normal pin color.
      */
     void DrawPinSymbol( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aPosition,
                         int aOrientation, GR_DRAWMODE aDrawMode,
-                        EDA_COLOR_T aColor = UNSPECIFIED_COLOR,
+                        COLOR4D aColor = COLOR4D::UNSPECIFIED,
                         bool aDrawDangling = true,
                         bool aOnlyTarget = false );
 
     /**
-     * Function DrawPinTexts
-     * puts the pin number and pin text info, given the pin line coordinates.
+     * Put the pin number and pin text info, given the pin line coordinates.
      * The line must be vertical or horizontal.
      * If DrawPinName == false the pin name is not printed.
      * If DrawPinNum = false the pin number is not printed.
@@ -388,11 +396,17 @@ public:
      */
     void DrawPinTexts( EDA_DRAW_PANEL* aPanel, wxDC* aDC, wxPoint& aPosition,
                        int aOrientation, int TextInside, bool DrawPinNum, bool DrawPinName,
-                       EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode );
+                       COLOR4D aColor, GR_DRAWMODE aDrawMode );
 
     /**
-     * Function PlotPinTexts
-     * plots the pin number and pin text info, given the pin line coordinates.
+     * Draw the electrical type text of the pin (only for the footprint editor)
+     * aDrawMode = GR_OR, XOR ...
+     */
+    void DrawPinElectricalTypeName( EDA_DRAW_PANEL* aPanel, wxDC* aDC, wxPoint& aPosition,
+                       int aOrientation, COLOR4D aColor, GR_DRAWMODE aDrawMode );
+
+    /**
+     * Plot the pin number and pin text info, given the pin line coordinates.
      * Same as DrawPinTexts((), but output is the plotter
      * The line must be vertical or horizontal.
      * If TextInside then the text is been put inside (moving from x1, y1 in
@@ -438,7 +452,7 @@ public:
      * @return  The index of the orientation code if found.  Otherwise,
      *          return wxNOT_FOUND.
      */
-    static int GetOrientationCodeIndex( int aCode );
+    static int GetOrientationIndex( int aCode );
 
     void SetOffset( const wxPoint& aOffset ) override;
 
@@ -447,6 +461,14 @@ public:
     void Move( const wxPoint& aPosition ) override;
 
     wxPoint GetPosition() const override { return m_position; }
+
+    /**
+     * move this and all linked pins to the new position
+     * used in pin editing.
+     * use SetPinPosition to set the position of this only
+     * @param aPosition is the new position of this and linked pins
+     */
+    void SetPinPosition( wxPoint aPosition );
 
     void MirrorHorizontal( const wxPoint& aCenter ) override;
 
@@ -463,11 +485,20 @@ public:
 
     BITMAP_DEF GetMenuImage() const override;
 
-    wxString GetSelectMenuText() const override;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
     EDA_ITEM* Clone() const override;
 
+    void CalcEdit( const wxPoint& aPosition ) override;
+
 private:
+    /**
+     * Build the pin basic info to display in message panel.
+     * they are pin info without the actual pin position, which
+     * is not known in schematic without knowing the parent component
+     */
+    void getMsgPanelInfoBase( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList );
+
 
     /**
      * @copydoc LIB_ITEM::compare()

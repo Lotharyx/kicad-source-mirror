@@ -6,8 +6,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2015 Jean_Pierre Charras <jp.charras at wanadoo.fr>
- * Copyright (C) 1992-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2017 Jean_Pierre Charras <jp.charras at wanadoo.fr>
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,9 +29,9 @@
 
 #include <fctsys.h>
 #include <common.h>
-#include <plot_common.h>
+#include <plotter.h>
 #include <base_struct.h>
-#include <drawtxt.h>
+#include <draw_graphic_text.h>
 #include <confirm.h>
 #include <kicad_string.h>
 #include <macros.h>
@@ -40,7 +40,7 @@
 
 #include <pcbnew.h>
 #include <pcbplot.h>
-#include <gendrill_Excellon_writer.h>
+#include <gendrill_file_writer_base.h>
 
 /* Conversion utilities - these will be used often in there... */
 inline double diameter_in_inches( double ius )
@@ -55,9 +55,13 @@ inline double diameter_in_mm( double ius )
 }
 
 
-bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
-                                       PlotFormat aFormat )
+bool GENDRILL_WRITER_BASE::genDrillMapFile( const wxString& aFullFileName,
+                                            PlotFormat aFormat )
 {
+    // Remark:
+    // Hole list must be created before calling this function, by buildHolesList(),
+    // for the right holes set (PTH, NPTH, buried/blind vias ...)
+
     double          scale = 1.0;
     wxPoint         offset;
     PLOTTER*        plotter = NULL;
@@ -70,7 +74,7 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
     const PAGE_INFO& page_info =  m_pageInfo ? *m_pageInfo : dummy;
 
     // Calculate dimensions and center of PCB
-    EDA_RECT        bbbox = m_pcb->ComputeBoundingBox( true );
+    EDA_RECT        bbbox = m_pcb->GetBoardEdgesBoundingBox();
 
     // Calculate the scale for the format type, scale 1 in HPGL, drawing on
     // an A4 sheet in PS, + text description of symbols
@@ -172,7 +176,7 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
     BRDITEMS_PLOTTER itemplotter( plotter, m_pcb, plot_opts );
     itemplotter.SetLayerSet( Edge_Cuts );
 
-    for( EDA_ITEM* PtStruct = m_pcb->m_Drawings; PtStruct != NULL; PtStruct = PtStruct->Next() )
+    for( auto PtStruct : m_pcb->Drawings() )
     {
         switch( PtStruct->Type() )
         {
@@ -204,7 +208,7 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
     plotter->SetCurrentLineWidth( -1 );
 
     // Plot board outlines and drill map
-    PlotDrillMarks( plotter );
+    plotDrillMarks( plotter );
 
     // Print a list of symbols used.
     int     charSize    = 3 * IU_PER_MM;                    // text size in IUs
@@ -219,7 +223,7 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
 
     // Plot title  "Info"
     wxString Text = wxT( "Drill Map:" );
-    plotter->Text( wxPoint( plotX, plotY ), UNSPECIFIED_COLOR, Text, 0,
+    plotter->Text( wxPoint( plotX, plotY ), COLOR4D::UNSPECIFIED, Text, 0,
                    wxSize( KiROUND( charSize * charScale ),
                            KiROUND( charSize * charScale ) ),
                    GR_TEXT_HJUSTIFY_LEFT, GR_TEXT_VJUSTIFY_CENTER,
@@ -266,7 +270,7 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
         if( tool.m_Hole_NotPlated )
             msg += wxT( " (not plated)" );
 
-        plotter->Text( wxPoint( plotX, y ), UNSPECIFIED_COLOR, msg, 0,
+        plotter->Text( wxPoint( plotX, y ), COLOR4D::UNSPECIFIED, msg, 0,
                        wxSize( KiROUND( charSize * charScale ),
                                KiROUND( charSize * charScale ) ),
                        GR_TEXT_HJUSTIFY_LEFT, GR_TEXT_VJUSTIFY_CENTER,
@@ -285,7 +289,7 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
 }
 
 
-bool EXCELLON_WRITER::GenDrillReportFile( const wxString& aFullFileName )
+bool GENDRILL_WRITER_BASE::GenDrillReportFile( const wxString& aFullFileName )
 {
     FILE_OUTPUTFORMATTER    out( aFullFileName );
 
@@ -297,7 +301,7 @@ bool EXCELLON_WRITER::GenDrillReportFile( const wxString& aFullFileName )
     unsigned    totalHoleCount;
     wxString    brdFilename = m_pcb->GetFileName();
 
-    std::vector<LAYER_PAIR> hole_sets = getUniqueLayerPairs();
+    std::vector<DRILL_LAYER_PAIR> hole_sets = getUniqueLayerPairs();
 
     out.Print( 0, "Drill report for %s\n", TO_UTF8( brdFilename ) );
     out.Print( 0, "Created on %s\n\n", TO_UTF8( DateAndTime() ) );
@@ -309,6 +313,7 @@ bool EXCELLON_WRITER::GenDrillReportFile( const wxString& aFullFileName )
     LSET cu = m_pcb->GetEnabledLayers() & LSET::AllCuMask();
 
     int conventional_layer_num = 1;
+
     for( LSEQ seq = cu.Seq();  seq;  ++seq, ++conventional_layer_num )
     {
         out.Print( 0, "    L%-2d:  %-25s %s\n",
@@ -326,19 +331,19 @@ bool EXCELLON_WRITER::GenDrillReportFile( const wxString& aFullFileName )
      * 3 - Non Plated through holes
      */
 
-    bool buildNPTHlist = false;
+    bool buildNPTHlist = false;     // First pass: build PTH list only
 
     // in this loop are plated only:
-    for( unsigned pair_ndx = 0;  pair_ndx < hole_sets.size();  ++pair_ndx )
+    for( unsigned pair_ndx = 0; pair_ndx < hole_sets.size();  ++pair_ndx )
     {
-        LAYER_PAIR  pair = hole_sets[pair_ndx];
+        DRILL_LAYER_PAIR  pair = hole_sets[pair_ndx];
 
-        BuildHolesList( pair, buildNPTHlist );
+        buildHolesList( pair, buildNPTHlist );
 
-        if( pair == LAYER_PAIR( F_Cu, B_Cu ) )
+        if( pair == DRILL_LAYER_PAIR( F_Cu, B_Cu ) )
         {
             out.Print( 0, "Drill file '%s' contains\n",
-                TO_UTF8( drillFileName( pair, false, m_merge_PTH_NPTH ) ) );
+                TO_UTF8( getDrillFileName( pair, false, m_merge_PTH_NPTH ) ) );
 
             out.Print( 0, "    plated through holes:\n" );
             out.Print( 0, separator );
@@ -348,7 +353,7 @@ bool EXCELLON_WRITER::GenDrillReportFile( const wxString& aFullFileName )
         else    // blind/buried
         {
             out.Print( 0, "Drill file '%s' contains\n",
-                TO_UTF8( drillFileName( pair, false, m_merge_PTH_NPTH ) ) );
+                TO_UTF8( getDrillFileName( pair, false, m_merge_PTH_NPTH ) ) );
 
             out.Print( 0, "    holes connecting layer pair: '%s and %s' (%s vias):\n",
                 TO_UTF8( m_pcb->GetLayerName( ToLAYER_ID( pair.first ) ) ),
@@ -369,14 +374,15 @@ bool EXCELLON_WRITER::GenDrillReportFile( const wxString& aFullFileName )
     if( !m_merge_PTH_NPTH )
         buildNPTHlist = true;
 
-    BuildHolesList( LAYER_PAIR( F_Cu, B_Cu ), buildNPTHlist );
+    buildHolesList( DRILL_LAYER_PAIR( F_Cu, B_Cu ), buildNPTHlist );
 
     // nothing wrong with an empty NPTH file in report.
     if( m_merge_PTH_NPTH )
         out.Print( 0, "Not plated through holes are merged with plated holes\n" );
     else
         out.Print( 0, "Drill file '%s' contains\n",
-                    TO_UTF8( drillFileName( LAYER_PAIR( F_Cu, B_Cu ), true, m_merge_PTH_NPTH ) ) );
+                   TO_UTF8( getDrillFileName( DRILL_LAYER_PAIR( F_Cu, B_Cu ),
+                   true, m_merge_PTH_NPTH ) ) );
 
     out.Print( 0, "    unplated through holes:\n" );
     out.Print( 0, separator );
@@ -387,7 +393,7 @@ bool EXCELLON_WRITER::GenDrillReportFile( const wxString& aFullFileName )
 }
 
 
-bool EXCELLON_WRITER::PlotDrillMarks( PLOTTER* aPlotter )
+bool GENDRILL_WRITER_BASE::plotDrillMarks( PLOTTER* aPlotter )
 {
     // Plot the drill map:
     wxPoint pos;
@@ -411,7 +417,7 @@ bool EXCELLON_WRITER::PlotDrillMarks( PLOTTER* aPlotter )
 }
 
 
-unsigned EXCELLON_WRITER::printToolSummary( OUTPUTFORMATTER& out, bool aSummaryNPTH ) const
+unsigned GENDRILL_WRITER_BASE::printToolSummary( OUTPUTFORMATTER& out, bool aSummaryNPTH ) const
 {
     unsigned totalHoleCount = 0;
 

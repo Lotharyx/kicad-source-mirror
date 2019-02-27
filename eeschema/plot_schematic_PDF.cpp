@@ -4,8 +4,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2010 Jean-Pierre Charras <jean-pierre.charras@gipsa-lab.inpg.fr
- * Copyright (C) 1992-2016 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2010 Jean-Pierre Charras jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,9 +26,8 @@
  */
 
 #include <fctsys.h>
-#include <plot_common.h>
-#include <class_sch_screen.h>
-#include <schframe.h>
+#include <plotter.h>
+#include <sch_edit_frame.h>
 #include <base_units.h>
 #include <sch_sheet_path.h>
 #include <project.h>
@@ -62,6 +61,7 @@ void DIALOG_PLOT_SCHEMATIC::createPDFFile( bool aPlotAll, bool aPlotFrameRef )
     plotter->SetDefaultLineWidth( GetDefaultLineThickness() );
     plotter->SetColorMode( getModeColor() );
     plotter->SetCreator( wxT( "Eeschema-PDF" ) );
+    plotter->SetTitle( m_parent->GetTitleBlock().GetTitle() );
 
     wxString msg;
     wxFileName plotFileName;
@@ -87,7 +87,7 @@ void DIALOG_PLOT_SCHEMATIC::createPDFFile( bool aPlotAll, bool aPlotFrameRef )
 
                 if( !plotter->OpenFile( plotFileName.GetFullPath() ) )
                 {
-                    msg.Printf( _( "Unable to create file '%s'.\n" ),
+                    msg.Printf( _( "Unable to create file \"%s\".\n" ),
                                 GetChars( plotFileName.GetFullPath() ) );
                     reporter.Report( msg, REPORTER::RPT_ERROR );
                     delete plotter;
@@ -122,7 +122,7 @@ void DIALOG_PLOT_SCHEMATIC::createPDFFile( bool aPlotAll, bool aPlotFrameRef )
     }
 
     // Everything done, close the plot and restore the environment
-    msg.Printf( _( "Plot: '%s' OK.\n" ), GetChars( plotFileName.GetFullPath() ) );
+    msg.Printf( _( "Plot: \"%s\" OK.\n" ), GetChars( plotFileName.GetFullPath() ) );
     reporter.Report( msg, REPORTER::RPT_ACTION );
 
     restoreEnvironment( plotter, oldsheetpath );
@@ -164,7 +164,7 @@ void DIALOG_PLOT_SCHEMATIC::setupPlotPagePDF( PLOTTER * aPlotter, SCH_SCREEN* aS
 {
     PAGE_INFO   plotPage;                               // page size selected to plot
     // Considerations on page size and scaling requests
-    PAGE_INFO   actualPage = aScreen->GetPageSettings(); // page size selected in schematic
+    const PAGE_INFO& actualPage = aScreen->GetPageSettings(); // page size selected in schematic
 
     switch( m_pageSizeSelect )
     {

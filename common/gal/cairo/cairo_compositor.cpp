@@ -34,7 +34,8 @@
 using namespace KIGFX;
 
 CAIRO_COMPOSITOR::CAIRO_COMPOSITOR( cairo_t** aMainContext ) :
-    m_current( 0 ), m_currentContext( aMainContext ), m_mainContext( *aMainContext )
+    m_current( 0 ), m_currentContext( aMainContext ), m_mainContext( *aMainContext ),
+    m_currentAntialiasingMode( CAIRO_ANTIALIAS_DEFAULT )
 {
     // Do not have uninitialized members:
     cairo_matrix_init_identity( &m_matrix );
@@ -55,12 +56,31 @@ void CAIRO_COMPOSITOR::Initialize()
 }
 
 
+void CAIRO_COMPOSITOR::SetAntialiasingMode( CAIRO_ANTIALIASING_MODE aMode )
+{
+
+    switch( aMode )
+    {
+    case CAIRO_ANTIALIASING_MODE::FAST:
+        m_currentAntialiasingMode = CAIRO_ANTIALIAS_FAST;
+        break;
+    case CAIRO_ANTIALIASING_MODE::GOOD:
+        m_currentAntialiasingMode = CAIRO_ANTIALIAS_GOOD;
+        break;
+    case CAIRO_ANTIALIASING_MODE::BEST:
+        m_currentAntialiasingMode = CAIRO_ANTIALIAS_BEST;
+        break;
+    default:
+        m_currentAntialiasingMode = CAIRO_ANTIALIAS_NONE;
+    }
+
+    clean();
+}
+
+
 void CAIRO_COMPOSITOR::Resize( unsigned int aWidth, unsigned int aHeight )
 {
     clean();
-
-    assert( aWidth > 0 );
-    assert( aHeight > 0 );
 
     m_width  = aWidth;
     m_height = aHeight;
@@ -89,9 +109,7 @@ unsigned int CAIRO_COMPOSITOR::CreateBuffer()
 #endif /* __WXDEBUG__ */
 
     // Set default settings for the buffer
-    cairo_set_antialias( context, CAIRO_ANTIALIAS_SUBPIXEL );
-    cairo_set_line_join( context, CAIRO_LINE_JOIN_ROUND );
-    cairo_set_line_cap( context, CAIRO_LINE_CAP_ROUND );
+    cairo_set_antialias( context, m_currentAntialiasingMode );
 
     // Use the same transformation matrix as the main context
     cairo_get_matrix( m_mainContext, &m_matrix );
@@ -119,8 +137,11 @@ void CAIRO_COMPOSITOR::SetBuffer( unsigned int aBufferHandle )
     cairo_set_matrix( *m_currentContext, &m_matrix );
 }
 
+void CAIRO_COMPOSITOR::Begin()
+{
+}
 
-void CAIRO_COMPOSITOR::ClearBuffer()
+void CAIRO_COMPOSITOR::ClearBuffer( const COLOR4D& aColor )
 {
     // Clear the pixel storage
     memset( m_buffers[m_current].bitmap.get(), 0x00, m_bufferSize * sizeof(int) );
@@ -144,6 +165,9 @@ void CAIRO_COMPOSITOR::DrawBuffer( unsigned int aBufferHandle )
     cairo_set_matrix( m_mainContext, &m_matrix );
 }
 
+void CAIRO_COMPOSITOR::Present()
+{
+}
 
 void CAIRO_COMPOSITOR::clean()
 {

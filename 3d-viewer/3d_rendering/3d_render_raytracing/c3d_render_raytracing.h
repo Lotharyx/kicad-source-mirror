@@ -81,6 +81,19 @@ private:
     void rt_render_post_process_shade( GLubyte *ptrPBO , REPORTER *aStatusTextReporter );
     void rt_render_post_process_blur_finish( GLubyte *ptrPBO , REPORTER *aStatusTextReporter );
     void rt_render_trace_block( GLubyte *ptrPBO , signed int iBlock );
+    void rt_final_color( GLubyte *ptrPBO, const SFVEC3F &rgbColor, bool applyColorSpaceConversion );
+
+    void rt_shades_packet( const SFVEC3F *bgColorY,
+                           const RAY *aRayPkt,
+                           HITINFO_PACKET *aHitPacket,
+                           bool is_testShadow,
+                           SFVEC3F *aOutHitColor );
+
+    void rt_trace_AA_packet( const SFVEC3F *aBgColorY,
+                             const HITINFO_PACKET *aHitPck_X0Y0,
+                             const HITINFO_PACKET *aHitPck_AA_X1Y1,
+                             const RAY *aRayPck,
+                             SFVEC3F *aOutHitColor );
 
     // Materials
     void setupMaterials();
@@ -95,13 +108,21 @@ private:
         CBLINN_PHONG_MATERIAL m_Floor;
     }m_materials;
 
+    CBOARDNORMAL        m_board_normal_perturbator;
+    CCOPPERNORMAL       m_copper_normal_perturbator;
+    CSOLDERMASKNORMAL   m_solder_mask_normal_perturbator;
+    CPLASTICNORMAL      m_plastic_normal_perturbator;
+    CPLASTICSHINENORMAL m_plastic_shine_normal_perturbator;
+    CMETALBRUSHEDNORMAL m_brushed_metal_normal_perturbator;
+
     bool m_isPreview;
 
     SFVEC3F shadeHit( const SFVEC3F &aBgColor,
                       const RAY &aRay,
                       HITINFO &aHitInfo,
                       bool aIsInsideObject,
-                      unsigned int aRecursiveLevel ) const;
+                      unsigned int aRecursiveLevel,
+                      bool is_testShadow ) const;
 
     /// State used on quality render
     RT_RENDER_STATE m_rt_render_state;
@@ -110,7 +131,7 @@ private:
     unsigned long int m_stats_start_rendering_time;
 
     /// Save the number of blocks progress of the render
-    long m_nrBlocksRenderProgress;
+    size_t m_nrBlocksRenderProgress;
 
     CPOSTSHADER_SSAO m_postshader_ssao;
 
@@ -132,6 +153,8 @@ private:
 
     CGENERICACCELERATOR *m_accelerator;
 
+    SFVEC3F m_BgColorTop_LinearRGB;
+    SFVEC3F m_BgColorBot_LinearRGB;
 
     // Morton codes
 
@@ -142,7 +165,7 @@ private:
     std::vector< SFVEC2UI > m_blockPositions;
 
     /// this flags if a position was already processed (cleared each new render)
-    std::vector< bool > m_blockPositionsWasProcessed;
+    std::vector< int > m_blockPositionsWasProcessed;
 
     /// this encodes the Morton code positions (on fast preview mode)
     std::vector< SFVEC2UI > m_blockPositionsFast;
@@ -183,5 +206,13 @@ private:
     void render( GLubyte *ptrPBO, REPORTER *aStatusTextReporter );
     void render_preview( GLubyte *ptrPBO );
 };
+
+#define USE_SRGB_SPACE
+
+#ifdef USE_SRGB_SPACE
+extern SFVEC3F ConvertSRGBToLinear( const SFVEC3F &aSRGBcolor );
+#else
+#define ConvertSRGBToLinear(v) (v)
+#endif
 
 #endif // C3D_RENDER_RAYTRACING_H

@@ -92,10 +92,10 @@ public:
     ///> Enables displaying suggestions for finishing the currently placed track.
     void SetSuggestFinish( bool aSuggestFinish ) { m_suggestFinish = aSuggestFinish; }
 
-    ///> Returns true if Smart Pads (automatic neckdown) is enabled.
-    bool SmartPads () const { return m_smartPads; }
+    ///> Returns true if Smart Pads (optimized connections) is enabled.
+    bool SmartPads() const { return m_smartPads; }
 
-    ///> Enables/disables Smart Pads (automatic neckdown).
+    ///> Enables/disables Smart Pads (optimized connections).
     void SetSmartPads( bool aSmartPads ) { m_smartPads = aSmartPads; }
 
     ///> Returns true if follow mouse mode is active (permanently on for the moment).
@@ -134,7 +134,13 @@ public:
     TIME_LIMIT WalkaroundTimeLimit() const;
 
     void SetInlineDragEnabled ( bool aEnable ) { m_inlineDragEnabled = aEnable; }
-    bool InlineDragEnabled( ) const { return m_inlineDragEnabled; }
+    bool InlineDragEnabled() const { return m_inlineDragEnabled; }
+
+    void SetSnapToTracks( bool aSnap ) { m_snapToTracks = aSnap; }
+    void SetSnapToPads( bool aSnap ) { m_snapToPads = aSnap; }
+
+    bool GetSnapToTracks() const { return m_snapToTracks; }
+    bool GetSnapToPads() const { return m_snapToPads; }
 
 private:
     bool m_shoveVias;
@@ -148,6 +154,8 @@ private:
     bool m_canViolateDRC;
     bool m_freeAngleMode;
     bool m_inlineDragEnabled;
+    bool m_snapToTracks;
+    bool m_snapToPads;
 
     PNS_MODE m_routingMode;
     PNS_OPTIMIZATION_EFFORT m_optimizerEffort;

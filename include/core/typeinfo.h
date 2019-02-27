@@ -28,19 +28,7 @@
 
 
 #ifndef SWIG
-#include <cstdio>
-
-template<typename T>
-struct remove_pointer
-{
-    typedef T type;
-};
-
-template<typename T>
-struct remove_pointer<T*>
-{
-    typedef typename remove_pointer<T>::type type;
-};
+#include <type_traits>
 
 /**
  * Function IsA()
@@ -52,13 +40,13 @@ struct remove_pointer<T*>
 template <class T, class I>
 bool IsA( const I* aObject )
 {
-    return aObject && remove_pointer<T>::type::ClassOf( aObject );
+    return aObject && std::remove_pointer<T>::type::ClassOf( aObject );
 }
 
 template <class T, class I>
 bool IsA( const I& aObject )
 {
-    return remove_pointer<T>::type::ClassOf( &aObject );
+    return std::remove_pointer<T>::type::ClassOf( &aObject );
 }
 
 /**
@@ -72,10 +60,10 @@ bool IsA( const I& aObject )
 template<class Casted, class From>
 Casted dyn_cast( From aObject )
 {
-    if( remove_pointer<Casted>::type::ClassOf ( aObject ) )
+    if( std::remove_pointer<Casted>::type::ClassOf ( aObject ) )
         return static_cast<Casted>( aObject );
 
-    return NULL;
+    return nullptr;
 }
 
 class EDA_ITEM;
@@ -106,7 +94,7 @@ enum KICAD_T
     PCB_MODULE_EDGE_T,      ///< class EDGE_MODULE, a footprint edge
     PCB_TRACE_T,            ///< class TRACK, a track segment (segment on a copper layer)
     PCB_VIA_T,              ///< class VIA, a via (like a track segment on a copper layer)
-    PCB_ZONE_T,             ///< class SEGZONE, a segment used to fill a zone area (segment on a
+    PCB_SEGZONE_T,             ///< class SEGZONE, a segment used to fill a zone area (segment on a
                             ///< copper layer)
     PCB_MARKER_T,           ///< class MARKER_PCB, a marker used to show something
     PCB_DIMENSION_T,        ///< class DIMENSION, a dimension (graphic item)
@@ -140,6 +128,7 @@ enum KICAD_T
     SCH_FIELD_LOCATE_REFERENCE_T,
     SCH_FIELD_LOCATE_VALUE_T,
     SCH_FIELD_LOCATE_FOOTPRINT_T,
+    SCH_FIELD_LOCATE_DATASHEET_T,
 
     // General
     SCH_SCREEN_T,
@@ -171,12 +160,24 @@ enum KICAD_T
     /*
      * For GerbView: items type:
      */
-    TYPE_GERBER_DRAW_ITEM,
+    GERBER_LAYOUT_T,
+    GERBER_DRAW_ITEM_T,
+    GERBER_IMAGE_LIST_T,
+    GERBER_IMAGE_T,
 
     /*
      * for Pl_Editor, in undo/redo commands
      */
     TYPE_PL_EDITOR_LAYOUT,
+
+    /*
+     * FOR PROJECT::_ELEMs
+     */
+    SYMBOL_LIB_TABLE_T,
+    FP_LIB_TABLE_T,
+    PART_LIBS_T,
+    SEARCH_STACK_T,
+    CACHE_WRAPPER_T,
 
     // End value
     MAX_STRUCT_TYPE_ID

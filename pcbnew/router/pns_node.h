@@ -24,10 +24,10 @@
 
 #include <vector>
 #include <list>
+#include <unordered_set>
+#include <unordered_map>
 
-#include <boost/unordered_set.hpp>
-#include <boost/unordered_map.hpp>
-#include <boost/optional.hpp>
+#include <core/optional.h>
 
 #include <geometry/shape.h>
 #include <geometry/shape_line_chain.h>
@@ -58,12 +58,12 @@ class RULE_RESOLVER
 public:
     virtual ~RULE_RESOLVER() {}
 
-    virtual int Clearance( const ITEM* aA, const ITEM* aB ) = 0;
-    virtual void OverrideClearance( bool aEnable, int aNetA = 0, int aNetB = 0, int aClearance = 0 ) = 0;
-    virtual void UseDpGap( bool aUseDpGap ) = 0;
+    virtual int Clearance( const ITEM* aA, const ITEM* aB ) const = 0;
+    virtual int Clearance( int aNetCode ) const = 0;
     virtual int DpCoupledNet( int aNet ) = 0;
     virtual int DpNetPolarity( int aNet ) = 0;
     virtual bool DpNetPair( ITEM* aItem, int& aNetP, int& aNetN ) = 0;
+    virtual wxString NetName( int aNet ) = 0;
 };
 
 /**
@@ -136,7 +136,7 @@ protected:
 class NODE
 {
 public:
-    typedef boost::optional<OBSTACLE>   OPT_OBSTACLE;
+    typedef OPT<OBSTACLE>   OPT_OBSTACLE;
     typedef std::vector<ITEM*>          ITEM_VECTOR;
     typedef std::vector<OBSTACLE>       OBSTACLES;
 
@@ -269,11 +269,12 @@ public:
      * Function Add()
      *
      * Adds an item to the current node.
-     * @param aItem item to add
+     * @param aSegment item to add
      * @param aAllowRedundant if true, duplicate items are allowed (e.g. a segment or via
+     * @return true if added
      * at the same coordinates as an existing one)
      */
-    void Add( std::unique_ptr< SEGMENT > aSegment, bool aAllowRedundant = false );
+    bool Add( std::unique_ptr< SEGMENT > aSegment, bool aAllowRedundant = false );
     void Add( std::unique_ptr< SOLID >   aSolid );
     void Add( std::unique_ptr< VIA >     aVia );
 
@@ -287,7 +288,6 @@ public:
      * Function Remove()
      *
      * Just as the name says, removes an item from this branch.
-     * @param aItem item to remove
      */
     void Remove( SOLID* aSolid );
     void Remove( VIA* aVia );
@@ -299,7 +299,7 @@ public:
      * Function Remove()
      *
      * Just as the name says, removes a line from this branch.
-     * @param aItem item to remove
+     * @param aLine item to remove
      */
     void Remove( LINE& aLine );
 
@@ -420,7 +420,7 @@ public:
 
 private:
     struct DEFAULT_OBSTACLE_VISITOR;
-    typedef boost::unordered_multimap<JOINT::HASH_TAG, JOINT> JOINT_MAP;
+    typedef std::unordered_multimap<JOINT::HASH_TAG, JOINT, JOINT::JOINT_TAG_HASH> JOINT_MAP;
     typedef JOINT_MAP::value_type TagJointPair;
 
     /// nodes are not copyable
@@ -433,18 +433,16 @@ private:
                        int                 aNet );
 
     ///> touches a joint and links it to an m_item
-    void linkJoint( const VECTOR2I& aPos, const LAYER_RANGE& aLayers,
-                    int aNet, ITEM* aWhere );
+    void linkJoint( const VECTOR2I& aPos, const LAYER_RANGE& aLayers, int aNet, ITEM* aWhere );
 
     ///> unlinks an item from a joint
-    void unlinkJoint( const VECTOR2I& aPos, const LAYER_RANGE& aLayers,
-                        int aNet, ITEM* aWhere );
+    void unlinkJoint( const VECTOR2I& aPos, const LAYER_RANGE& aLayers, int aNet, ITEM* aWhere );
 
     ///> helpers for adding/removing items
     void addSolid( SOLID* aSeg );
     void addSegment( SEGMENT* aSeg );
     void addVia( VIA* aVia );
-    
+
     void removeLine( LINE& aLine );
     void removeSolidIndex( SOLID* aSeg );
     void removeSegmentIndex( SEGMENT* aSeg );
@@ -488,7 +486,7 @@ private:
     std::set<NODE*> m_children;
 
     ///> hash of root's items that have been changed in this node
-    boost::unordered_set<ITEM*> m_override;
+    std::unordered_set<ITEM*> m_override;
 
     ///> worst case item-item clearance
     int m_maxClearance;
@@ -502,7 +500,7 @@ private:
     ///> depth of the node (number of parent nodes in the inheritance chain)
     int m_depth;
 
-    boost::unordered_set<ITEM*> m_garbageItems;
+    std::unordered_set<ITEM*> m_garbageItems;
 };
 
 }

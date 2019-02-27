@@ -26,52 +26,73 @@
 #include <dsnlexer.h>
 #include <fctsys.h>
 #include <macros.h>
+#include <pgm_base.h>
 
 using namespace TFIELD_T;
 
+
 const wxString TEMPLATE_FIELDNAME::GetDefaultFieldName( int aFieldNdx )
 {
+    static void* locale = nullptr;
+    static wxString referenceDefault;
+    static wxString valueDefault;
+    static wxString footprintDefault;
+    static wxString datasheetDefault;
+    static wxString fieldDefault;
+
+    // Fetching translations can take a surprising amount of time when loading libraries,
+    // so only do it when necessary.
+    if( Pgm().GetLocale() != locale )
+    {
+        referenceDefault = _( "Reference" );
+        valueDefault     = _( "Value" );
+        footprintDefault = _( "Footprint" );
+        datasheetDefault = _( "Datasheet" );
+        fieldDefault     = _( "Field" );
+        locale = Pgm().GetLocale();
+    }
+
     // Fixed values for the first few default fields used by EESCHEMA
     // (mandatory fields)
     switch( aFieldNdx )
     {
     case  REFERENCE:
-        return _( "Reference" );   // The component reference, R1, C1, etc.
+        return referenceDefault;   // The component reference, R1, C1, etc.
 
     case  VALUE:
-        return _( "Value" );       // The component value + name
+        return valueDefault;       // The component value + name
 
     case  FOOTPRINT:
-        return _( "Footprint" );   // The footprint for use with Pcbnew
+        return footprintDefault;   // The footprint for use with Pcbnew
 
     case  DATASHEET:
-        return _( "Datasheet" );   // Link to a datasheet for component
+        return datasheetDefault;   // Link to a datasheet for component
 
     default:
         break;
     }
 
     // Other fields are use fields, give a default name:
-    wxString fieldName = _( "Field" );
+    wxString fieldName = fieldDefault;
     fieldName << aFieldNdx;
     return fieldName;
 }
 
-void TEMPLATE_FIELDNAME::Format( OUTPUTFORMATTER* out, int nestLevel ) const throw( IO_ERROR )
+void TEMPLATE_FIELDNAME::Format( OUTPUTFORMATTER* out, int nestLevel ) const
 {
     out->Print( nestLevel, "(field (name %s)",  out->Quotew( m_Name ).c_str() );
 
-    if( !m_Value.IsEmpty() )
-        out->Print( 0, "(value %s)", out->Quotew( m_Value ).c_str() );
-
     if( m_Visible )
         out->Print( 0, " visible" );
+
+    if( m_URL )
+        out->Print( 0, " url" );
 
     out->Print( 0, ")\n" );
 }
 
 
-void TEMPLATE_FIELDNAME::Parse( TEMPLATE_FIELDNAMES_LEXER* in ) throw( IO_ERROR )
+void TEMPLATE_FIELDNAME::Parse( TEMPLATE_FIELDNAMES_LEXER* in )
 {
     T    tok;
 
@@ -95,8 +116,8 @@ void TEMPLATE_FIELDNAME::Parse( TEMPLATE_FIELDNAMES_LEXER* in ) throw( IO_ERROR 
         switch( tok )
         {
         case T_value:
+            // older format; silently skip
             in->NeedSYMBOLorNUMBER();
-            m_Value = FROM_UTF8( in->CurText() );
             in->NeedRIGHT();
             break;
 
@@ -104,15 +125,19 @@ void TEMPLATE_FIELDNAME::Parse( TEMPLATE_FIELDNAMES_LEXER* in ) throw( IO_ERROR 
             m_Visible = true;
             break;
 
+        case T_url:
+            m_URL = true;
+            break;
+
         default:
-            in->Expecting( "value|visible" );
+            in->Expecting( "value|url|visible" );
             break;
         }
     }
 }
 
 
-void TEMPLATES::Format( OUTPUTFORMATTER* out, int nestLevel ) const throw( IO_ERROR )
+void TEMPLATES::Format( OUTPUTFORMATTER* out, int nestLevel ) const
 {
     // We'll keep this general, and include the \n, even though the only known
     // use at this time will not want the newlines or the indentation.
@@ -125,7 +150,7 @@ void TEMPLATES::Format( OUTPUTFORMATTER* out, int nestLevel ) const throw( IO_ER
 }
 
 
-void TEMPLATES::Parse( TEMPLATE_FIELDNAMES_LEXER* in ) throw( IO_ERROR )
+void TEMPLATES::Parse( TEMPLATE_FIELDNAMES_LEXER* in )
 {
     T  tok;
 
@@ -198,14 +223,14 @@ int TEMPLATES::AddTemplateFieldName( const TEMPLATE_FIELDNAME& aFieldName )
 }
 
 
-bool TEMPLATES::HasFieldName( const wxString& aName ) const
+const TEMPLATE_FIELDNAME* TEMPLATES::GetFieldName( const wxString& aName ) const
 {
-    for( size_t i=0; i<m_Fields.size();  ++i )
+    for( const TEMPLATE_FIELDNAME& field : m_Fields )
     {
-        if( m_Fields[i].m_Name == aName )
-            return true;
+        if( field.m_Name == aName )
+            return &field;
     }
 
-    return false;
+    return nullptr;
 }
 

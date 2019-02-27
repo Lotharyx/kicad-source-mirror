@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2015-2016 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2015-2018 KiCad Developers, see CHANGELOG.TXT for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -25,10 +25,10 @@
 #include <fctsys.h>
 #include <pgm_base.h>
 #include <gr_basic.h>
-#include <class_drawpanel.h>
+#include <sch_draw_panel.h>
 #include <confirm.h>
-#include <class_sch_screen.h>
-#include <schframe.h>
+#include <sch_screen.h>
+#include <sch_edit_frame.h>
 #include <base_units.h>
 
 #include <general.h>
@@ -38,7 +38,6 @@
 
 #include <invoke_sch_dialog.h>
 #include <dialog_print_using_printer_base.h>
-
 
 
 /**
@@ -51,6 +50,7 @@ class DIALOG_PRINT_USING_PRINTER : public DIALOG_PRINT_USING_PRINTER_BASE
 {
 public:
     DIALOG_PRINT_USING_PRINTER( SCH_EDIT_FRAME* aParent );
+    ~DIALOG_PRINT_USING_PRINTER() override;
 
     SCH_EDIT_FRAME* GetParent() const
     {
@@ -58,13 +58,12 @@ public:
     }
 
 private:
-    void OnCloseWindow( wxCloseEvent& event ) override;
+    bool TransferDataToWindow() override;
+    bool TransferDataFromWindow() override;
+
     void OnPageSetup( wxCommandEvent& event ) override;
     void OnPrintPreview( wxCommandEvent& event ) override;
-    void OnPrintButtonClick( wxCommandEvent& event ) override;
-    void OnButtonCancelClick( wxCommandEvent& event ) override { Close(); }
 
-    void initDialog();
     void GetPrintOptions();
 };
 
@@ -149,18 +148,34 @@ DIALOG_PRINT_USING_PRINTER::DIALOG_PRINT_USING_PRINTER( SCH_EDIT_FRAME* aParent 
 
     m_checkReference->SetValue( aParent->GetPrintSheetReference() );
     m_checkMonochrome->SetValue( aParent->GetPrintMonochrome() );
-    initDialog();
+
+    // We use a sdbSizer to get platform-dependent ordering of the action buttons, but
+    // that requires us to correct the button labels here.
+    m_sdbSizer1OK->SetLabel( _( "Print" ) );
+    m_sdbSizer1Apply->SetLabel( _( "Preview" ) );
+    m_sdbSizer1Cancel->SetLabel( _( "Close" ) );
+    m_sdbSizer1->Layout();
 
 #ifdef __WXMAC__
     // Problems with modal on wx-2.9 - Anyway preview is standard for OSX
-   m_buttonPreview->Hide();
+    m_sdbSizer1Apply->Hide();
 #endif
 
-    GetSizer()->Fit( this );
+    m_sdbSizer1OK->SetDefault();    // on linux, this is inadequate to determine
+                                    // what ENTER does.  Must also SetFocus().
+    m_sdbSizer1OK->SetFocus();
+
+    FinishDialogSettings();
 }
 
 
-void DIALOG_PRINT_USING_PRINTER::initDialog()
+DIALOG_PRINT_USING_PRINTER::~DIALOG_PRINT_USING_PRINTER()
+{
+    GetPrintOptions();
+}
+
+
+bool DIALOG_PRINT_USING_PRINTER::TransferDataToWindow()
 {
     SCH_EDIT_FRAME* parent = GetParent();
 
@@ -182,19 +197,7 @@ void DIALOG_PRINT_USING_PRINTER::initDialog()
 
     pageSetupDialogData.GetPrintData().SetOrientation( pageInfo.GetWxOrientation() );
 
-    if ( GetSizer() )
-        GetSizer()->SetSizeHints( this );
-
-    // Rely on the policy in class DIALOG_SHIM, which centers the dialog
-    // initially during a runtime session but gives user the ability to move it in
-    // that session.
-    // This dialog may get moved and resized in Show(), but in case this is
-    // the first time, center it for starters.
-    Center();
-
-    m_buttonPrint->SetDefault();    // on linux, this is inadequate to determine
-                                    // what ENTER does.  Must also SetFocus().
-    m_buttonPrint->SetFocus();
+    return true;
 }
 
 
@@ -204,22 +207,6 @@ void DIALOG_PRINT_USING_PRINTER::GetPrintOptions()
 
     parent->SetPrintMonochrome( m_checkMonochrome->IsChecked() );
     parent->SetPrintSheetReference( m_checkReference->IsChecked() );
-}
-
-
-void DIALOG_PRINT_USING_PRINTER::OnCloseWindow( wxCloseEvent& event )
-{
-    SCH_EDIT_FRAME* parent = GetParent();
-
-    if( !IsIconized() )
-    {
-        parent->SetPrintDialogPosition( GetPosition() );
-        parent->SetPrintDialogSize( GetSize() );
-    }
-
-    GetPrintOptions();
-
-    EndDialog( wxID_CANCEL );
 }
 
 
@@ -251,12 +238,6 @@ void DIALOG_PRINT_USING_PRINTER::OnPrintPreview( wxCommandEvent& event )
                                                   new SCH_PRINTOUT( parent, title ),
                                                   &parent->GetPageSetupData().GetPrintData() );
 
-    if( preview == NULL )
-    {
-        DisplayError( this, _( "Print preview error!" ) );
-        return;
-    }
-
     preview->SetZoom( 100 );
 
     SCH_PREVIEW_FRAME* frame = new SCH_PREVIEW_FRAME( preview, this, title );
@@ -274,7 +255,7 @@ void DIALOG_PRINT_USING_PRINTER::OnPrintPreview( wxCommandEvent& event )
 
     // We use here wxPreviewFrame_WindowModal option to make the wxPrintPreview frame
     // modal for its caller only.
-    // An other reason is the fact when closing the frame without this option,
+    // another reason is the fact when closing the frame without this option,
     // all top level frames are reenabled.
     // With this option, only the parent is reenabled.
     // Reenabling all top level frames should be made by the parent dialog.
@@ -285,7 +266,7 @@ void DIALOG_PRINT_USING_PRINTER::OnPrintPreview( wxCommandEvent& event )
 }
 
 
-void DIALOG_PRINT_USING_PRINTER::OnPrintButtonClick( wxCommandEvent& event )
+bool DIALOG_PRINT_USING_PRINTER::TransferDataFromWindow()
 {
     SCH_EDIT_FRAME* parent = GetParent();
 
@@ -300,6 +281,10 @@ void DIALOG_PRINT_USING_PRINTER::OnPrintButtonClick( wxCommandEvent& event )
     wxPrinter printer( &printDialogData );
     SCH_PRINTOUT printout( parent, _( "Print Schematic" ) );
 
+    // Disable 'Print' button to prevent issuing another print
+    // command before the previous one is finished (causes problems on Windows)
+    m_sdbSizer1OK->Enable( false );
+
     if( !printer.Print( this, &printout, true ) )
     {
         if( wxPrinter::GetLastError() == wxPRINTER_ERROR )
@@ -310,6 +295,8 @@ void DIALOG_PRINT_USING_PRINTER::OnPrintButtonClick( wxCommandEvent& event )
     {
         parent->GetPageSetupData() = printer.GetPrintDialogData().GetPrintData();
     }
+
+    return true;
 }
 
 
@@ -352,14 +339,7 @@ void SCH_PRINTOUT::GetPageInfo( int* minPage, int* maxPage, int* selPageFrom, in
 
 bool SCH_PRINTOUT::HasPage( int pageNum )
 {
-    int pageCount;
-
-    pageCount = g_RootSheet->CountSheets();
-
-    if( pageCount >= pageNum )
-        return true;
-
-    return false;
+    return g_RootSheet->CountSheets() >= pageNum;
 }
 
 
@@ -398,7 +378,7 @@ void SCH_PRINTOUT::DrawPage( SCH_SCREEN* aScreen )
     EDA_RECT oldClipBox;
     wxRect   fitRect;
     wxDC*    dc = GetDC();
-    EDA_DRAW_PANEL* panel = m_parent->GetCanvas();
+    auto panel = m_parent->GetCanvas();
 
     wxBusyCursor dummy;
 
@@ -435,7 +415,7 @@ void SCH_PRINTOUT::DrawPage( SCH_SCREEN* aScreen )
 
     // For an obscure reason, OffsetLogicalOrigin creates issues,
     // under some circumstances, when yoffset is not always null
-    // and changes from a page to an other page
+    // and changes from a page to another page
     // This is only a workaround, not a fix
     // see https://bugs.launchpad.net/kicad/+bug/1464773
     // xoffset does not create issues.
@@ -455,7 +435,7 @@ void SCH_PRINTOUT::DrawPage( SCH_SCREEN* aScreen )
 
     aScreen->m_IsPrinting = true;
 
-    EDA_COLOR_T bg_color = m_parent->GetDrawBgColor();
+    COLOR4D bgColor = m_parent->GetDrawBgColor();
 
     aScreen->Draw( panel, dc, (GR_DRAWMODE) 0 );
 
@@ -463,7 +443,7 @@ void SCH_PRINTOUT::DrawPage( SCH_SCREEN* aScreen )
         m_parent->DrawWorkSheet( dc, aScreen, GetDefaultLineThickness(),
                 IU_PER_MILS, aScreen->GetFileName() );
 
-    m_parent->SetDrawBgColor( bg_color );
+    m_parent->SetDrawBgColor( bgColor );
     aScreen->m_IsPrinting = false;
     panel->SetClipBox( oldClipBox );
 

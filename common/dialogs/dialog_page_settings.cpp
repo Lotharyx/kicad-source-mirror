@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KICAD, a free EDA CAD application.
  *
- * Copyright (C) 1992-2015 Kicad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2018 Kicad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,35 +26,37 @@
  */
 
 #include <fctsys.h>
-#include <macros.h>              // DIM()
+#include <macros.h>              // arrayDim()
 #include <common.h>
 #include <project.h>
 #include <confirm.h>
 #include <gr_basic.h>
 #include <base_struct.h>
 #include <class_drawpanel.h>
-#include <class_title_block.h>
+#include <title_block.h>
 #include <draw_frame.h>
 #include <worksheet_shape_builder.h>
-#include <class_base_screen.h>
+#include <base_screen.h>
 #include <wildcards_and_files_ext.h>
 
 #include <wx/valgen.h>
 #include <wx/tokenzr.h>
 
 #ifdef EESCHEMA
-#include <class_sch_screen.h>
+#include <sch_screen.h>
 #include <general.h>
 #endif
 
 #include <worksheet.h>
 #include <dialog_page_settings.h>
 
+#define MAX_PAGE_EXAMPLE_SIZE 200
+
 
 // List of page formats.
 // they are prefixed by "_HKI" (already in use for hotkeys) instead of "_",
 // because we need both the translated and the not translated version.
-// when displayed in dialog we should explicitely call wxGetTranslation()
+// when displayed in dialog we should explicitly call wxGetTranslation()
 // to show the translated version.
 // See hotkeys_basic.h for more info
 #define _HKI( x ) wxT( x )
@@ -74,30 +76,58 @@ static const wxString pageFmts[] =
     _HKI("USLegal 8.5x14in"),       // USLegal without space is correct
     _HKI("USLedger 11x17in"),       // USLedger without space is correct
     _HKI("User (Custom)"),          // size defined by user. The string must contain "Custom"
-                                    // to be reconized in code
+                                    // to be recognized in code
 };
 
 void EDA_DRAW_FRAME::Process_PageSettings( wxCommandEvent& event )
 {
-    DIALOG_PAGES_SETTINGS dlg( this );
+    FRAME_T smallSizeFrames[] =
+    {
+        FRAME_PCB, FRAME_PCB_MODULE_EDITOR, FRAME_PCB_MODULE_VIEWER,
+        FRAME_PCB_MODULE_VIEWER_MODAL, FRAME_PCB_FOOTPRINT_WIZARD,
+        FRAME_PCB_FOOTPRINT_PREVIEW,
+        FRAME_CVPCB_DISPLAY
+    };
+
+    // Fix the max page size: it is MAX_PAGE_SIZE_EDITORS
+    // or MAX_PAGE_SIZE_PCBNEW for Pcbnew draw frames, due to the small internal
+    // units that do not allow too large draw areas
+    wxSize maxPageSize( MAX_PAGE_SIZE_EDITORS_MILS, MAX_PAGE_SIZE_EDITORS_MILS );
+
+    for( unsigned ii = 0; ii < arrayDim( smallSizeFrames ); ii++ )
+    {
+        if( IsType( smallSizeFrames[ii] ) )
+        {
+            maxPageSize.x = maxPageSize.y = MAX_PAGE_SIZE_PCBNEW_MILS;
+            break;
+        }
+    }
+
+    DIALOG_PAGES_SETTINGS dlg( this, maxPageSize );
     dlg.SetWksFileName( BASE_SCREEN::m_PageLayoutDescrFileName );
 
     if( dlg.ShowModal() == wxID_OK )
     {
-        if( m_canvas )
-            m_canvas->Refresh();
+#ifdef EESCHEMA
+        RedrawScreen( wxPoint( 0, 0 ), false );
+#else
+        GetCanvas()->Refresh();
+#endif
     }
 }
 
 
-DIALOG_PAGES_SETTINGS::DIALOG_PAGES_SETTINGS( EDA_DRAW_FRAME* parent  ) :
+DIALOG_PAGES_SETTINGS::DIALOG_PAGES_SETTINGS( EDA_DRAW_FRAME* parent, wxSize aMaxUserSizeMils ) :
     DIALOG_PAGES_SETTINGS_BASE( parent ),
-    m_initialized( false )
+    m_initialized( false ),
+    m_customSizeX( parent, m_userSizeXLabel, m_userSizeXCtrl, m_userSizeXUnits, false ),
+    m_customSizeY( parent, m_userSizeYLabel, m_userSizeYCtrl, m_userSizeYUnits, false )
 {
     m_parent   = parent;
     m_screen   = m_parent->GetScreen();
     m_projectPath = Prj().GetProjectPath();
     m_page_bitmap = NULL;
+    m_maxPageSizeMils = aMaxUserSizeMils;
     m_tb = m_parent->GetTitleBlock();
     m_customFmt = false;
     m_localPrjConfigChanged = false;
@@ -122,14 +152,12 @@ DIALOG_PAGES_SETTINGS::~DIALOG_PAGES_SETTINGS()
 void DIALOG_PAGES_SETTINGS::initDialog()
 {
     wxString    msg;
-    double      customSizeX;
-    double      customSizeY;
 
-    // initalize page format choice box and page format list.
+    // initialize page format choice box and page format list.
     // The first shows translated strings, the second contains not translated strings
     m_paperSizeComboBox->Clear();
 
-    for( unsigned ii = 0; ii < DIM(pageFmts); ii++ )
+    for( unsigned ii = 0; ii < arrayDim(pageFmts); ii++ )
     {
         m_pageFmt.Add( pageFmts[ii] );
         m_paperSizeComboBox->Append( wxGetTranslation( pageFmts[ii] ) );
@@ -137,7 +165,6 @@ void DIALOG_PAGES_SETTINGS::initDialog()
 
     // initialize the page layout descr filename
     SetWksFileName( BASE_SCREEN::m_PageLayoutDescrFileName );
-
 
 #ifdef EESCHEMA
     // Init display value for schematic sub-sheet number
@@ -161,41 +188,15 @@ void DIALOG_PAGES_SETTINGS::initDialog()
     wxCommandEvent dummy;
     OnPaperSizeChoice( dummy );
 
-    if( m_customFmt)    // The custom value is defined by the page size
+    if( m_customFmt )
     {
-        customSizeX = m_pageInfo.GetWidthMils();
-        customSizeY = m_pageInfo.GetHeightMils();
+        m_customSizeX.SetValue( m_pageInfo.GetWidthMils() * IU_PER_MILS );
+        m_customSizeY.SetValue( m_pageInfo.GetHeightMils() * IU_PER_MILS );
     }
-    else    // The custom value is set to a default value, or the last defined value
+    else
     {
-        customSizeX = m_pageInfo.GetCustomWidthMils();
-        customSizeY = m_pageInfo.GetCustomHeightMils();
-    }
-
-    switch( g_UserUnit )
-    {
-    case MILLIMETRES:
-        customSizeX *= 25.4e-3;
-        customSizeY *= 25.4e-3;
-
-        msg.Printf( wxT( "%.2f" ), customSizeX );
-        m_TextUserSizeX->SetValue( msg );
-
-        msg.Printf( wxT( "%.2f" ), customSizeY );
-        m_TextUserSizeY->SetValue( msg );
-        break;
-
-    default:
-    case INCHES:
-        customSizeX /= 1000.0;
-        customSizeY /= 1000.0;
-
-        msg.Printf( wxT( "%.3f" ), customSizeX );
-        m_TextUserSizeX->SetValue( msg );
-
-        msg.Printf( wxT( "%.3f" ), customSizeY );
-        m_TextUserSizeY->SetValue( msg );
-        break;
+        m_customSizeX.SetValue( m_pageInfo.GetCustomWidthMils() * IU_PER_MILS );
+        m_customSizeY.SetValue( m_pageInfo.GetCustomHeightMils() * IU_PER_MILS );
     }
 
     m_TextRevision->SetValue( m_tb.GetRevision() );
@@ -231,13 +232,21 @@ void DIALOG_PAGES_SETTINGS::initDialog()
 
 void DIALOG_PAGES_SETTINGS::OnOkClick( wxCommandEvent& event )
 {
+    if( !m_customSizeX.Validate( Mils2iu( MIN_PAGE_SIZE ), Mils2iu( m_maxPageSizeMils.x ) ) )
+        return;
+
+    if( !m_customSizeY.Validate( Mils2iu( MIN_PAGE_SIZE ), Mils2iu( m_maxPageSizeMils.y ) ) )
+        return;
+
     if( SavePageSettings() )
     {
         m_screen->SetModify();
-        m_parent->GetCanvas()->Refresh();
 
         if( LocalPrjConfigChanged() )
-            m_parent->SaveProjectSettings( true );
+            m_parent->SaveProjectSettings( false );
+
+        // Call the post processing (if any) after changes
+        m_parent->OnPageSettingsChange();
     }
 
     event.Skip();
@@ -256,8 +265,8 @@ void DIALOG_PAGES_SETTINGS::OnPaperSizeChoice( wxCommandEvent& event )
     if( paperType.Contains( PAGE_INFO::Custom ) )
     {
         m_orientationComboBox->Enable( false );
-        m_TextUserSizeX->Enable( true );
-        m_TextUserSizeY->Enable( true );
+        m_customSizeX.Enable( true );
+        m_customSizeY.Enable( true );
         m_customFmt = true;
     }
     else
@@ -273,8 +282,8 @@ void DIALOG_PAGES_SETTINGS::OnPaperSizeChoice( wxCommandEvent& event )
             m_orientationComboBox->Enable( false );
         }
 #endif
-        m_TextUserSizeX->Enable( false );
-        m_TextUserSizeY->Enable( false );
+        m_customSizeX.Enable( false );
+        m_customSizeY.Enable( false );
         m_customFmt = false;
     }
 
@@ -285,7 +294,7 @@ void DIALOG_PAGES_SETTINGS::OnPaperSizeChoice( wxCommandEvent& event )
 
 void DIALOG_PAGES_SETTINGS::OnUserPageSizeXTextUpdated( wxCommandEvent& event )
 {
-    if( m_initialized && m_TextUserSizeX->IsModified() )
+    if( m_initialized )
     {
         GetPageLayoutInfoFromDialog();
         UpdatePageLayoutExample();
@@ -295,7 +304,7 @@ void DIALOG_PAGES_SETTINGS::OnUserPageSizeXTextUpdated( wxCommandEvent& event )
 
 void DIALOG_PAGES_SETTINGS::OnUserPageSizeYTextUpdated( wxCommandEvent& event )
 {
-    if( m_initialized && m_TextUserSizeY->IsModified() )
+    if( m_initialized )
     {
         GetPageLayoutInfoFromDialog();
         UpdatePageLayoutExample();
@@ -418,26 +427,21 @@ void DIALOG_PAGES_SETTINGS::OnDateApplyClick( wxCommandEvent& event )
 
 bool DIALOG_PAGES_SETTINGS::SavePageSettings()
 {
-    bool retSuccess = false;
+    bool success = false;
 
     wxString fileName = GetWksFileName();
 
     if( fileName != BASE_SCREEN::m_PageLayoutDescrFileName )
     {
-        wxString fullFileName =
-                    WORKSHEET_LAYOUT::MakeFullFileName( fileName, m_projectPath );
+        wxString fullFileName = WORKSHEET_LAYOUT::MakeFullFileName( fileName, m_projectPath );
 
-        if( !fullFileName.IsEmpty() )
+        if( !fullFileName.IsEmpty() && !wxFileExists( fullFileName ) )
         {
-
-            if( !wxFileExists( fullFileName ) )
-            {
-                wxString msg;
-                msg.Printf( _("Page layout description file <%s> not found. Abort"),
-                            GetChars( fullFileName ) );
-                wxMessageBox( msg );
-                return false;
-            }
+            wxString msg;
+            msg.Printf( _( "Page layout description file \"%s\" not found." ),
+                        GetChars( fullFileName ) );
+            wxMessageBox( msg );
+            return false;
         }
 
         BASE_SCREEN::m_PageLayoutDescrFileName = fileName;
@@ -446,39 +450,17 @@ bool DIALOG_PAGES_SETTINGS::SavePageSettings()
         m_localPrjConfigChanged = true;
     }
 
-    int idx = m_paperSizeComboBox->GetSelection();
-
-    if( idx < 0 )
-        idx = 0;
-
+    int idx = std::max( m_paperSizeComboBox->GetSelection(), 0 );
     const wxString paperType = m_pageFmt[idx];
 
     if( paperType.Contains( PAGE_INFO::Custom ) )
     {
         GetCustomSizeMilsFromDialog();
 
-        retSuccess = m_pageInfo.SetType( PAGE_INFO::Custom );
+        success = m_pageInfo.SetType( PAGE_INFO::Custom );
 
-        if( retSuccess )
+        if( success )
         {
-            if( m_layout_size.x < MIN_PAGE_SIZE || m_layout_size.y < MIN_PAGE_SIZE ||
-                m_layout_size.x > MAX_PAGE_SIZE || m_layout_size.y > MAX_PAGE_SIZE )
-            {
-                wxString msg = wxString::Format( _( "Selected custom paper size\nis out of the permissible \
-limits\n%.1f - %.1f %s!\nSelect another custom paper size?" ),
-                        g_UserUnit == INCHES ? MIN_PAGE_SIZE / 1000. : MIN_PAGE_SIZE * 25.4 / 1000,
-                        g_UserUnit == INCHES ? MAX_PAGE_SIZE / 1000. : MAX_PAGE_SIZE * 25.4 / 1000,
-                        g_UserUnit == INCHES ? _( "inches" ) : _( "mm" ) );
-
-                if( wxMessageBox( msg, _( "Warning!" ), wxYES_NO | wxICON_EXCLAMATION, this ) == wxYES )
-                {
-                    return false;
-                }
-
-                m_layout_size.x = Clamp( MIN_PAGE_SIZE, m_layout_size.x, MAX_PAGE_SIZE );
-                m_layout_size.y = Clamp( MIN_PAGE_SIZE, m_layout_size.y, MAX_PAGE_SIZE );
-            }
-
             PAGE_INFO::SetCustomWidthMils( m_layout_size.x );
             PAGE_INFO::SetCustomHeightMils( m_layout_size.y );
 
@@ -490,44 +472,44 @@ limits\n%.1f - %.1f %s!\nSelect another custom paper size?" ),
     {
         // search for longest common string first, e.g. A4 before A
         if( paperType.Contains( PAGE_INFO::USLetter ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::USLetter );
+            success = m_pageInfo.SetType( PAGE_INFO::USLetter );
         else if( paperType.Contains( PAGE_INFO::USLegal ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::USLegal );
+            success = m_pageInfo.SetType( PAGE_INFO::USLegal );
         else if( paperType.Contains( PAGE_INFO::USLedger ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::USLedger );
+            success = m_pageInfo.SetType( PAGE_INFO::USLedger );
         else if( paperType.Contains( PAGE_INFO::GERBER ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::GERBER );
+            success = m_pageInfo.SetType( PAGE_INFO::GERBER );
         else if( paperType.Contains( PAGE_INFO::A4 ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::A4 );
+            success = m_pageInfo.SetType( PAGE_INFO::A4 );
         else if( paperType.Contains( PAGE_INFO::A3 ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::A3 );
+            success = m_pageInfo.SetType( PAGE_INFO::A3 );
         else if( paperType.Contains( PAGE_INFO::A2 ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::A2 );
+            success = m_pageInfo.SetType( PAGE_INFO::A2 );
         else if( paperType.Contains( PAGE_INFO::A1 ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::A1 );
+            success = m_pageInfo.SetType( PAGE_INFO::A1 );
         else if( paperType.Contains( PAGE_INFO::A0 ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::A0 );
+            success = m_pageInfo.SetType( PAGE_INFO::A0 );
         else if( paperType.Contains( PAGE_INFO::A ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::A );
+            success = m_pageInfo.SetType( PAGE_INFO::A );
         else if( paperType.Contains( PAGE_INFO::B ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::B );
+            success = m_pageInfo.SetType( PAGE_INFO::B );
         else if( paperType.Contains( PAGE_INFO::C ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::C );
+            success = m_pageInfo.SetType( PAGE_INFO::C );
         else if( paperType.Contains( PAGE_INFO::D ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::D );
+            success = m_pageInfo.SetType( PAGE_INFO::D );
         else if( paperType.Contains( PAGE_INFO::E ) )
-            retSuccess = m_pageInfo.SetType( PAGE_INFO::E );
+            success = m_pageInfo.SetType( PAGE_INFO::E );
 
-        if( retSuccess )
+        if( success )
         {
             int choice = m_orientationComboBox->GetSelection();
             m_pageInfo.SetPortrait( choice != 0 );
         }
     }
 
-    if( !retSuccess )
+    if( !success )
     {
-        wxASSERT_MSG( false, wxT( "the translation for paper size must preserve original spellings" ) );
+        wxASSERT_MSG( false, _( "the translation for paper size must preserve original spellings" ) );
         m_pageInfo.SetType( PAGE_INFO::A4 );
     }
 
@@ -617,8 +599,8 @@ void DIALOG_PAGES_SETTINGS::UpdatePageLayoutExample()
 {
     int lyWidth, lyHeight;
 
-    wxSize clamped_layout_size( Clamp( MIN_PAGE_SIZE, m_layout_size.x, MAX_PAGE_SIZE ),
-                                Clamp( MIN_PAGE_SIZE, m_layout_size.y, MAX_PAGE_SIZE ) );
+    wxSize clamped_layout_size( Clamp( MIN_PAGE_SIZE, m_layout_size.x, m_maxPageSizeMils.x ),
+                                Clamp( MIN_PAGE_SIZE, m_layout_size.y, m_maxPageSizeMils.y ) );
 
     double lyRatio = clamped_layout_size.x < clamped_layout_size.y ?
                         (double) clamped_layout_size.y / clamped_layout_size.x :
@@ -645,11 +627,8 @@ void DIALOG_PAGES_SETTINGS::UpdatePageLayoutExample()
 
     if( m_page_bitmap->IsOk() )
     {
-        // Calculate layout preview scale.
-        int appScale = m_screen->MilsToIuScalar();
-
-        double scaleW = (double) lyWidth  / clamped_layout_size.x / appScale;
-        double scaleH = (double) lyHeight / clamped_layout_size.y / appScale;
+        double scaleW = (double) lyWidth  / clamped_layout_size.x;
+        double scaleH = (double) lyHeight / clamped_layout_size.y;
 
         // Prepare DC.
         wxSize example_size( lyWidth + 1, lyHeight + 1 );
@@ -682,10 +661,11 @@ void DIALOG_PAGES_SETTINGS::UpdatePageLayoutExample()
         GRResetPenAndBrush( &memDC );
 
         WORKSHEET_LAYOUT::SetAltInstance( m_pagelayout );
+        GRFilledRect( NULL, &memDC, 0, 0, m_layout_size.x, m_layout_size.y, WHITE, WHITE );
         DrawPageLayout( &memDC, NULL, pageDUMMY,
                         emptyString, emptyString,
                         m_tb, m_screen->m_NumberOfScreens,
-                        m_screen->m_ScreenNumber, 1, appScale, DARKGRAY, RED );
+                        m_screen->m_ScreenNumber, 1, 1, DARKGRAY, RED );
 
         memDC.SelectObject( wxNullBitmap );
         m_PageLayoutExampleBitmap->SetBitmap( *m_page_bitmap );
@@ -700,11 +680,7 @@ void DIALOG_PAGES_SETTINGS::UpdatePageLayoutExample()
 
 void DIALOG_PAGES_SETTINGS::GetPageLayoutInfoFromDialog()
 {
-    int idx = m_paperSizeComboBox->GetSelection();
-
-    if( idx < 0 )
-        idx = 0;
-
+    int idx = std::max( m_paperSizeComboBox->GetSelection(), 0 );
     const wxString paperType = m_pageFmt[idx];
 
     // here we assume translators will keep original paper size spellings
@@ -743,7 +719,7 @@ void DIALOG_PAGES_SETTINGS::GetPageLayoutInfoFromDialog()
 
         unsigned i;
 
-        for( i=0;  i < DIM( papers );  ++i )
+        for( i=0;  i < arrayDim( papers );  ++i )
         {
             if( paperType.Contains( papers[i] ) )
             {
@@ -752,7 +728,7 @@ void DIALOG_PAGES_SETTINGS::GetPageLayoutInfoFromDialog()
             }
         }
 
-        wxASSERT( i != DIM(papers) );   // dialog UI match the above list?
+        wxASSERT( i != arrayDim(papers) );   // dialog UI match the above list?
 
         m_layout_size = pageInfo.GetSizeMils();
 
@@ -770,28 +746,8 @@ void DIALOG_PAGES_SETTINGS::GetPageLayoutInfoFromDialog()
 
 void DIALOG_PAGES_SETTINGS::GetCustomSizeMilsFromDialog()
 {
-    double      customSizeX;
-    double      customSizeY;
-    wxString    msg;
-
-    msg = m_TextUserSizeX->GetValue();
-    msg.ToDouble( &customSizeX );
-
-    msg = m_TextUserSizeY->GetValue();
-    msg.ToDouble( &customSizeY );
-
-    switch( g_UserUnit )
-    {
-    case MILLIMETRES:
-        customSizeX *= 1000. / 25.4;
-        customSizeY *= 1000. / 25.4;
-        break;
-
-    default:
-    case INCHES:
-        customSizeX *= 1000.;
-        customSizeY *= 1000.;
-    }
+    double customSizeX = (double) m_customSizeX.GetValue() / IU_PER_MILS;
+    double customSizeY = (double) m_customSizeY.GetValue() / IU_PER_MILS;
 
     // Prepare to painless double -> int conversion.
     customSizeX = Clamp( double( INT_MIN ), customSizeX, double( INT_MAX ) );
@@ -799,13 +755,26 @@ void DIALOG_PAGES_SETTINGS::GetCustomSizeMilsFromDialog()
     m_layout_size = wxSize( KiROUND( customSizeX ), KiROUND( customSizeY ) );
 }
 
-// Called on .kicad_wks file description selection change
+
 void DIALOG_PAGES_SETTINGS::OnWksFileSelection( wxCommandEvent& event )
 {
+    wxFileName fn = GetWksFileName();
+    wxString name = GetWksFileName();
+    wxString path;
+
+    if( fn.IsAbsolute() )
+    {
+        path = fn.GetPath();
+        name = fn.GetFullName();
+    }
+    else
+    {
+        path = m_projectPath;
+    }
+
     // Display a file picker dialog
-    wxFileDialog fileDialog( this, _( "Select Page Layout Descr File" ),
-                             m_projectPath, GetWksFileName(),
-                             PageLayoutDescrFileWildcard,
+    wxFileDialog fileDialog( this, _( "Select Page Layout Description File" ),
+                             path, name, PageLayoutDescrFileWildcard(),
                              wxFD_DEFAULT_STYLE | wxFD_FILE_MUST_EXIST );
 
     if( fileDialog.ShowModal() != wxID_OK )
@@ -821,11 +790,11 @@ void DIALOG_PAGES_SETTINGS::OnWksFileSelection( wxCommandEvent& event )
     if( shortFileName != GetWksFileName() && shortFileName != fileName )
     {
         wxString msg = wxString::Format( _(
-                "The page layout descr filename has changed.\n"
+                "The page layout description file name has changed.\n"
                 "Do you want to use the relative path:\n"
-                "'%s'\n"
+                "\"%s\"\n"
                 "instead of\n"
-                "'%s'" ), GetChars( shortFileName ), GetChars( fileName ) );
+                "\"%s\"?" ), GetChars( shortFileName ), GetChars( fileName ) );
 
         if( !IsOK( this, msg ) )
             shortFileName = fileName;

@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2016 CERN
+ * Copyright 2016-2017 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
@@ -23,6 +23,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <algorithm>
+
 #include <commit.h>
 #include <base_struct.h>
 
@@ -43,7 +45,8 @@ COMMIT::~COMMIT()
 
 COMMIT& COMMIT::Stage( EDA_ITEM* aItem, CHANGE_TYPE aChangeType )
 {
-    assert( aChangeType != ( CHT_MODIFY | CHT_DONE ) );    // CHT_MODIFY and CHT_DONE are not compatible
+    // CHT_MODIFY and CHT_DONE are not compatible
+    assert( ( aChangeType & ( CHT_MODIFY | CHT_DONE ) ) != ( CHT_MODIFY | CHT_DONE ) );
 
     int flag = aChangeType & CHT_FLAGS;
 
@@ -51,7 +54,7 @@ COMMIT& COMMIT::Stage( EDA_ITEM* aItem, CHANGE_TYPE aChangeType )
     {
         case CHT_ADD:
             assert( m_changedItems.find( aItem ) == m_changedItems.end() );
-            makeEntry( aItem, CHT_ADD | flag  );
+            makeEntry( aItem, CHT_ADD | flag );
             return *this;
 
         case CHT_REMOVE:
@@ -61,31 +64,24 @@ COMMIT& COMMIT::Stage( EDA_ITEM* aItem, CHANGE_TYPE aChangeType )
         case CHT_MODIFY:
         {
             EDA_ITEM* parent = parentObject( aItem );
+            EDA_ITEM* clone = nullptr;
 
-            if( m_changedItems.find( parent ) != m_changedItems.end() )
-                return *this; // item has been already modified once
+            assert( parent );
 
-            makeEntry( parent, CHT_MODIFY | flag, parent->Clone() );
+            if( parent )
+                clone = parent->Clone();
 
-            return *this;
+            assert( clone );
+
+            if( clone )
+                return createModified( parent, clone, flag );
+
+            break;
         }
 
         default:
             assert( false );
     }
-
-    return *this;
-}
-
-
-COMMIT& COMMIT::Modified( EDA_ITEM* aItem, EDA_ITEM* aCopy )
-{
-    EDA_ITEM* parent = parentObject( aItem );
-
-    if( m_changedItems.find( parent ) != m_changedItems.end() )
-        return *this; // item has been already modified once
-
-    makeEntry( parent, CHT_MODIFY, aCopy );
 
     return *this;
 }
@@ -133,10 +129,52 @@ COMMIT& COMMIT::Stage( const PICKED_ITEMS_LIST& aItems, UNDO_REDO_T aModFlag )
 }
 
 
+int COMMIT::GetStatus( EDA_ITEM* aItem )
+{
+    COMMIT_LINE* entry = findEntry( parentObject( aItem ) );
+
+    return entry ? entry->m_type : 0;
+}
+
+
+template <class Container, class F>
+void eraseIf( Container& c, F&& f )
+{
+    c.erase( std::remove_if( c.begin(),
+                    c.end(),
+                    std::forward<F>( f ) ),
+            c.end() );
+}
+
+
+COMMIT& COMMIT::createModified( EDA_ITEM* aItem, EDA_ITEM* aCopy, int aExtraFlags )
+{
+    EDA_ITEM* parent = parentObject( aItem );
+    auto entryIt = m_changedItems.find( parent );
+
+    if( entryIt != m_changedItems.end() )
+    {
+        delete aCopy;
+        return *this; // item has been already modified once
+    }
+
+    makeEntry( parent, CHT_MODIFY | aExtraFlags, aCopy );
+
+    return *this;
+}
+
+
 void COMMIT::makeEntry( EDA_ITEM* aItem, CHANGE_TYPE aType, EDA_ITEM* aCopy )
 {
     // Expect an item copy if it is going to be modified
     assert( !!aCopy == ( ( aType & CHT_TYPE ) == CHT_MODIFY ) );
+
+    if( m_changedItems.find( aItem ) != m_changedItems.end() )
+    {
+        eraseIf( m_changes, [aItem] ( const COMMIT_LINE& aEnt ) {
+            return aEnt.m_item == aItem;
+        } );
+    }
 
     COMMIT_LINE ent;
 
@@ -146,6 +184,18 @@ void COMMIT::makeEntry( EDA_ITEM* aItem, CHANGE_TYPE aType, EDA_ITEM* aCopy )
 
     m_changedItems.insert( aItem );
     m_changes.push_back( ent );
+}
+
+
+COMMIT::COMMIT_LINE* COMMIT::findEntry( EDA_ITEM* aItem )
+{
+    for( COMMIT_LINE& change : m_changes )
+    {
+        if( change.m_item == aItem )
+            return &change;
+    }
+
+    return nullptr;
 }
 
 

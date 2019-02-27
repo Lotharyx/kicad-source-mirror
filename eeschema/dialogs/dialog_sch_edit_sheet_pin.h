@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2010 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2014 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -34,28 +34,28 @@
 
 #include <dialog_sch_edit_sheet_pin_base.h>
 #include <sch_text.h>   // enum PINSHEETLABEL_SHAPE definition
+#include <widgets/unit_binder.h>
+
+
+class SCH_SHEET_PIN;
 
 
 class DIALOG_SCH_EDIT_SHEET_PIN : public DIALOG_SCH_EDIT_SHEET_PIN_BASE
 {
+    SCH_EDIT_FRAME* m_frame;
+    SCH_SHEET_PIN*  m_sheetPin;
+
+    UNIT_BINDER     m_textWidth;
+    UNIT_BINDER     m_textHeight;
+
 public:
-    DIALOG_SCH_EDIT_SHEET_PIN( wxWindow* parent );
+    DIALOG_SCH_EDIT_SHEET_PIN( SCH_EDIT_FRAME* parent, SCH_SHEET_PIN* aPin );
 
-    void SetLabelName( const wxString& aName ) { m_textName->SetValue( aName ); }
-    wxString GetLabelName() const { return m_textName->GetValue(); }
+    bool TransferDataToWindow() override;
+    bool TransferDataFromWindow() override;
 
-    void SetTextHeight( const wxString& aHeight ) { m_textHeight->SetValue( aHeight ); }
-    wxString GetTextHeight() const { return m_textHeight->GetValue(); }
-
-    void SetTextWidth( const wxString& aWidth ) { m_textWidth->SetValue( aWidth ); }
-    wxString GetTextWidth() const { return m_textWidth->GetValue(); }
-
-    void SetConnectionType( PINSHEETLABEL_SHAPE aType ) { m_choiceConnectionType->SetSelection( aType ); }
-    /// @todo move cast to widget
-    PINSHEETLABEL_SHAPE GetConnectionType() const { return static_cast<PINSHEETLABEL_SHAPE>( m_choiceConnectionType->GetCurrentSelection() ); }
-
-    void SetTextHeightUnits( const wxString& aUnit ) { m_staticHeightUnits->SetLabel( aUnit ); }
-    void SetTextWidthUnits( const wxString& aUnit ) { m_staticWidthUnits->SetLabel( aUnit ); }
+private:
+	void onOKButton( wxCommandEvent& event ) override;
 };
 
 #endif // __dialog_sch_edit_sheet_pin__

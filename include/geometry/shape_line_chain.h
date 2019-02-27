@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2013 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+ * Copyright (C) 2013-2017
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,11 +29,13 @@
 #include <vector>
 #include <sstream>
 
-#include <boost/optional.hpp>
+#include <core/optional.h>
 
 #include <math/vector2d.h>
 #include <geometry/shape.h>
 #include <geometry/seg.h>
+
+#include <clipper.hpp>
 
 /**
  * Class SHAPE_LINE_CHAIN
@@ -124,6 +127,16 @@ public:
             m_points[i] = *aV++;
     }
 
+    SHAPE_LINE_CHAIN( const ClipperLib::Path& aPath ) :
+        SHAPE( SH_LINE_CHAIN ),
+        m_closed( true )
+    {
+        m_points.reserve( aPath.size() );
+
+        for( const auto& point : aPath )
+            m_points.emplace_back( point.X, point.Y );
+    }
+
     ~SHAPE_LINE_CHAIN()
     {}
 
@@ -190,11 +203,10 @@ public:
     /**
      * Function Segment()
      *
-     * Returns a segment referencing to the segment (index) in the line chain.
-     * Modifying ends of the returned segment will modify corresponding points in the line chain.
+     * Returns a copy of the aIndex-th segment in the line chain.
      * @param aIndex: index of the segment in the line chain. Negative values are counted from
      * the end (i.e. -1 means the last segment in the line chain)
-     * @return SEG referenced to given segment in the line chain
+     * @return SEG - aIndex-th segment in the line chain
      */
     SEG Segment( int aIndex )
     {
@@ -210,10 +222,10 @@ public:
     /**
      * Function CSegment()
      *
-     * Returns a read-only segment referencing to the segment (index) in the line chain.
+     * Returns a constant copy of the aIndex-th segment in the line chain.
      * @param aIndex: index of the segment in the line chain. Negative values are counted from
      * the end (i.e. -1 means the last segment in the line chain)
-     * @return SEG referenced to given segment in the line chain
+     * @return const SEG - aIndex-th segment in the line chain
      */
     const SEG CSegment( int aIndex ) const
     {
@@ -260,6 +272,27 @@ public:
         return m_points[aIndex];
     }
 
+    const std::vector<VECTOR2I>& CPoints() const
+    {
+        return m_points;
+    }
+
+    /**
+     * Returns the last point in the line chain.
+     */
+    VECTOR2I& LastPoint()
+    {
+        return m_points[PointCount() - 1];
+    }
+
+    /**
+     * Returns the last point in the line chain.
+     */
+    const VECTOR2I& CLastPoint() const
+    {
+        return m_points[PointCount() - 1];
+    }
+
     /// @copydoc SHAPE::BBox()
     const BOX2I BBox( int aClearance = 0 ) const override
     {
@@ -299,7 +332,7 @@ public:
      * @param aP the point
      * @return minimum distance.
      */
-    int Distance( const VECTOR2I& aP ) const;
+    int Distance( const VECTOR2I& aP, bool aOutlineOnly = false ) const;
 
     /**
      * Function Reverse()
@@ -323,6 +356,9 @@ public:
      * Appends a new point at the end of the line chain.
      * @param aX is X coordinate of the new point
      * @param aY is Y coordinate of the new point
+     * @param aAllowDuplication = true to append the new point
+     * even it is the same as the last entered point
+     * false (default) to skip it if it is the same as the last entered point
      */
     void Append( int aX, int aY, bool aAllowDuplication = false )
     {
@@ -335,6 +371,9 @@ public:
      *
      * Appends a new point at the end of the line chain.
      * @param aP the new point
+     * @param aAllowDuplication = true to append the new point
+     * even it is the same as the last entered point
+     * false (default) to skip it if it is the same as the last entered point
      */
     void Append( const VECTOR2I& aP, bool aAllowDuplication = false )
     {
@@ -409,6 +448,16 @@ public:
      * @param aEndIndex end of the point range to be replaced (inclusive)
      */
     void Remove( int aStartIndex, int aEndIndex );
+
+    /**
+     * Function Remove()
+     * removes the aIndex-th point from the line chain.
+     * @param aIndex is the index of the point to be removed.
+     */
+    void Remove( int aIndex )
+    {
+        Remove( aIndex, aIndex );
+    }
 
     /**
      * Function Split()
@@ -500,8 +549,8 @@ public:
     /**
      * Function PointInside()
      *
-     * Checks if point aP lies inside a convex polygon defined by the line chain. For closed
-     * shapes only.
+     * Checks if point aP lies inside a polygon (any type) defined by the line chain.
+     * For closed shapes only.
      * @param aP point to check
      * @return true if the point is inside the shape (edge is not treated as being inside).
      */
@@ -517,12 +566,31 @@ public:
     bool PointOnEdge( const VECTOR2I& aP ) const;
 
     /**
+     * Function EdgeContainingPoint()
+     *
+     * Checks if point aP lies on an edge or vertex of the line chain.
+     * @param aP point to check
+     * @return index of the first edge containing the point, otherwise negative
+     */
+    int EdgeContainingPoint( const VECTOR2I& aP ) const;
+
+    /**
+     * Function CheckClearance()
+     *
+     * Checks if point aP is closer to (or on) an edge or vertex of the line chain.
+     * @param aP point to check
+     * @param aDist distance in internal units
+     * @return true if the point is equal to or closer than aDist to the line chain.
+     */
+    bool CheckClearance( const VECTOR2I& aP, const int aDist) const;
+
+    /**
      * Function SelfIntersecting()
      *
      * Checks if the line chain is self-intersecting.
      * @return (optional) first found self-intersection point.
      */
-    const boost::optional<INTERSECTION> SelfIntersecting() const;
+    const OPT<INTERSECTION> SelfIntersecting() const;
 
     /**
      * Function Simplify()
@@ -531,6 +599,19 @@ public:
      * @return reference to self.
      */
     SHAPE_LINE_CHAIN& Simplify();
+
+    /**
+     * Function convertFromClipper()
+     * Appends the Clipper path to the current SHAPE_LINE_CHAIN
+     *
+     */
+    void convertFromClipper( const ClipperLib::Path& aPath );
+
+    /**
+     * Creates a new Clipper path from the SHAPE_LINE_CHAIN in a given orientation
+     *
+     */
+    ClipperLib::Path convertToClipper( bool aRequiredOrientation ) const;
 
     /**
      * Function NearestPoint()
@@ -571,7 +652,7 @@ public:
         return false;
     }
 
-    bool CompareGeometry( const SHAPE_LINE_CHAIN & aOther ) const;
+    bool CompareGeometry( const SHAPE_LINE_CHAIN& aOther ) const;
 
     void Move( const VECTOR2I& aVector ) override
     {
@@ -579,10 +660,22 @@ public:
             (*i) += aVector;
     }
 
+    /**
+     * Function Rotate
+     * rotates all vertices by a given angle
+     * @param aCenter is the rotation center
+     * @param aAngle rotation angle in radians
+     */
+    void Rotate( double aAngle, const VECTOR2I& aCenter );
+
     bool IsSolid() const override
     {
         return false;
     }
+
+    const VECTOR2I PointAlong( int aPathLength ) const;
+
+    double Area() const;
 
 private:
     /// array of vertices

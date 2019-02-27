@@ -33,7 +33,7 @@
 #include <class_board.h>
 #include <3d_math.h>
 #include "3d_fastmath.h"
-#include <colors_selection.h>
+#include <geometry/geometry_utils.h>
 
 /**
  *  Trace mask used to enable or disable the trace output of this class.
@@ -63,7 +63,7 @@ CINFO3D_VISU::CINFO3D_VISU() :
 
     m_boardPos = wxPoint();
     m_boardSize = wxSize();
-    m_boardCenter = SFVEC3F();
+    m_boardCenter = SFVEC3F( 0.0f );
 
     m_boardBoudingBox.Reset();
     m_board2dBBox3DU.Reset();
@@ -120,9 +120,9 @@ CINFO3D_VISU::~CINFO3D_VISU()
 }
 
 
-bool CINFO3D_VISU::Is3DLayerEnabled( LAYER_ID aLayer ) const
+bool CINFO3D_VISU::Is3DLayerEnabled( PCB_LAYER_ID aLayer ) const
 {
-    wxASSERT( aLayer < LAYER_ID_COUNT );
+    wxASSERT( aLayer < PCB_LAYER_ID_COUNT );
 
     DISPLAY3D_FLG flg;
 
@@ -244,37 +244,20 @@ int CINFO3D_VISU::GetCopperThicknessBIU() const
     return COPPER_THICKNESS;
 }
 
-// Constant factors used for number of segments approximation calcs
-#define MIN_SEG_PER_CIRCLE 12
-#define MAX_SEG_PER_CIRCLE 48
-
-#define SEG_MIN_FACTOR_BIU ( 0.10f * IU_PER_MM )
-#define SEG_MAX_FACTOR_BIU ( 6.00f * IU_PER_MM )
-
-
 unsigned int CINFO3D_VISU::GetNrSegmentsCircle( float aDiameter3DU ) const
 {
     wxASSERT( aDiameter3DU > 0.0f );
 
-    unsigned int result = mapf( aDiameter3DU,
-                                m_calc_seg_min_factor3DU, m_calc_seg_max_factor3DU,
-                                (float)MIN_SEG_PER_CIRCLE, (float)MAX_SEG_PER_CIRCLE );
-    wxASSERT( result > 1 );
-
-    return result;
+    return GetNrSegmentsCircle( (int)( aDiameter3DU / m_biuTo3Dunits ) );
 }
 
 
-unsigned int CINFO3D_VISU::GetNrSegmentsCircle( int aDiameterBUI ) const
+unsigned int CINFO3D_VISU::GetNrSegmentsCircle( int aDiameterBIU ) const
 {
-    wxASSERT( aDiameterBUI > 0 );
+    wxASSERT( aDiameterBIU > 0 );
 
-    unsigned int result = mapf( (float)aDiameterBUI,
-                                (float)SEG_MIN_FACTOR_BIU, (float)SEG_MAX_FACTOR_BIU,
-                                (float)MIN_SEG_PER_CIRCLE, (float)MAX_SEG_PER_CIRCLE );
-    wxASSERT( result > 1 );
-
-    return result;
+    // Require at least 3 segments for a circle
+    return std::max( GetArcToSegmentCount( aDiameterBIU / 2, ARC_HIGH_DEF, 360.0 ), 3 );
 }
 
 
@@ -282,7 +265,7 @@ double CINFO3D_VISU::GetCircleCorrectionFactor( int aNrSides ) const
 {
     wxASSERT( aNrSides >= 3 );
 
-    return 1.0 / cos( M_PI / ( (double)aNrSides * 2.0 ) );
+    return GetCircletoPolyCorrectionFactor( aNrSides );
 }
 
 
@@ -318,10 +301,6 @@ void CINFO3D_VISU::InitSettings( REPORTER *aStatusTextReporter )
 
     // Calculate the convertion to apply to all positions.
     m_biuTo3Dunits = RANGE_SCALE_3D / std::max( m_boardSize.x, m_boardSize.y );
-
-    // Calculate factors for cicle segment approximation
-    m_calc_seg_min_factor3DU = (float)( SEG_MIN_FACTOR_BIU * m_biuTo3Dunits );
-    m_calc_seg_max_factor3DU = (float)( SEG_MAX_FACTOR_BIU * m_biuTo3Dunits );
 
     m_epoxyThickness3DU = m_board->GetDesignSettings().GetBoardThickness() *
                           m_biuTo3Dunits;
@@ -372,7 +351,7 @@ void CINFO3D_VISU::InitSettings( REPORTER *aStatusTextReporter )
 
     // calculate z position for each non copper layer
     // Solder mask and Solder paste have the same Z position
-    for( int layer_id = MAX_CU_LAYERS; layer_id < LAYER_ID_COUNT; ++layer_id )
+    for( int layer_id = MAX_CU_LAYERS; layer_id < PCB_LAYER_ID_COUNT; ++layer_id )
     {
         float zposTop;
         float zposBottom;
@@ -475,21 +454,14 @@ void CINFO3D_VISU::createBoardPolygon()
 {
     m_board_poly.RemoveAllContours();
 
-    // Create board outlines and board holes
-    SHAPE_POLY_SET allLayerHoles;
-
     wxString errmsg;
 
-    if( !m_board->GetBoardPolygonOutlines( m_board_poly, allLayerHoles, &errmsg ) )
+    if( !m_board->GetBoardPolygonOutlines( m_board_poly, /*allLayerHoles,*/ &errmsg ) )
     {
         errmsg.append( wxT( "\n\n" ) );
-        errmsg.append( _( "Unable to calculate the board outlines." ) );
-        errmsg.append( wxT( "\n" ) );
-        errmsg.append( _( "Therefore use the board boundary box." ) );
+        errmsg.append( _( "Cannot determine the board outline." ) );
         wxLogMessage( errmsg );
     }
-
-    m_board_poly.BooleanSubtract( allLayerHoles, SHAPE_POLY_SET::PM_FAST );
 
     Polygon_Calc_BBox_3DU( m_board_poly, m_board2dBBox3DU, m_biuTo3Dunits );
 }
@@ -530,38 +502,23 @@ void CINFO3D_VISU::CameraSetType( CAMERA_TYPE aCameraType )
 }
 
 
-SFVEC3F CINFO3D_VISU::GetLayerColor( LAYER_ID aLayerId ) const
+SFVEC3F CINFO3D_VISU::GetLayerColor( PCB_LAYER_ID aLayerId ) const
 {
-    wxASSERT( aLayerId < LAYER_ID_COUNT );
+    wxASSERT( aLayerId < PCB_LAYER_ID_COUNT );
 
-    const EDA_COLOR_T color = g_ColorsSettings.GetLayerColor( aLayerId );
-    const StructColors &colordata = g_ColorRefs[ColorGetBase( color )];
+    const COLOR4D color = m_board->Colors().GetLayerColor( aLayerId );
 
-    static const float inv_255 = 1.0f / 255.0f;
-
-    const float red     = colordata.m_Red   * inv_255;
-    const float green   = colordata.m_Green * inv_255;
-    const float blue    = colordata.m_Blue  * inv_255;
-
-    return SFVEC3F( red, green, blue );
+    return SFVEC3F( color.r, color.g, color.b );
 }
 
 
 SFVEC3F CINFO3D_VISU::GetItemColor( int aItemId ) const
 {
-    return GetColor( g_ColorsSettings.GetItemColor( aItemId ) );
+    return GetColor( m_board->Colors().GetItemColor( aItemId ) );
 }
 
 
-SFVEC3F CINFO3D_VISU::GetColor( EDA_COLOR_T aColor ) const
+SFVEC3F CINFO3D_VISU::GetColor( COLOR4D aColor ) const
 {
-    const StructColors &colordata = g_ColorRefs[ColorGetBase( aColor )];
-
-    static const float inv_255 = 1.0f / 255.0f;
-
-    const float red     = colordata.m_Red   * inv_255;
-    const float green   = colordata.m_Green * inv_255;
-    const float blue    = colordata.m_Blue  * inv_255;
-
-    return SFVEC3F( red, green, blue );
+    return SFVEC3F( aColor.r, aColor.g, aColor.b );
 }

@@ -72,6 +72,8 @@ public:
      * which contains the name of the DSO.  Examples: "eeschema", "pcbnew", etc.
      * This controls the name of the wxConfigBase established in m_bm,
      * so it should be lowercase.
+     * @param aId is the type of DSO ( FACE_SCH, FACE_PCB, FACE_CVPCB,
+     * FACE_GERBVIEW, FACE_PL_EDITOR, FACE_PCB_CALCULATOR, FACE_BMP2CMP)
      */
     KIFACE_I( const char* aKifaceName, KIWAY::FACE_T aId ) :
         m_id( aId ),
@@ -98,7 +100,7 @@ public:
 
     const wxString Name()                               { return wxString::FromUTF8( m_bm.m_name ); }
 
-    wxConfigBase* KifaceSettings() const                { return m_bm.m_config; }
+    wxConfigBase* KifaceSettings() const                { return m_bm.m_config.get(); }
 
     /**
      * Function StartFlags
@@ -118,7 +120,7 @@ public:
      */
     const wxString& GetHelpFileName() const             { return m_bm.m_help_file; }
 
-    wxFileHistory& GetFileHistory()                     { return m_bm.m_history; }
+    FILE_HISTORY&   GetFileHistory()                    { return *m_bm.m_history; }
 
     /// Only for DSO specific 'non-library' files.
     /// (The library search path is in the PROJECT class.)

@@ -26,6 +26,7 @@
 #include <view/view_item.h>
 #include <view/view_group.h>
 #include <gal/graphics_abstraction_layer.h>
+#include <gal/color4d.h>
 
 #include <pcb_painter.h>
 
@@ -33,6 +34,7 @@
 #include <geometry/shape_line_chain.h>
 #include <geometry/shape_rect.h>
 #include <geometry/shape_circle.h>
+#include <geometry/convex_hull.h>
 
 #include "pns_node.h"
 #include "pns_line_placer.h"
@@ -50,14 +52,6 @@
 
 #include <router/router_preview_item.h>
 
-#include <class_board.h>
-#include <class_board_connected_item.h>
-#include <class_module.h>
-#include <class_track.h>
-#include <ratsnest_data.h>
-#include <layers_id_colors_and_visibility.h>
-#include <geometry/convex_hull.h>
-
 namespace PNS {
 
 // an ugly singleton for drawing debug items within the router context.
@@ -68,7 +62,6 @@ ROUTER::ROUTER()
 {
     theRouter = this;
 
-
     m_state = IDLE;
     m_mode = PNS_MODE_ROUTE_SINGLE;
 
@@ -78,6 +71,7 @@ ROUTER::ROUTER()
     m_showInterSteps = false;
     m_snapshotIter = 0;
     m_violation = false;
+    m_iface = nullptr;
 }
 
 
@@ -93,11 +87,12 @@ ROUTER::~ROUTER()
     theRouter = nullptr;
 }
 
-void ROUTER::SyncWorld( )
+
+void ROUTER::SyncWorld()
 {
     ClearWorld();
 
-    m_world = std::unique_ptr< NODE >( new NODE );
+    m_world = std::unique_ptr<NODE>( new NODE );
     m_iface->SyncWorld( m_world.get() );
 
 }
@@ -122,20 +117,29 @@ bool ROUTER::RoutingInProgress() const
 
 const ITEM_SET ROUTER::QueryHoverItems( const VECTOR2I& aP )
 {
-    if( m_state == IDLE )
+    if( m_state == IDLE || m_placer == nullptr )
         return m_world->HitTest( aP );
     else
-    {
         return m_placer->CurrentNode()->HitTest( aP );
-    }
 }
 
-bool ROUTER::StartDragging( const VECTOR2I& aP, ITEM* aStartItem )
+
+bool ROUTER::StartDragging( const VECTOR2I& aP, ITEM* aStartItem, int aDragMode )
 {
+
+    if( aDragMode & DM_FREE_ANGLE )
+        m_forceMarkObstaclesMode = true;
+    else
+        m_forceMarkObstaclesMode = false;
+
     if( !aStartItem || aStartItem->OfKind( ITEM::SOLID_T ) )
         return false;
 
+    m_placer.reset( new LINE_PLACER( this ) );
+    m_placer->Start( aP, aStartItem );
+
     m_dragger.reset( new DRAGGER( this ) );
+    m_dragger->SetMode( aDragMode );
     m_dragger->SetWorld( m_world.get() );
     m_dragger->SetDebugDecorator ( m_iface->GetDebugDecorator () );
 
@@ -151,8 +155,35 @@ bool ROUTER::StartDragging( const VECTOR2I& aP, ITEM* aStartItem )
     return true;
 }
 
+bool ROUTER::isStartingPointRoutable( const VECTOR2I& aWhere, int aLayer )
+{
+    if( Settings().CanViolateDRC() && Settings().Mode() == RM_MarkObstacles )
+        return true;
+
+    auto candidates = QueryHoverItems( aWhere );
+
+    for( ITEM* item : candidates.Items() )
+    {
+        if( ! item->IsRoutable() && item->Layers().Overlaps( aLayer ) )
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool ROUTER::StartRouting( const VECTOR2I& aP, ITEM* aStartItem, int aLayer )
 {
+
+    if( ! isStartingPointRoutable( aP, aLayer ) )
+    {
+        SetFailureReason( _("Cannot start routing inside a keepout area or board outline." ) );
+        return false;
+    }
+
+    m_forceMarkObstaclesMode = false;
+
     switch( m_mode )
     {
         case PNS_MODE_ROUTE_SINGLE:
@@ -196,6 +227,7 @@ void ROUTER::DisplayItems( const ITEM_SET& aItems )
         m_iface->DisplayItem( item );
 }
 
+
 void ROUTER::Move( const VECTOR2I& aP, ITEM* endItem )
 {
     m_currentEnd = aP;
@@ -227,8 +259,7 @@ void ROUTER::moveDragging( const VECTOR2I& aP, ITEM* aEndItem )
 }
 
 
-void ROUTER::markViolations( NODE* aNode, ITEM_SET& aCurrent,
-                                 NODE::ITEM_VECTOR& aRemoved )
+void ROUTER::markViolations( NODE* aNode, ITEM_SET& aCurrent, NODE::ITEM_VECTOR& aRemoved )
 {
     for( ITEM* item : aCurrent.Items() )
     {
@@ -267,12 +298,12 @@ void ROUTER::updateView( NODE* aNode, ITEM_SET& aCurrent )
     if( !aNode )
         return;
 
-    if( Settings().Mode() == RM_MarkObstacles )
+    if( Settings().Mode() == RM_MarkObstacles || m_forceMarkObstaclesMode )
         markViolations( aNode, aCurrent, removed );
 
     aNode->GetUpdatedItems( removed, added );
 
-    for ( auto item : added )
+    for( auto item : added )
         m_iface->DisplayItem( item );
 
     for( auto item : removed )
@@ -280,7 +311,7 @@ void ROUTER::updateView( NODE* aNode, ITEM_SET& aCurrent )
 }
 
 
-void ROUTER::UpdateSizes ( const SIZES_SETTINGS& aSizes )
+void ROUTER::UpdateSizes( const SIZES_SETTINGS& aSizes )
 {
     m_sizes = aSizes;
 
@@ -305,10 +336,12 @@ void ROUTER::movePlacing( const VECTOR2I& aP, ITEM* aEndItem )
             continue;
 
         const LINE* l = static_cast<const LINE*>( item );
-        m_iface->DisplayItem( l );
+        int clearance = GetRuleResolver()->Clearance( item->Net() );
+
+        m_iface->DisplayItem( l, -1, clearance );
 
         if( l->EndsWithVia() )
-            m_iface->DisplayItem( &l->Via() );
+            m_iface->DisplayItem( &l->Via(), -1, clearance );
     }
 
     //ITEM_SET tmp( &current );
@@ -323,10 +356,10 @@ void ROUTER::CommitRouting( NODE* aNode )
 
     aNode->GetUpdatedItems( removed, added );
 
-    for ( auto item : removed )
-        m_iface->RemoveItem ( item );
+    for( auto item : removed )
+        m_iface->RemoveItem( item );
 
-    for ( auto item : added )
+    for( auto item : added )
         m_iface->AddItem( item );
 
     m_iface->Commit();
@@ -334,14 +367,14 @@ void ROUTER::CommitRouting( NODE* aNode )
 }
 
 
-bool ROUTER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem )
+bool ROUTER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem, bool aForceFinish )
 {
     bool rv = false;
 
     switch( m_state )
     {
     case ROUTE_TRACK:
-        rv = m_placer->FixRoute( aP, aEndItem );
+        rv = m_placer->FixRoute( aP, aEndItem, aForceFinish );
         break;
 
     case DRAG_SEGMENT:
@@ -482,10 +515,28 @@ void ROUTER::SetMode( ROUTER_MODE aMode )
     m_mode = aMode;
 }
 
+
 void ROUTER::SetInterface( ROUTER_IFACE *aIface )
 {
     m_iface = aIface;
     m_iface->SetRouter( this );
+}
+
+void ROUTER::BreakSegment( ITEM *aItem, const VECTOR2I& aP )
+{
+    NODE *node = m_world->Branch();
+
+    LINE_PLACER placer( this );
+
+    if ( placer.SplitAdjacentSegments( node, aItem, aP ) )
+    {
+        CommitRouting( node );
+    }
+    else
+    {
+        delete node;
+    }
+
 }
 
 }

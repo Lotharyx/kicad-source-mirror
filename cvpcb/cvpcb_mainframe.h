@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2018 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -34,9 +34,10 @@
 #include <pcb_netlist.h>
 #include <footprint_info.h>
 
-#include <wxBasePcbFrame.h>
+#include <pcb_base_frame.h>
 #include <config_params.h>
-#include <autosel.h>
+#include <auto_associate.h>
+#include <memory>
 
 
 /*  Forward declarations of all top-level window classes. */
@@ -57,9 +58,7 @@ class CVPCB_MAINFRAME : public KIWAY_PLAYER
 {
     friend struct CV::IFACE;
 
-    wxArrayString             m_footprintListEntries;
     wxString                  m_currentSearchPattern;
-    bool                      m_keepCvpcbOpen;
     NETLIST                   m_netlist;
     int                       m_filteringOptions;
     wxAuiToolBar*             m_mainToolBar;
@@ -67,19 +66,23 @@ class CVPCB_MAINFRAME : public KIWAY_PLAYER
     LIBRARY_LISTBOX*          m_libListBox;
     COMPONENTS_LISTBOX*       m_compListBox;
     wxTextCtrl*               m_tcFilterString;
+    wxStaticText*             m_statusLine1;
+    wxStaticText*             m_statusLine2;
+    wxButton*                 m_saveAndContinue;
 
 public:
     wxArrayString             m_ModuleLibNames;
     wxArrayString             m_EquFilesNames;
-    wxString                  m_DocModulesFileName;
-    FOOTPRINT_LIST            m_FootprintsList;
+
+    FOOTPRINT_LIST*           m_FootprintsList;
 
 protected:
-    int             m_undefinedComponentCnt;
     bool            m_modified;
     bool            m_skipComponentSelect;      // true to skip OnSelectComponent event
                                                 // (in automatic selection/deletion of associations)
     PARAM_CFG_ARRAY m_projectFileParams;
+
+    bool            m_initialized;
 
     CVPCB_MAINFRAME( KIWAY* aKiway, wxWindow* aParent );
 
@@ -111,11 +114,16 @@ public:
      */
     void             OnEditFootprintLibraryTable( wxCommandEvent& event );
 
+    void             OnCancel( wxCommandEvent& aEvent );
+    void             OnOK( wxCommandEvent& aEvent );
+    void             OnSaveAndContinue( wxCommandEvent& aEvent );
     void             OnQuit( wxCommandEvent& event );
     void             OnCloseWindow( wxCloseEvent& Event );
     void             OnSize( wxSizeEvent& SizeEvent );
+    void             OnKeyDown( wxKeyEvent& aEvent );
     void             ReCreateHToolbar();
     virtual void     ReCreateMenuBar() override;
+    void             ShowChangedLanguage() override;
 
     void             ChangeFocus( bool aMoveRight );
 
@@ -128,8 +136,6 @@ public:
      */
     void             DelAssociations( wxCommandEvent& event );
 
-    void             SaveQuitCvpcb( wxCommandEvent& event );
-
     void             OnConfigurePaths( wxCommandEvent& aEvent );
 
     /**
@@ -138,8 +144,11 @@ public:
      */
     void             OnEditEquFilesList( wxCommandEvent& aEvent );
 
-    void             OnKeepOpenOnSave( wxCommandEvent& event );
     void             DisplayModule( wxCommandEvent& event );
+
+    void             OnComponentRightClick( wxMouseEvent& event );
+
+    void             OnFootprintRightClick( wxMouseEvent& event );
 
     /**
      * Called by the automatic association button
@@ -150,8 +159,6 @@ public:
      * 'cmp_ref' 'footprint_name'
      */
     void             AutomaticFootprintMatching( wxCommandEvent& event );
-
-    void             DisplayDocFile( wxCommandEvent& event );
 
     /**
      * Function OnSelectFilteringFootprint
@@ -167,11 +174,20 @@ public:
 
     /**
      * Function SetNewPkg
-     * links the footprint to the current selected component
+     * set the footprint name for all selected components in component list
      * and selects the next component.
-     * @param aFootprintName = the selected footprint
+     * @param aFootprintName = the new footprint name
      */
     void             SetNewPkg( const wxString& aFootprintName );
+
+    /**
+     * Function SetNewPkg
+     * Set the footprint name for the component of position aIndex in the component list
+     *
+     * @param aFootprintName = the new footprint name
+     * @param aIndex = the index of the component to modify in the component list
+     */
+    void             SetNewPkg( const wxString& aFootprintName, int aIndex );
 
     void             BuildCmpListBox();
     void             BuildFOOTPRINTS_LISTBOX();
@@ -187,17 +203,26 @@ public:
      * Function SaveFootprintAssociation
      * saves the edits that the user has done by sending them back to eeschema
      * via the kiway.
+     * Optionally saves the schematic to disk as well.
      */
-    void SaveFootprintAssociation();
+    bool SaveFootprintAssociation( bool doSaveSchematic );
 
     /**
-     * Function ReadNetList
-     * reads the netlist (.net) file defined by #m_NetlistFileName.
-     * and the corresponding cmp to footprint (.cmp) link file
+     * Function ReadNetListAndFpFiles
+     * loads the netlist file built on the fly by Eeschema and loads
+     * footprint libraries from fp lib tables.
      * @param aNetlist is the netlist from eeschema in kicad s-expr format.
+     * (see CVPCB_MAINFRAME::KiwayMailIn() to know how to get this netlist)
      */
-    bool             ReadNetListAndLinkFiles( const std::string& aNetlist );
+    bool             ReadNetListAndFpFiles( const std::string& aNetlist );
 
+    /**
+     * Function ReadSchematicNetlist
+     * read the netlist (.net) file built on the fly by Eeschema.
+     * @param aNetlist is the netlist buffer filled by eeschema, in kicad s-expr format.
+     * It is the same netlist as the .net file created by Eeschema.
+     * (This method is called by ReadNetListAndFpFiles)
+     */
     int              ReadSchematicNetlist( const std::string& aNetlist );
 
     /**
@@ -259,35 +284,28 @@ public:
     PARAM_CFG_ARRAY& GetProjectFileParameters( void );
 
     /**
-     * Function UpdateTitle
-     * sets the main window title bar text.
-     * <p>
-     * If no current project open( eeschema run outside kicad manager with no schematic loaded),
-     * the title is set to the application name appended with "no project".
-     * Otherwise, the title shows the project name.
-     */
-    void UpdateTitle();
-
-    /**
      * Function SendMessageToEESCHEMA
      * Send a remote command to Eeschema via a socket,
      * Commands are
      * $PART: "reference"   put cursor on component anchor
+     * @param aClearHighligntOnly = true if the message to send is only "clear highlight"
+     * (used when exiting Cvpcb)
      */
-    void SendMessageToEESCHEMA();
+    void SendMessageToEESCHEMA( bool aClearHighligntOnly = false );
 
     COMPONENT* GetSelectedComponent();
 
     /**
-     * @return the FPID of the selected footprint in footprint listview
+     * @return the LIB_ID of the selected footprint in footprint listview
      * or a empty string if no selection
      */
-    const wxString GetSelectedFootprint();
+    wxString GetSelectedFootprint();
+
+    void SetStatusText( const wxString& aText, int aNumber = 0 ) override;
 
 private:
     // UI event handlers.
     // Keep consistent the display state of toggle menus or tools in toolbar
-    void OnUpdateKeepOpenOnSave( wxUpdateUIEvent& event );
     void OnFilterFPbyKeywords( wxUpdateUIEvent& event );
     void OnFilterFPbyPinCount( wxUpdateUIEvent& event );
     void OnFilterFPbyLibrary( wxUpdateUIEvent& event );

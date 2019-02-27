@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2017 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2013 CERN (www.cern.ch)
- * Copyright (C) 2004-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2018 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -30,14 +30,23 @@
 
 
 #include <draw_frame.h>
-#include <dialog_hotkeys_editor.h>
+#include <panel_hotkeys_editor.h>
 #include <gestfich.h>
 #include <kiway.h>
 #include <kiway_player.h>
 #include <wildcards_and_files_ext.h>
-
+#include <bitmaps.h>
+#include <executable_names.h>
+#include <build_version.h>
+#include <dialog_configure_paths.h>
+#include <dialog_edit_library_tables.h>
 #include "pgm_kicad.h"
 #include "tree_project_frame.h"
+
+#ifdef __WXMAC__
+#include <MacTypes.h>
+#include <ApplicationServices/ApplicationServices.h>
+#endif
 
 #include "kicad.h"
 
@@ -47,13 +56,14 @@
 KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent,
         const wxString& title, const wxPoint&  pos, const wxSize&   size ) :
     EDA_BASE_FRAME( parent, KICAD_MAIN_FRAME_T, title, pos, size,
-                    KICAD_DEFAULT_DRAWFRAME_STYLE, KICAD_MANAGER_FRAME_NAME )
+                    KICAD_DEFAULT_DRAWFRAME_STYLE, KICAD_MANAGER_FRAME_NAME ),
+    KIWAY_HOLDER( &::Kiway )
 {
     m_active_project = false;
     m_leftWinWidth = 60;
     m_manager_Hokeys_Descr = NULL;
 
-    // Create the status line (bottom of the frame
+    // Create the status line (bottom of the frame)
     static const int dims[3] = { -1, -1, 100 };
 
     CreateStatusBar( 3 );
@@ -64,7 +74,7 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent,
     icon.CopyFromBitmap( KiBitmap( icon_kicad_xpm ) );
     SetIcon( icon );
 
-    // Give the last sise and pos to main window
+    // Give the last size and pos to main window
     LoadSettings( config() );
     SetSize( m_FramePos.x, m_FramePos.y, m_FrameSize.x, m_FrameSize.y );
 
@@ -77,38 +87,27 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent,
     // Add the wxTextCtrl showing all messages from KiCad:
     m_MessagesBox = new wxTextCtrl( this, wxID_ANY, wxEmptyString,
                                     wxDefaultPosition, wxDefaultSize,
-                                    wxTE_MULTILINE | wxSUNKEN_BORDER | wxTE_READONLY );
+                                    wxTE_MULTILINE | wxTE_READONLY | wxBORDER_NONE );
 
     RecreateBaseHToolbar();
     ReCreateMenuBar();
 
     m_auimgr.SetManagedWindow( this );
 
-    EDA_PANEINFO horiztb;
-    horiztb.HorizontalToolbarPane();
+    m_auimgr.AddPane( m_mainToolBar, EDA_PANE().HToolbar().Name( "MainToolbar" ).Top().Layer(6) );
 
-    EDA_PANEINFO info;
-    info.InfoToolbarPane();
+    m_auimgr.AddPane( m_LeftWin, EDA_PANE().Palette().Name( "ProjectTree" ).Left().Layer(3)
+                      .CaptionVisible( false ).PaneBorder( false )
+                      .MinSize( 150, -1 ).BestSize( m_leftWinWidth, -1 ) );
 
-    m_auimgr.AddPane( m_mainToolBar,
-                      wxAuiPaneInfo( horiztb ).Name( wxT( "m_mainToolBar" ) ).Top() );
+    m_auimgr.AddPane( m_Launcher, EDA_PANE().HToolbar().Name( "Launcher" ).Top().Layer(1)
+                      .MinSize( m_Launcher->GetPanelWidth(), m_Launcher->GetPanelHeight() ) );
 
-    m_auimgr.AddPane( m_LeftWin,
-                      wxAuiPaneInfo(info).Name( wxT( "m_LeftWin" ) ).Left().
-                      BestSize( m_leftWinWidth, -1 ).
-                      Layer( 1 ) );
-
-    m_auimgr.AddPane( m_Launcher, wxTOP );
-    m_auimgr.GetPane( m_Launcher).CaptionVisible( false ).Row(1)
-        .BestSize( -1, m_Launcher->GetPanelHeight() ).PaneBorder( false ).Resizable( false );
-
-    m_auimgr.AddPane( m_MessagesBox,
-                      wxAuiPaneInfo().Name( wxT( "m_MessagesBox" ) ).CentrePane().Layer( 2 ) );
-
-    m_auimgr.GetPane( m_LeftWin ).MinSize( wxSize( 80, -1) );
-    m_auimgr.GetPane( m_LeftWin ).BestSize(wxSize(m_leftWinWidth, -1) );
+    m_auimgr.AddPane( m_MessagesBox, EDA_PANE().Messages().Name( "MsgPanel" ).Center() );
 
     m_auimgr.Update();
+
+    SetTitle( wxString( "KiCad " ) + GetBuildVersion() );
 }
 
 
@@ -209,11 +208,12 @@ void KICAD_MANAGER_FRAME::OnSize( wxSizeEvent& event )
 
 void KICAD_MANAGER_FRAME::OnCloseWindow( wxCloseEvent& Event )
 {
-    if( Kiway.PlayersClose( false ) )
+    if( Kiway().PlayersClose( false ) )
     {
         int px, py;
 
-        UpdateFileHistory( GetProjectFileName(), &PgmTop().GetFileHistory() );
+        if( !GetProjectFileName().empty() )
+            UpdateFileHistory( GetProjectFileName(), &PgmTop().GetFileHistory() );
 
         if( !IsIconized() )   // save main frame position and size
         {
@@ -278,6 +278,11 @@ void KICAD_MANAGER_FRAME::Execute( wxWindow* frame, const wxString& execFile,
                                          GetChars( execFile ), GetChars( params ), pid );
 
         PrintMsg( msg );
+
+#ifdef __WXMAC__
+        msg.Printf( "osascript -e 'activate application \"%s\"' ", execFile );
+        system( msg.c_str() );
+#endif
     }
     else
     {
@@ -288,41 +293,36 @@ void KICAD_MANAGER_FRAME::Execute( wxWindow* frame, const wxString& execFile,
 
 void KICAD_MANAGER_FRAME::RunEeschema( const wxString& aProjectSchematicFileName )
 {
-    KIWAY_PLAYER* frame = Kiway.Player( FRAME_SCH, false );
+    KIWAY_PLAYER* frame;
 
-    // Please: note: DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB::initBuffers() calls
-    // Kiway.Player( FRAME_SCH, true )
-    // therefore, the schematic editor is sometimes running, but the schematic project
-    // is not loaded, if the library editor was called, and the dialog field editor was used.
-    // On linux, it happens the first time the schematic editor is launched, if
-    // library editor was running, and the dialog field editor was open
-    // On Windows, it happens always after the library editor was called,
-    // and the dialog field editor was used
-    if( !frame )
+    try
     {
-        try
-        {
-            frame = Kiway.Player( FRAME_SCH, true );
-        }
-        catch( IO_ERROR err )
-        {
-            wxMessageBox( _( "Eeschema failed to load:\n" ) + err.What(),
-                          _( "KiCad Error" ), wxOK | wxICON_ERROR, this );
-            return;
-        }
+        frame = Kiway().Player( FRAME_SCH, true );
+    }
+    catch( const IO_ERROR& err )
+    {
+        wxMessageBox( _( "Eeschema failed to load:\n" ) + err.What(),
+                      _( "KiCad Error" ), wxOK | wxICON_ERROR, this );
+        return;
     }
 
-    if( !frame->IsShown() ) // the frame exists, (created by the dialog field editor)
-                            // but no project loaded.
+    if( !frame->IsShown() ) // A hidden frame might not have the project loaded.
     {
-        frame->OpenProjectFiles( std::vector<wxString>( 1, aProjectSchematicFileName ) );
+        if( !frame->OpenProjectFiles( std::vector<wxString>( 1, aProjectSchematicFileName ) ) )
+            return;
+
         frame->Show( true );
     }
 
     // On Windows, Raise() does not bring the window on screen, when iconized or not shown
     // On linux, Raise() brings the window on screen, but this code works fine
     if( frame->IsIconized() )
+    {
         frame->Iconize( false );
+        // If an iconized frame was created by Pcbnew, Iconize( false ) is not enough
+        // to show the frame at its normal size: Maximize should be called.
+        frame->Maximize( false );
+    }
 
     frame->Raise();
 }
@@ -338,24 +338,21 @@ void KICAD_MANAGER_FRAME::OnRunEeschema( wxCommandEvent& event )
 
 void KICAD_MANAGER_FRAME::OnRunSchLibEditor( wxCommandEvent& event )
 {
-    KIWAY_PLAYER* frame = Kiway.Player( FRAME_SCH_LIB_EDITOR, false );
+    KIWAY_PLAYER* frame;
 
-    if( !frame )
+    try
     {
-        try
-        {
-            frame = Kiway.Player( FRAME_SCH_LIB_EDITOR, true );
-        }
-        catch( IO_ERROR err )
-        {
-            wxMessageBox( _( "Component library editor failed to load:\n" ) + err.What(),
-                          _( "KiCad Error" ), wxOK | wxICON_ERROR, this );
-            return;
-        }
-
-        // frame->OpenProjectFiles( std::vector<wxString>( 1, aProjectSchematicFileName ) );
-        frame->Show( true );
+        frame = Kiway().Player( FRAME_SCH_LIB_EDITOR, true );
     }
+    catch( const IO_ERROR& err )
+    {
+        wxMessageBox( _( "Component library editor failed to load:\n" ) + err.What(),
+                      _( "KiCad Error" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    if( !frame->IsShown() )
+        frame->Show( true );
 
     // On Windows, Raise() does not bring the window on screen, when iconized
     if( frame->IsIconized() )
@@ -371,21 +368,20 @@ void KICAD_MANAGER_FRAME::RunPcbNew( const wxString& aProjectBoardFileName )
 
     try
     {
-        frame = Kiway.Player( FRAME_PCB, true );
+        frame = Kiway().Player( FRAME_PCB, true );
     }
-    catch( IO_ERROR err )
+    catch( const IO_ERROR& err )
     {
         wxMessageBox( _( "Pcbnew failed to load:\n" ) + err.What(), _( "KiCad Error" ),
                       wxOK | wxICON_ERROR, this );
         return;
     }
 
-    // a pcb frame can be already existing, but not yet used.
-    // this is the case when running the footprint editor, or the footprint viewer first
-    // if the frame is not visible, the board is not yet loaded
-    if( !frame->IsVisible() )
+    if( !frame->IsVisible() )   // A hidden frame might not have the board loaded.
     {
-        frame->OpenProjectFiles( std::vector<wxString>( 1, aProjectBoardFileName ) );
+        if( !frame->OpenProjectFiles( std::vector<wxString>( 1, aProjectBoardFileName ) ) )
+            return;
+
         frame->Show( true );
     }
 
@@ -411,24 +407,21 @@ void KICAD_MANAGER_FRAME::OnRunPcbNew( wxCommandEvent& event )
 
 void KICAD_MANAGER_FRAME::OnRunPcbFpEditor( wxCommandEvent& event )
 {
-    KIWAY_PLAYER* frame = Kiway.Player( FRAME_PCB_MODULE_EDITOR, false );
+    KIWAY_PLAYER* frame;
 
-    if( !frame )
+    try
     {
-        try
-        {
-            frame = Kiway.Player( FRAME_PCB_MODULE_EDITOR, true );
-        }
-        catch( IO_ERROR err )
-        {
-            wxMessageBox( _( "Footprint library editor failed to load:\n" ) + err.What(),
-                          _( "KiCad Error" ), wxOK | wxICON_ERROR, this );
-            return;
-        }
-
-//        frame->OpenProjectFiles( std::vector<wxString>( 1, aProjectBoardFileName ) );
-        frame->Show( true );
+        frame = Kiway().Player( FRAME_PCB_MODULE_EDITOR, true );
     }
+    catch( const IO_ERROR& err )
+    {
+        wxMessageBox( _( "Footprint library editor failed to load:\n" ) + err.What(),
+                      _( "KiCad Error" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    if( !frame->IsShown() )
+        frame->Show( true );
 
     // On Windows, Raise() does not bring the window on screen, when iconized
     if( frame->IsIconized() )
@@ -477,17 +470,13 @@ void KICAD_MANAGER_FRAME::OnOpenTextEditor( wxCommandEvent& event )
 
 void KICAD_MANAGER_FRAME::OnOpenFileInTextEditor( wxCommandEvent& event )
 {
-    wxString mask( wxT( "*" ) );
+    // show all files in file dialog (in Kicad all files are editable texts):
+    wxString wildcard = AllFilesWildcard();
 
-#ifdef __WINDOWS__
-    mask += wxT( ".*" );
-#endif
-
-    mask = _( "Text file (" ) + mask + wxT( ")|" ) + mask;
     wxString default_dir = Prj().GetProjectPath();
 
     wxFileDialog dlg( this, _( "Load File to Edit" ), default_dir,
-                      wxEmptyString, mask, wxFD_OPEN );
+                      wxEmptyString, wildcard, wxFD_OPEN );
 
     if( dlg.ShowModal() == wxID_CANCEL )
         return;
@@ -497,6 +486,26 @@ void KICAD_MANAGER_FRAME::OnOpenFileInTextEditor( wxCommandEvent& event )
 
     if( !dlg.GetPath().IsEmpty() &&  !Pgm().GetEditorName().IsEmpty() )
         Execute( this, Pgm().GetEditorName(), filename );
+}
+
+void KICAD_MANAGER_FRAME::OnBrowseInFileExplorer( wxCommandEvent& event )
+{
+    // open project directory in host OS's file explorer
+    wxString project_dir = Prj().GetProjectPath();
+
+#ifdef __WXMAC__
+    wxString msg;
+
+    // Quote in case there are spaces in the path.
+    msg.Printf( "open \"%s\"", project_dir );
+
+    system( msg.c_str() );
+#else
+    // Quote in case there are spaces in the path.
+    AddDelimiterString( project_dir );
+
+    wxLaunchDefaultApplication( project_dir );
+#endif
 }
 
 
@@ -509,7 +518,15 @@ void KICAD_MANAGER_FRAME::OnRefresh( wxCommandEvent& event )
 void KICAD_MANAGER_FRAME::language_change( wxCommandEvent& event )
 {
     int id = event.GetId();
-    Kiway.SetLanguage( id );
+    Kiway().SetLanguage( id );
+}
+
+
+void KICAD_MANAGER_FRAME::CommonSettingsChanged()
+{
+    int historySize;
+    Pgm().CommonSettings()->Read( FILE_HISTORY_SIZE_KEY, &historySize, DEFAULT_FILE_HISTORY_SIZE );
+    PgmTop().GetFileHistory().SetMaxFiles( (unsigned) std::max( 0, historySize ) );
 }
 
 
@@ -533,10 +550,6 @@ void KICAD_MANAGER_FRAME::SaveSettings( wxConfigBase* aCfg )
 }
 
 
-/**
- * a minor helper function:
- * Prints the Current Project full name on the text panel.
- */
 void KICAD_MANAGER_FRAME::PrintPrjInfo()
 {
     wxString msg = wxString::Format( _( "Project name:\n%s\n" ),
@@ -544,39 +557,35 @@ void KICAD_MANAGER_FRAME::PrintPrjInfo()
     PrintMsg( msg );
 }
 
-void KICAD_MANAGER_FRAME::Process_Config( wxCommandEvent& event )
+
+void KICAD_MANAGER_FRAME::OnShowHotkeys( wxCommandEvent& event )
 {
-    int        id = event.GetId();
-    wxFileName fn;
-
-    switch( id )
-    {
-    // Hotkey IDs
-    case ID_PREFERENCES_HOTKEY_SHOW_EDITOR:
-        InstallHotkeyFrame( this, m_manager_Hokeys_Descr );
-        break;
-
-    case ID_PREFERENCES_HOTKEY_EXPORT_CONFIG:
-        ExportHotkeyConfigToFile( m_manager_Hokeys_Descr, wxT( "kicad" ) );
-        break;
-
-    case ID_PREFERENCES_HOTKEY_IMPORT_CONFIG:
-        ImportHotkeyConfigFromFile( m_manager_Hokeys_Descr, wxT( "kicad" ) );
-        break;
-
-    case ID_PREFERENCES_HOTKEY_SHOW_CURRENT_LIST:
-        // Display current hotkey list for LibEdit.
-        DisplayHotkeyList( this, m_manager_Hokeys_Descr );
-        break;
-
-    default:
-        wxFAIL_MSG( wxT( "KICAD_MANAGER_FRAME::Process_Config error" ) );
-        break;
-    }
+    DisplayHotkeyList( this, m_manager_Hokeys_Descr );
 }
 
 
 void KICAD_MANAGER_FRAME::OnConfigurePaths( wxCommandEvent& aEvent )
 {
-    Pgm().ConfigurePaths( this );
+    DIALOG_CONFIGURE_PATHS dlg( this, nullptr );
+    dlg.ShowModal();
+}
+
+
+void KICAD_MANAGER_FRAME::OnEditSymLibTable( wxCommandEvent& aEvent )
+{
+    KIFACE* kiface = Kiway().KiFACE( KIWAY::FACE_SCH );
+    kiface->CreateWindow( this, DIALOG_SCH_LIBRARY_TABLE, &Kiway() );
+}
+
+
+void KICAD_MANAGER_FRAME::OnEditFpLibTable( wxCommandEvent& aEvent )
+{
+    KIFACE* kiface = Kiway().KiFACE( KIWAY::FACE_PCB );
+    kiface->CreateWindow( this, DIALOG_PCB_LIBRARY_TABLE, &Kiway() );
+}
+
+
+void KICAD_MANAGER_FRAME::OnPreferences( wxCommandEvent& aEvent )
+{
+    ShowPreferences( m_manager_Hokeys_Descr, m_manager_Hokeys_Descr, wxT( "kicad" ) );
 }

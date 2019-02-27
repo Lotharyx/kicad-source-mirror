@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2009-2016 Dick Hollenbeck, dick@softplc.com
- * Copyright (C) 2004-2012 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -31,8 +31,7 @@
 #include <fctsys.h>
 #include <pcbnew.h>
 #include <class_drawpanel.h>
-#include <wxstruct.h>
-#include <drc_stuff.h>
+#include <drc.h>
 #include <class_marker_pcb.h>
 #include <class_board.h>
 
@@ -71,7 +70,7 @@ public:
 
     //-----<Interface DRC_ITEM_LIST>---------------------------------------
 
-    void            DeleteAllItems() override
+    void DeleteAllItems() override
     {
         m_board->DeleteMARKERs();
     }
@@ -189,6 +188,7 @@ public:
 class DRCLISTBOX : public wxHtmlListBox
 {
 private:
+    EDA_UNITS_T    m_units;
     DRC_ITEM_LIST* m_list;     ///< wxHtmlListBox does not own the list, I do
 
 public:
@@ -197,6 +197,7 @@ public:
             long style = 0, const wxString choices[] = NULL, int unused = 0)
         : wxHtmlListBox( parent, id, pos, size, style )
     {
+        m_units = MILLIMETRES;
         m_list = 0;
     }
 
@@ -214,10 +215,11 @@ public:
      * @param aList The DRC_ITEM_LIST* containing the DRC_ITEMs which will be
      *  displayed in the wxHtmlListBox
      */
-    void SetList( DRC_ITEM_LIST* aList )
+    void SetList( EDA_UNITS_T aUnits, DRC_ITEM_LIST* aList )
     {
         delete m_list;
 
+        m_units = aUnits;
         m_list = aList;
         SetItemCount( aList->GetCount() );
         Refresh();
@@ -250,7 +252,13 @@ public:
         {
             const DRC_ITEM*   item = m_list->GetItem( (int) n );
             if( item )
-                return item->ShowHtml();
+            {
+                wxColour color = wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOWTEXT );
+
+                return wxString::Format( wxT( "<font color='%s'>%s</font>" ),
+                                         color.GetAsString( wxC2S_HTML_SYNTAX ),
+                                         item->ShowHtml( m_units ) );
+            }
         }
         return wxString();
     }

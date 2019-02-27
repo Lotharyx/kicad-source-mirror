@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2012 Jean-Pierre Charras, jean-pierre.charras@ujf-grenoble.fr
+ * Copyright (C) 2012 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2012 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
  * Copyright (C) 2012 Wayne Stambaugh <stambaughw@verizon.net>
  * Copyright (C) 2012-2016 KiCad Developers, see AUTHORS.txt for contributors.
@@ -32,13 +32,13 @@
 #include <fctsys.h>
 #include <pgm_base.h>
 #include <class_drawpanel.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <dialog_helpers.h>
 #include <class_board.h>
 #include <pcbnew.h>
 #include <pcbnew_id.h>
-#include <drc_stuff.h>
-#include <class_pcb_layer_box_selector.h>
+#include <drc.h>
+#include <pcb_layer_box_selector.h>
 
 
 void PCB_EDIT_FRAME::OnUpdateLayerPair( wxUpdateUIEvent& aEvent )
@@ -54,28 +54,6 @@ void PCB_EDIT_FRAME::OnUpdateSelectTrackWidth( wxUpdateUIEvent& aEvent )
         if( m_SelTrackWidthBox->GetSelection() != (int) GetDesignSettings().GetTrackWidthIndex() )
             m_SelTrackWidthBox->SetSelection( GetDesignSettings().GetTrackWidthIndex() );
     }
-    else
-    {
-        bool check = ( ( ( ID_POPUP_PCB_SELECT_WIDTH1 +
-                           (int) GetDesignSettings().GetTrackWidthIndex() ) == aEvent.GetId() ) &&
-                               !GetDesignSettings().m_UseConnectedTrackWidth &&
-                               !GetDesignSettings().UseCustomTrackViaSize() );
-
-        aEvent.Check( check );
-    }
-}
-
-
-void PCB_EDIT_FRAME::OnUpdateSelectAutoTrackWidth( wxUpdateUIEvent& aEvent )
-{
-    aEvent.Check( GetDesignSettings().m_UseConnectedTrackWidth &&
-            !GetDesignSettings().UseCustomTrackViaSize() );
-}
-
-
-void PCB_EDIT_FRAME::OnUpdateSelectCustomTrackWidth( wxUpdateUIEvent& aEvent )
-{
-    aEvent.Check( GetDesignSettings().UseCustomTrackViaSize() );
 }
 
 
@@ -85,15 +63,6 @@ void PCB_EDIT_FRAME::OnUpdateSelectViaSize( wxUpdateUIEvent& aEvent )
     {
         if( m_SelViaSizeBox->GetSelection() != (int) GetDesignSettings().GetViaSizeIndex() )
             m_SelViaSizeBox->SetSelection( GetDesignSettings().GetViaSizeIndex() );
-    }
-    else
-    {
-        bool check = ( ( ( ID_POPUP_PCB_SELECT_VIASIZE1 +
-                           (int) GetDesignSettings().GetViaSizeIndex() ) == aEvent.GetId() ) &&
-                       !GetDesignSettings().m_UseConnectedTrackWidth &&
-                       !GetDesignSettings().UseCustomTrackViaSize() );
-
-        aEvent.Check( check );
     }
 }
 
@@ -109,7 +78,10 @@ void PCB_EDIT_FRAME::OnUpdateLayerSelectBox( wxUpdateUIEvent& aEvent )
 // Used only when the DKICAD_SCRIPTING_WXPYTHON option is on
 void PCB_EDIT_FRAME::OnUpdateScriptingConsoleState( wxUpdateUIEvent& aEvent )
 {
-    wxMiniFrame * pythonPanelFrame = (wxMiniFrame *) findPythonConsole();
+    if( aEvent.GetEventObject() != m_mainToolBar )
+        return;
+
+    wxMiniFrame* pythonPanelFrame = (wxMiniFrame *) findPythonConsole();
     bool pythonPanelShown = pythonPanelFrame ? pythonPanelFrame->IsShown() : false;
     aEvent.Check( pythonPanelShown );
 }
@@ -119,49 +91,33 @@ void PCB_EDIT_FRAME::OnUpdateScriptingConsoleState( wxUpdateUIEvent& aEvent )
 
 void PCB_EDIT_FRAME::OnUpdateZoneDisplayStyle( wxUpdateUIEvent& aEvent )
 {
-    int selected = aEvent.GetId() - ID_TB_OPTIONS_SHOW_ZONES;
-    DISPLAY_OPTIONS* displ_opts = (DISPLAY_OPTIONS*)GetDisplayOptions();
 
-    if( aEvent.IsChecked() && ( displ_opts->m_DisplayZonesMode == selected ) )
-        return;
-
-    aEvent.Check( displ_opts->m_DisplayZonesMode == selected );
 }
 
 
 void PCB_EDIT_FRAME::OnUpdateDrcEnable( wxUpdateUIEvent& aEvent )
 {
-    bool state = !g_Drc_On;
+    bool state = !Settings().m_legacyDrcOn;
     aEvent.Check( state );
     m_optionsToolBar->SetToolShortHelp( ID_TB_OPTIONS_DRC_OFF,
-                                        g_Drc_On ?
-                                        _( "Disable design rule checking" ) :
-                                        _( "Enable design rule checking" ) );
+                                        Settings().m_legacyDrcOn ?
+                                        _( "Disable design rule checking while routing/editing tracks using Legacy Toolset.\nUse Route > Interactive Router Settings... for Modern Toolset." ) :
+                                        _( "Enable design rule checking while routing/editing tracks using Legacy Toolset.\nUse Route > Interactive Router Settings... for Modern Toolset." ) );
 }
 
 void PCB_EDIT_FRAME::OnUpdateShowBoardRatsnest( wxUpdateUIEvent& aEvent )
 {
-    aEvent.Check( GetBoard()->IsElementVisible( RATSNEST_VISIBLE ) );
+    aEvent.Check( GetBoard()->IsElementVisible( LAYER_RATSNEST ) );
     m_optionsToolBar->SetToolShortHelp( ID_TB_OPTIONS_SHOW_RATSNEST,
-                                        GetBoard()->IsElementVisible( RATSNEST_VISIBLE ) ?
+                                        GetBoard()->IsElementVisible( LAYER_RATSNEST ) ?
                                         _( "Hide board ratsnest" ) :
                                         _( "Show board ratsnest" ) );
 }
 
 
-void PCB_EDIT_FRAME::OnUpdateAutoDeleteTrack( wxUpdateUIEvent& aEvent )
-{
-    aEvent.Check( g_AutoDeleteOldTrack );
-    m_optionsToolBar->SetToolShortHelp( ID_TB_OPTIONS_AUTO_DEL_TRACK,
-                                        g_AutoDeleteOldTrack ?
-                                        _( "Disable auto delete old track" ) :
-                                        _( "Enable auto delete old track" ) );
-}
-
-
 void PCB_EDIT_FRAME::OnUpdateViaDrawMode( wxUpdateUIEvent& aEvent )
 {
-    DISPLAY_OPTIONS* displ_opts = (DISPLAY_OPTIONS*)GetDisplayOptions();
+    auto displ_opts = (PCB_DISPLAY_OPTIONS*)GetDisplayOptions();
     aEvent.Check( !displ_opts->m_DisplayViaFill );
     m_optionsToolBar->SetToolShortHelp( ID_TB_OPTIONS_SHOW_VIAS_SKETCH,
                                         displ_opts->m_DisplayViaFill ?
@@ -172,7 +128,7 @@ void PCB_EDIT_FRAME::OnUpdateViaDrawMode( wxUpdateUIEvent& aEvent )
 
 void PCB_EDIT_FRAME::OnUpdateTraceDrawMode( wxUpdateUIEvent& aEvent )
 {
-    DISPLAY_OPTIONS* displ_opts = (DISPLAY_OPTIONS*)GetDisplayOptions();
+    auto displ_opts = (PCB_DISPLAY_OPTIONS*)GetDisplayOptions();
     aEvent.Check( !displ_opts->m_DisplayPcbTrackFill );
     m_optionsToolBar->SetToolShortHelp( ID_TB_OPTIONS_SHOW_TRACKS_SKETCH,
                                         displ_opts->m_DisplayPcbTrackFill ?
@@ -183,7 +139,7 @@ void PCB_EDIT_FRAME::OnUpdateTraceDrawMode( wxUpdateUIEvent& aEvent )
 
 void PCB_EDIT_FRAME::OnUpdateHighContrastDisplayMode( wxUpdateUIEvent& aEvent )
 {
-    DISPLAY_OPTIONS* displ_opts = (DISPLAY_OPTIONS*)GetDisplayOptions();
+    auto displ_opts = (PCB_DISPLAY_OPTIONS*)GetDisplayOptions();
     aEvent.Check( displ_opts->m_ContrastModeDisplay );
     m_optionsToolBar->SetToolShortHelp( ID_TB_OPTIONS_SHOW_HIGH_CONTRAST_MODE,
                                         displ_opts->m_ContrastModeDisplay ?
@@ -194,12 +150,12 @@ void PCB_EDIT_FRAME::OnUpdateHighContrastDisplayMode( wxUpdateUIEvent& aEvent )
 
 void PCB_EDIT_FRAME::OnUpdateShowLayerManager( wxUpdateUIEvent& aEvent )
 {
-    aEvent.Check( m_auimgr.GetPane( wxT( "m_LayersManagerToolBar" ) ).IsShown() );
+    aEvent.Check( m_auimgr.GetPane( "LayersManager" ).IsShown() );
 }
 
 void PCB_EDIT_FRAME::OnUpdateShowMicrowaveToolbar( wxUpdateUIEvent& aEvent )
 {
-    aEvent.Check( m_auimgr.GetPane( wxT( "m_microWaveToolBar" ) ).IsShown() );
+    aEvent.Check( m_auimgr.GetPane( "MicrowaveToolbar" ).IsShown() );
 }
 
 
@@ -211,7 +167,7 @@ void PCB_EDIT_FRAME::OnUpdateSave( wxUpdateUIEvent& aEvent )
 
 void PCB_EDIT_FRAME::OnUpdateVerticalToolbar( wxUpdateUIEvent& aEvent )
 {
-    if( aEvent.GetEventObject() == m_drawToolBar )
+    if( aEvent.GetEventObject() == m_drawToolBar || aEvent.GetEventObject() == m_mainToolBar )
         aEvent.Check( GetToolId() == aEvent.GetId() );
 }
 
@@ -222,13 +178,44 @@ void PCB_EDIT_FRAME::OnUpdateMuWaveToolbar( wxUpdateUIEvent& aEvent )
 }
 
 
-void PCB_EDIT_FRAME::OnUpdateAutoPlaceTracksMode( wxUpdateUIEvent& aEvent )
+void PCB_EDIT_FRAME::SyncMenusAndToolbars( wxEvent& aEvent )
 {
-    //Nothing to do.
-}
+    auto displOpts = (PCB_DISPLAY_OPTIONS*)GetDisplayOptions();
+    auto menuBar = GetMenuBar();
 
+    m_optionsToolBar->ToggleTool( ID_TB_OPTIONS_SHOW_ZONES, false );
+    m_optionsToolBar->ToggleTool( ID_TB_OPTIONS_SHOW_ZONES_DISABLE, false );
+    m_optionsToolBar->ToggleTool( ID_TB_OPTIONS_SHOW_ZONES_OUTLINES_ONLY, false );
 
-void PCB_EDIT_FRAME::OnUpdateAutoPlaceModulesMode( wxUpdateUIEvent& aEvent )
-{
-    //Nothing to do.
+    switch( displOpts->m_DisplayZonesMode )
+    {
+        case 0:
+            menuBar->FindItem( ID_TB_OPTIONS_SHOW_ZONES )->Check( true );
+            m_optionsToolBar->ToggleTool( ID_TB_OPTIONS_SHOW_ZONES, true );
+            break;
+
+        case 1:
+            menuBar->FindItem( ID_TB_OPTIONS_SHOW_ZONES_DISABLE )->Check( true );
+            m_optionsToolBar->ToggleTool( ID_TB_OPTIONS_SHOW_ZONES_DISABLE, true );
+            break;
+
+        case 2:
+            menuBar->FindItem( ID_TB_OPTIONS_SHOW_ZONES_OUTLINES_ONLY )->Check( true );
+            m_optionsToolBar->ToggleTool( ID_TB_OPTIONS_SHOW_ZONES_OUTLINES_ONLY, true );
+            break;
+    }
+
+    m_optionsToolBar->ToggleTool( ID_TB_OPTIONS_SELECT_UNIT_MM, false );
+    m_optionsToolBar->ToggleTool( ID_TB_OPTIONS_SELECT_UNIT_INCH, false );
+
+    if( GetUserUnits() == INCHES )
+    {
+        menuBar->FindItem( ID_TB_OPTIONS_SELECT_UNIT_INCH )->Check( true );
+        m_optionsToolBar->ToggleTool( ID_TB_OPTIONS_SELECT_UNIT_INCH, true );
+    }
+    else
+    {
+        menuBar->FindItem( ID_TB_OPTIONS_SELECT_UNIT_MM )->Check( true );
+        m_optionsToolBar->ToggleTool( ID_TB_OPTIONS_SELECT_UNIT_MM, true );
+    }
 }

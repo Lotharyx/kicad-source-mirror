@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2015-2016 Mario Luzeiro <mrluzeiro@ua.pt>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -197,32 +197,36 @@ void CCAMERA::rebuildProjection()
         break;
     }
 
-    m_scr_nX.resize( m_windowSize.x );
-    m_scr_nY.resize( m_windowSize.y );
-
-    // Precalc X values for camera -> ray generation
-    for( unsigned int x = 0; x < (unsigned int)m_windowSize.x; ++x )
+    if ( (m_windowSize.x > 0) &&
+         (m_windowSize.y > 0) )
     {
-        // Converts 0.0 .. 1.0
-        const float xNormalizedDeviceCoordinates = ( ( (float)x + 0.5f ) /
-                                                     (m_windowSize.x - 0.0f) );
+        m_scr_nX.resize( m_windowSize.x + 1 );
+        m_scr_nY.resize( m_windowSize.y + 1 );
 
-        // Converts -1.0 .. 1.0
-        m_scr_nX[x] = 2.0f * xNormalizedDeviceCoordinates - 1.0f;
+        // Precalc X values for camera -> ray generation
+        for( unsigned int x = 0; x < (unsigned int)m_windowSize.x + 1; ++x )
+        {
+            // Converts 0.0 .. 1.0
+            const float xNormalizedDeviceCoordinates = ( ( (float)x + 0.5f ) /
+                                                         (m_windowSize.x - 0.0f) );
+
+            // Converts -1.0 .. 1.0
+            m_scr_nX[x] = 2.0f * xNormalizedDeviceCoordinates - 1.0f;
+        }
+
+        // Precalc Y values for camera -> ray generation
+        for( unsigned int y = 0; y < (unsigned int)m_windowSize.y + 1 ; ++y )
+        {
+            // Converts 0.0 .. 1.0
+            const float yNormalizedDeviceCoordinates = ( ( (float)y + 0.5f ) /
+                                                         (m_windowSize.y - 0.0f) );
+
+            // Converts -1.0 .. 1.0
+            m_scr_nY[y] = 2.0f * yNormalizedDeviceCoordinates - 1.0f;
+        }
+
+        updateFrustum();
     }
-
-    // Precalc Y values for camera -> ray generation
-    for( unsigned int y = 0; y < (unsigned int)m_windowSize.y; ++y )
-    {
-        // Converts 0.0 .. 1.0
-        const float yNormalizedDeviceCoordinates = ( ( (float)y + 0.5f ) /
-                                                     (m_windowSize.y - 0.0f) );
-
-        // Converts -1.0 .. 1.0
-        m_scr_nY[y] = 2.0f * yNormalizedDeviceCoordinates - 1.0f;
-    }
-
-    updateFrustum();
 }
 
 
@@ -264,21 +268,25 @@ void CCAMERA::updateFrustum()
     m_frustum.fbl = m_frustum.fc - m_up * m_frustum.fh - m_right * m_frustum.fw;
     m_frustum.fbr = m_frustum.fc - m_up * m_frustum.fh + m_right * m_frustum.fw;
 
-    // Reserve size for precalc values
-    m_right_nX.resize( m_windowSize.x );
-    m_up_nY.resize( m_windowSize.y );
+    if ( (m_windowSize.x > 0) &&
+         (m_windowSize.y > 0) )
+    {
+        // Reserve size for precalc values
+        m_right_nX.resize( m_windowSize.x + 1 );
+        m_up_nY.resize( m_windowSize.y + 1 );
 
-    // Precalc X values for camera -> ray generation
-    const SFVEC3F right_nw = m_right * m_frustum.nw;
+        // Precalc X values for camera -> ray generation
+        const SFVEC3F right_nw = m_right * m_frustum.nw;
 
-    for( unsigned int x = 0; x < (unsigned int)m_windowSize.x; ++x )
-        m_right_nX[x] = right_nw * m_scr_nX[x];
+        for( unsigned int x = 0; x < ((unsigned int)m_windowSize.x + 1); ++x )
+            m_right_nX[x] = right_nw * m_scr_nX[x];
 
-    // Precalc Y values for camera -> ray generation
-    const SFVEC3F up_nh = m_up * m_frustum.nh;
+        // Precalc Y values for camera -> ray generation
+        const SFVEC3F up_nh = m_up * m_frustum.nh;
 
-    for( unsigned int y = 0; y < (unsigned int)m_windowSize.y; ++y )
-        m_up_nY[y] = up_nh * m_scr_nY[y];
+        for( unsigned int y = 0; y < ((unsigned int)m_windowSize.y + 1); ++y )
+            m_up_nY[y] = up_nh * m_scr_nY[y];
+    }
 }
 
 
@@ -286,22 +294,53 @@ void CCAMERA::MakeRay( const SFVEC2I &aWindowPos,
                        SFVEC3F &aOutOrigin,
                        SFVEC3F &aOutDirection ) const
 {
-    //const SFVEC2I minWindowsPos = glm::min( aWindowPos, m_windowSize );
     wxASSERT( aWindowPos.x < m_windowSize.x );
     wxASSERT( aWindowPos.y < m_windowSize.y );
-    const SFVEC2I &minWindowsPos = aWindowPos;
+
+    const SFVEC3F up_plus_right = m_up_nY[aWindowPos.y] +
+                                  m_right_nX[aWindowPos.x];
 
     switch( m_projectionType )
     {
     default:
     case PROJECTION_PERSPECTIVE:
-        aOutOrigin = m_up_nY[minWindowsPos.y] + m_right_nX[minWindowsPos.x] + m_frustum.nc;
+        aOutOrigin = up_plus_right + m_frustum.nc;
         aOutDirection = glm::normalize( aOutOrigin - m_pos );
         break;
 
     case PROJECTION_ORTHO:
-        aOutOrigin = (m_up_nY[minWindowsPos.y] + m_right_nX[minWindowsPos.x]) * 0.5f +
-                     m_frustum.nc;
+        aOutOrigin = up_plus_right * 0.5f + m_frustum.nc;
+        aOutDirection = -m_dir;
+        break;
+    }
+}
+
+
+void CCAMERA::MakeRay( const SFVEC2F &aWindowPos, SFVEC3F &aOutOrigin, SFVEC3F &aOutDirection ) const
+{
+    wxASSERT( aWindowPos.x < (float)m_windowSize.x );
+    wxASSERT( aWindowPos.y < (float)m_windowSize.y );
+
+    const SFVEC2F floorWinPos_f = glm::floor( aWindowPos );
+    const SFVEC2I floorWinPos_i = (SFVEC2I)floorWinPos_f;
+    const SFVEC2F relativeWinPos = aWindowPos - floorWinPos_f;
+
+    // Note: size of vectors m_up and m_right are m_windowSize + 1
+    const SFVEC3F up_plus_right = m_up_nY[floorWinPos_i.y] * (1.0f - relativeWinPos.y) +
+                                  m_up_nY[floorWinPos_i.y + 1] * relativeWinPos.y +
+                                  m_right_nX[floorWinPos_i.x] * (1.0f - relativeWinPos.x) +
+                                  m_right_nX[floorWinPos_i.x + 1] * relativeWinPos.x;
+
+    switch( m_projectionType )
+    {
+    default:
+    case PROJECTION_PERSPECTIVE:
+        aOutOrigin = up_plus_right + m_frustum.nc;
+        aOutDirection = glm::normalize( aOutOrigin - m_pos );
+        break;
+
+    case PROJECTION_ORTHO:
+        aOutOrigin = up_plus_right * 0.5f + m_frustum.nc;
         aOutDirection = -m_dir;
         break;
     }
@@ -412,91 +451,39 @@ void CCAMERA::ZoomReset()
     rebuildProjection();
 }
 
-
-bool CCAMERA::ZoomIn( float aFactor )
+bool CCAMERA::Zoom( float aFactor )
 {
-    if( m_zoom > MIN_ZOOM )
-    {
-        const float old_zoom = m_zoom;
+    if ( ( m_zoom == MIN_ZOOM && aFactor > 1 ) || ( m_zoom == MAX_ZOOM && aFactor < 1 ) || aFactor == 1 )
+        return false;
 
-        m_zoom /= aFactor;
+    m_zoom /= aFactor;
+    if( m_zoom <= MIN_ZOOM )
+        m_zoom = MIN_ZOOM;
+    if( m_zoom >= MAX_ZOOM )
+        m_zoom = MAX_ZOOM;
 
-        if( m_zoom <= MIN_ZOOM )
-            m_zoom = MIN_ZOOM;
+    m_camera_pos.z = m_camera_pos_init.z * m_zoom;
 
-        m_camera_pos.z = m_zoom * m_camera_pos_init.z;
+    updateViewMatrix();
+    rebuildProjection();
 
-        if( old_zoom != m_zoom )
-        {
-            updateViewMatrix();
-            rebuildProjection();
-
-            return true;
-        }
-    }
-
-    return false;
+    return true;
 }
 
-
-bool CCAMERA::ZoomOut( float aFactor )
+bool CCAMERA::Zoom_T1( float aFactor )
 {
-    if( m_zoom < MAX_ZOOM )
-    {
-        const float old_zoom = m_zoom;
+    if( ( m_zoom == MIN_ZOOM && aFactor > 1 ) || ( m_zoom == MAX_ZOOM && aFactor < 1 ) || aFactor == 1 )
+        return false;
 
-        m_zoom *= aFactor;
+    m_zoom_t1 = m_zoom / aFactor;
+    if (m_zoom_t1 < MIN_ZOOM )
+        m_zoom_t1 = MIN_ZOOM;
+    if (m_zoom_t1 > MAX_ZOOM )
+        m_zoom_t1 = MAX_ZOOM;
 
-        if( m_zoom >= MAX_ZOOM )
-            m_zoom = MAX_ZOOM;
+    m_camera_pos_t1.z = m_camera_pos_init.z * m_zoom_t1;
 
-        m_camera_pos.z = m_zoom * m_camera_pos_init.z;
-
-        if( old_zoom != m_zoom )
-        {
-            updateViewMatrix();
-            rebuildProjection();
-
-            return true;
-        }
-    }
-
-    return false;
-}
-
-bool CCAMERA::ZoomIn_T1( float aFactor )
-{
-    if( m_zoom > MIN_ZOOM )
-    {
-        m_zoom_t1 = m_zoom / aFactor;
-
-        if( m_zoom_t1 <= MIN_ZOOM )
-            m_zoom_t1 = MIN_ZOOM;
-
-        m_camera_pos_t1.z = m_zoom_t1 * m_camera_pos_init.z;
-
-        return true;
-    }
-
-    return false;
-}
-
-
-bool CCAMERA::ZoomOut_T1( float aFactor )
-{
-    if( m_zoom < MAX_ZOOM )
-    {
-        m_zoom_t1 = m_zoom * aFactor;
-
-        if( m_zoom_t1 >= MAX_ZOOM )
-            m_zoom_t1 = MAX_ZOOM;
-
-        m_camera_pos_t1.z = m_zoom_t1 * m_camera_pos_init.z;
-
-        return true;
-    }
-
-    return false;
+    return true;
 }
 
 

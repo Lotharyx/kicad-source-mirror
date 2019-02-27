@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2014 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2014-2016 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2014-2017 KiCad Developers, see CHANGELOG.TXT for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -42,9 +42,7 @@ int     KIWAY::m_kiface_version[KIWAY_FACE_COUNT];
 
 
 KIWAY::KIWAY( PGM_BASE* aProgram, int aCtlBits, wxFrame* aTop ):
-    m_program( aProgram ),
-    m_ctl( aCtlBits ),
-    m_top( 0 )
+    m_program( aProgram ), m_ctl( aCtlBits ), m_top( 0 )
 {
     SetTop( aTop );     // hook player_destroy_handler() into aTop.
 
@@ -151,7 +149,7 @@ KIFACE*  KIWAY::KiFACE( FACE_T aFaceId, bool doLoad )
 {
     // Since this will be called from python, cannot assume that code will
     // not pass a bad aFaceId.
-    if( unsigned( aFaceId ) >= DIM( m_kiface ) )
+    if( unsigned( aFaceId ) >= arrayDim( m_kiface ) )
     {
         // @todo : throw an exception here for python's benefit, at least that
         // way it gets some explanatory text.
@@ -183,7 +181,7 @@ KIFACE*  KIWAY::KiFACE( FACE_T aFaceId, bool doLoad )
             // here and catching it in the KiCad launcher resolves the crash issue.  See bug
             // report https://bugs.launchpad.net/kicad/+bug/1577786.
 
-            msg.Printf( _( "Failed to load kiface library '%s'." ), GetChars( dname ) );
+            msg.Printf( _( "Failed to load kiface library \"%s\"." ), GetChars( dname ) );
             THROW_IO_ERROR( msg );
         }
         else if( ( addr = dso.GetSymbol( wxT( KIFACE_INSTANCE_NAME_AND_VERSION ) ) ) == NULL )
@@ -192,7 +190,7 @@ KIFACE*  KIWAY::KiFACE( FACE_T aFaceId, bool doLoad )
             // No further reporting required here.  Assume the same thing applies here as
             // above with the Load() call.  This has not been tested.
             msg.Printf(
-                _( "Could not read instance name and version symbol form kiface library '%s'." ),
+                _( "Could not read instance name and version symbol form kiface library \"%s\"." ),
                 GetChars( dname ) );
             THROW_IO_ERROR( msg );
         }
@@ -227,7 +225,7 @@ KIFACE*  KIWAY::KiFACE( FACE_T aFaceId, bool doLoad )
 
         msg = wxString::Format( _(
             "Fatal Installation Bug. File:\n"
-            "'%s'\ncould not be loaded\n" ), GetChars( dname ) );
+            "\"%s\"\ncould not be loaded\n" ), GetChars( dname ) );
 
         if( ! wxFileExists( dname ) )
             msg << _( "It is missing.\n" );
@@ -264,7 +262,7 @@ KIWAY::FACE_T KIWAY::KifaceType( FRAME_T aFrameType )
     case FRAME_PCB_MODULE_EDITOR:
     case FRAME_PCB_MODULE_VIEWER:
     case FRAME_PCB_MODULE_VIEWER_MODAL:
-    case FRAME_PCB_FOOTPRINT_WIZARD_MODAL:
+    case FRAME_PCB_FOOTPRINT_WIZARD:
     case FRAME_PCB_DISPLAY3D:
         return FACE_PCB;
 
@@ -299,7 +297,7 @@ KIWAY_PLAYER* KIWAY::GetPlayerFrame( FRAME_T aFrameType )
 }
 
 
-KIWAY_PLAYER* KIWAY::Player( FRAME_T aFrameType, bool doCreate, KIWAY_PLAYER* aParent )
+KIWAY_PLAYER* KIWAY::Player( FRAME_T aFrameType, bool doCreate, wxTopLevelWindow* aParent )
 {
     // Since this will be called from python, cannot assume that code will
     // not pass a bad aFrameType.
@@ -329,10 +327,11 @@ KIWAY_PLAYER* KIWAY::Player( FRAME_T aFrameType, bool doCreate, KIWAY_PLAYER* aP
         if( kiface )
         {
             frame = (KIWAY_PLAYER*) kiface->CreateWindow(
-                    aParent,    // Parent window of frame, NULL in non modal mode
+                    aParent,    // Parent window of frame in modal mode, NULL in non modal mode
                     aFrameType,
                     this,
-                    m_ctl       // questionable need, these same flags where passed to the KIFACE::OnKifaceStart()
+                    m_ctl       // questionable need, these same flags where passed
+                                // to the KIFACE::OnKifaceStart()
                     );
             wxASSERT( frame );
 
@@ -385,7 +384,7 @@ bool KIWAY::PlayersClose( bool doForce )
 
 
 void KIWAY::ExpressMail( FRAME_T aDestination,
-                MAIL_T aCommand, const std::string& aPayload, wxWindow* aSource )
+                MAIL_T aCommand, std::string aPayload, wxWindow* aSource )
 {
     KIWAY_EXPRESS   mail( aDestination, aCommand, aPayload, aSource );
 
@@ -429,6 +428,30 @@ void KIWAY::SetLanguage( int aLanguage )
     }
 }
 
+void KIWAY::CommonSettingsChanged()
+{
+#if 1
+    if( m_ctl & KFCTL_CPP_PROJECT_SUITE )
+    {
+        // A dynamic_cast could be better, but creates link issues
+        // (some basic_frame functions not found) on some platforms,
+        // so a static_cast is used.
+        EDA_BASE_FRAME* top = static_cast<EDA_BASE_FRAME*>( m_top );
+
+        if( top )
+            top->CommonSettingsChanged();
+    }
+#endif
+
+    for( unsigned i=0;  i < KIWAY_PLAYER_COUNT;  ++i )
+    {
+        KIWAY_PLAYER* frame = GetPlayerFrame( ( FRAME_T )i );
+
+        if( frame )
+            frame->CommonSettingsChanged();
+    }
+}
+
 
 bool KIWAY::ProcessEvent( wxEvent& aEvent )
 {
@@ -458,7 +481,7 @@ bool KIWAY::ProcessEvent( wxEvent& aEvent )
 
 void KIWAY::OnKiwayEnd()
 {
-    for( unsigned i=0;  i < DIM( m_kiface );  ++i )
+    for( unsigned i=0;  i < arrayDim( m_kiface );  ++i )
     {
         if( m_kiface[i] )
             m_kiface[i]->OnKifaceEnd();

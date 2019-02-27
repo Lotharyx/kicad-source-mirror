@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2016 CERN
- * Copyright (C) 2016 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2016-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * @author Wayne Stambaugh <stambaughw@gmail.com>
  *
@@ -24,7 +24,7 @@
 
 #include <sch_io_mgr.h>
 
-#define FMT_UNIMPLEMENTED   _( "Plugin '%s' does not implement the '%s' function." )
+#define FMT_UNIMPLEMENTED   _( "Plugin \"%s\" does not implement the \"%s\" function." )
 
 /**
  * Function not_implemented
@@ -33,12 +33,17 @@
  * @param aPlugin is a SCH_PLUGIN instance
  * @param aCaller is the name of the unimplemented API function.
  */
-static void not_implemented( SCH_PLUGIN* aPlugin, const char* aCaller )
+static void not_implemented( const SCH_PLUGIN* aPlugin, const char* aCaller )
 {
     THROW_IO_ERROR( wxString::Format( FMT_UNIMPLEMENTED,
-            aPlugin->GetName().GetData(),
-            wxString::FromUTF8( aCaller ).GetData() )
-            );
+                                      aPlugin->GetName().GetData(),
+                                      wxString::FromUTF8( aCaller ).GetData() ) );
+}
+
+
+void SCH_PLUGIN::SaveLibrary( const wxString& aFileName, const PROPERTIES* aProperties )
+{
+    not_implemented( this, __FUNCTION__ );
 }
 
 
@@ -58,6 +63,15 @@ void SCH_PLUGIN::Save( const wxString& aFileName, SCH_SCREEN* aSchematic, KIWAY*
 }
 
 
+size_t SCH_PLUGIN::GetSymbolLibCount( const wxString&   aLibraryPath,
+                                      const PROPERTIES* aProperties )
+{
+    // not pure virtual so that plugins only have to implement subset of the SCH_PLUGIN interface.
+    not_implemented( this, __FUNCTION__ );
+    return 0;
+}
+
+
 void SCH_PLUGIN::EnumerateSymbolLib( wxArrayString&    aAliasNameList,
                                      const wxString&   aLibraryPath,
                                      const PROPERTIES* aProperties )
@@ -67,7 +81,9 @@ void SCH_PLUGIN::EnumerateSymbolLib( wxArrayString&    aAliasNameList,
 }
 
 
-void SCH_PLUGIN::TransferCache( PART_LIB& aTarget )
+void SCH_PLUGIN::EnumerateSymbolLib( std::vector<LIB_ALIAS*>& aAliasList,
+                                     const wxString&   aLibraryPath,
+                                     const PROPERTIES* aProperties )
 {
     // not pure virtual so that plugins only have to implement subset of the SCH_PLUGIN interface.
     not_implemented( this, __FUNCTION__ );
@@ -107,14 +123,14 @@ void SCH_PLUGIN::DeleteSymbol( const wxString& aLibraryPath, const wxString& aAl
 }
 
 
-void SCH_PLUGIN::SymbolLibCreate( const wxString& aLibraryPath, const PROPERTIES* aProperties )
+void SCH_PLUGIN::CreateSymbolLib( const wxString& aLibraryPath, const PROPERTIES* aProperties )
 {
     // not pure virtual so that plugins only have to implement subset of the SCH_PLUGIN interface.
     not_implemented( this, __FUNCTION__ );
 }
 
 
-bool SCH_PLUGIN::SymbolLibDelete( const wxString& aLibraryPath, const PROPERTIES* aProperties )
+bool SCH_PLUGIN::DeleteSymbolLib( const wxString& aLibraryPath, const PROPERTIES* aProperties )
 {
     // not pure virtual so that plugins only have to implement subset of the SCH_PLUGIN interface.
     not_implemented( this, __FUNCTION__ );
@@ -136,16 +152,16 @@ void SCH_PLUGIN::SymbolLibOptions( PROPERTIES* aListToAppendTo ) const
 #if 1
     (*aListToAppendTo)["debug_level"] = UTF8( _(
         "Enable <b>debug</b> logging for Symbol*() functions in this SCH_PLUGIN."
-        ));
+        ) );
 
     (*aListToAppendTo)["read_filter_regex"] = UTF8( _(
         "Regular expression <b>symbol name</b> filter."
-        ));
+        ) );
 
     (*aListToAppendTo)["enable_transaction_logging"] = UTF8( _(
         "Enable transaction logging. The mere presence of this option turns on the "
         "logging, no need to set a Value."
-        ));
+        ) );
 
     (*aListToAppendTo)["username"] = UTF8( _(
         "User name for <b>login</b> to some special library server."
@@ -153,7 +169,7 @@ void SCH_PLUGIN::SymbolLibOptions( PROPERTIES* aListToAppendTo ) const
 
     (*aListToAppendTo)["password"] = UTF8( _(
         "Password for <b>login</b> to some special library server."
-        ));
+        ) );
 #endif
 
 #if 1
@@ -161,7 +177,23 @@ void SCH_PLUGIN::SymbolLibOptions( PROPERTIES* aListToAppendTo ) const
     // if and when implemented.
     (*aListToAppendTo)["python_symbol_plugin"] = UTF8( _(
         "Enter the python symbol which implements the SCH_PLUGIN::Symbol*() functions."
-        ));
+        ) );
 #endif
 }
 
+
+bool SCH_PLUGIN::CheckHeader( const wxString& aFileName )
+{
+    // not pure virtual so that plugins only have to implement subset of the SCH_PLUGIN interface.
+    not_implemented( this, __FUNCTION__ );
+    return false;
+}
+
+
+const wxString& SCH_PLUGIN::GetError() const
+{
+    // not pure virtual so that plugins only have to implement subset of the SCH_PLUGIN interface.
+    not_implemented( this, __FUNCTION__ );
+    static wxString error;
+    return error;
+}

@@ -28,8 +28,9 @@
 #include <kicad_string.h>
 #include <gerbview.h>
 #include <gerbview_frame.h>
-#include <class_gerber_file_image.h>
-#include <class_gerber_file_image_list.h>
+#include <gerber_file_image.h>
+#include <gerber_file_image_list.h>
+#include <view/view.h>
 
 #include <html_messagebox.h>
 #include <macros.h>
@@ -40,22 +41,24 @@ bool GERBVIEW_FRAME::Read_GERBER_File( const wxString& GERBER_FullFileName )
 {
     wxString msg;
 
-    int layer = getActiveLayer();
+    int layer = GetActiveLayer();
     GERBER_FILE_IMAGE_LIST* images = GetImagesList();
     GERBER_FILE_IMAGE* gerber = GetGbrImage( layer );
 
-    if( gerber == NULL )
+    if( gerber != NULL )
     {
-        gerber = new GERBER_FILE_IMAGE( layer );
-        images->AddGbrImage( gerber, layer );
+        Erase_Current_DrawLayer( false );
     }
+
+    gerber = new GERBER_FILE_IMAGE( layer );
+    images->AddGbrImage( gerber, layer );
 
     /* Read the gerber file */
     bool success = gerber->LoadGerberFile( GERBER_FullFileName );
 
     if( !success )
     {
-        msg.Printf( _( "File <%s> not found" ), GetChars( GERBER_FullFileName ) );
+        msg.Printf( _( "File \"%s\" not found" ), GetChars( GERBER_FullFileName ) );
         DisplayError( this, msg, 10 );
         return false;
     }
@@ -69,9 +72,9 @@ bool GERBVIEW_FRAME::Read_GERBER_File( const wxString& GERBER_FullFileName )
     }
 
     /* if the gerber file is only a RS274D file
-     * (i.e. without any aperture information), wran the user:
+     * (i.e. without any aperture information, but with items), warn the user:
      */
-    if( !gerber->m_Has_DCode )
+    if( !gerber->m_Has_DCode && gerber->GetItemsList() )
     {
         msg = _("Warning: this file has no D-Code definition\n"
                 "It is perhaps an old RS274D file\n"
@@ -79,15 +82,39 @@ bool GERBVIEW_FRAME::Read_GERBER_File( const wxString& GERBER_FullFileName )
         wxMessageBox( msg );
     }
 
+    auto canvas = GetGalCanvas();
+
+    if( canvas )
+    {
+        auto view = canvas->GetView();
+
+        if( gerber->m_ImageNegative )
+        {
+            // TODO: find a way to handle negative images
+            // (maybe convert geometry into positives?)
+        }
+
+        for( auto item = gerber->GetItemsList(); item; item = item->Next() )
+        {
+            view->Add( (KIGFX::VIEW_ITEM*) item );
+        }
+    }
+
     return true;
 }
 
+
+
+// size of a single line of text from a gerber file.
+// warning: some files can have *very long* lines, so the buffer must be large.
+#define GERBER_BUFZ 1000000
+// A large buffer to store one line
+static char lineBuffer[GERBER_BUFZ+1];
 
 bool GERBER_FILE_IMAGE::LoadGerberFile( const wxString& aFullFileName )
 {
     int      G_command = 0;        // command number for G commands like G04
     int      D_commande = 0;       // command number for D commands like D02
-    char     line[GERBER_BUFZ];
     char*    text;
 
     ClearMessageList( );
@@ -101,32 +128,17 @@ bool GERBER_FILE_IMAGE::LoadGerberFile( const wxString& aFullFileName )
 
     m_FileName = aFullFileName;
 
-    wxString path = wxPathOnly( aFullFileName );
-
-    // This change is needed to load included files, if exists:
-    if( path != wxEmptyString )
-        wxSetWorkingDirectory( path );
-
     LOCALE_IO toggleIo;
 
     wxString msg;
 
     while( true )
     {
-        if( fgets( line, sizeof(line), m_Current_File ) == NULL )
-        {
-            if( m_FilesPtr == 0 )
-                break;
+        if( fgets( lineBuffer, GERBER_BUFZ, m_Current_File ) == NULL )
+            break;
 
-            fclose( m_Current_File );
-
-            m_FilesPtr--;
-            m_Current_File = m_FilesList[m_FilesPtr];
-
-            continue;
-        }
-
-        text = StrPurge( line );
+        m_LineNum++;
+        text = StrPurge( lineBuffer );
 
         while( text && *text )
         {
@@ -165,18 +177,17 @@ bool GERBER_FILE_IMAGE::LoadGerberFile( const wxString& aFullFileName )
                 m_CurrentPos = ReadXYCoord( text );
                 if( *text == '*' )      // command like X12550Y19250*
                 {
-                    Execute_DCODE_Command( text,
-                                                   m_Last_Pen_Command );
+                    Execute_DCODE_Command( text, m_Last_Pen_Command );
                 }
                 break;
 
             case 'I':
             case 'J':       /* Auxiliary Move command */
                 m_IJPos = ReadIJCoord( text );
+
                 if( *text == '*' )      // command like X35142Y15945J504*
                 {
-                    Execute_DCODE_Command( text,
-                                                   m_Last_Pen_Command );
+                    Execute_DCODE_Command( text, m_Last_Pen_Command );
                 }
                 break;
 
@@ -184,20 +195,20 @@ bool GERBER_FILE_IMAGE::LoadGerberFile( const wxString& aFullFileName )
                 if( m_CommandState != ENTER_RS274X_CMD )
                 {
                     m_CommandState = ENTER_RS274X_CMD;
-                    ReadRS274XCommand( line, text );
+                    ReadRS274XCommand( lineBuffer, GERBER_BUFZ, text );
                 }
                 else        //Error
                 {
-                    AddMessageToList( wxT("Expected RS274X Command")  );
+                    AddMessageToList( "Expected RS274X Command"  );
                     m_CommandState = CMD_IDLE;
                     text++;
                 }
                 break;
 
             default:
-                text++;
-                msg.Printf( wxT("Unexpected symbol <%c>"), *text );
+                msg.Printf( "Unexpected char 0x%2.2X &lt;%c&lt;", *text, *text );
                 AddMessageToList( msg );
+                text++;
                 break;
             }
         }

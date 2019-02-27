@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013-2016 CERN
+ * Copyright 2013-2017 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
@@ -22,13 +22,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/**
- * @file gpu_manager.cpp
- * @brief Class to handle uploading vertices and indices to GPU in drawing purposes.
- */
-
 #include <gal/opengl/gpu_manager.h>
-#include <gal/opengl/cached_container.h>
+#include <gal/opengl/cached_container_gpu.h>
+#include <gal/opengl/cached_container_ram.h>
 #include <gal/opengl/noncached_container.h>
 #include <gal/opengl/shader.h>
 #include <gal/opengl/utils.h>
@@ -45,18 +41,15 @@ using namespace KIGFX;
 
 GPU_MANAGER* GPU_MANAGER::MakeManager( VERTEX_CONTAINER* aContainer )
 {
-    if( typeid( *aContainer ) == typeid( CACHED_CONTAINER ) )
+    if( aContainer->IsCached() )
         return new GPU_CACHED_MANAGER( aContainer );
-    else if( typeid( *aContainer ) == typeid( NONCACHED_CONTAINER ) )
+    else
         return new GPU_NONCACHED_MANAGER( aContainer );
-
-    wxASSERT_MSG( false, wxT( "Not handled container type" ) );
-    return NULL;
 }
 
 
 GPU_MANAGER::GPU_MANAGER( VERTEX_CONTAINER* aContainer ) :
-    m_isDrawing( false ), m_container( aContainer ), m_shader( NULL ), m_shaderAttrib( 0 )
+    m_isDrawing( false ), m_container( aContainer ), m_shader( NULL ), m_shaderAttrib( 0 ), m_enableDepthTest( true )
 {
 }
 
@@ -145,8 +138,7 @@ void GPU_CACHED_MANAGER::DrawAll()
 void GPU_CACHED_MANAGER::EndDrawing()
 {
 #ifdef __WXDEBUG__
-    prof_counter totalRealTime;
-    prof_start( &totalRealTime );
+    PROF_COUNTER totalRealTime;
 #endif /* __WXDEBUG__ */
 
     wxASSERT( m_isDrawing );
@@ -162,21 +154,26 @@ void GPU_CACHED_MANAGER::EndDrawing()
         return;
     }
 
+    if( m_enableDepthTest )
+        glEnable( GL_DEPTH_TEST );
+    else
+        glDisable( GL_DEPTH_TEST );
+
     // Prepare buffers
     glEnableClientState( GL_VERTEX_ARRAY );
     glEnableClientState( GL_COLOR_ARRAY );
 
     // Bind vertices data buffers
     glBindBuffer( GL_ARRAY_BUFFER, cached->GetBufferHandle() );
-    glVertexPointer( CoordStride, GL_FLOAT, VertexSize, 0 );
-    glColorPointer( ColorStride, GL_UNSIGNED_BYTE, VertexSize, (GLvoid*) ColorOffset );
+    glVertexPointer( COORD_STRIDE, GL_FLOAT, VERTEX_SIZE, (GLvoid*) COORD_OFFSET );
+    glColorPointer( COLOR_STRIDE, GL_UNSIGNED_BYTE, VERTEX_SIZE, (GLvoid*) COLOR_OFFSET );
 
     if( m_shader != NULL )    // Use shader if applicable
     {
         m_shader->Use();
         glEnableVertexAttribArray( m_shaderAttrib );
-        glVertexAttribPointer( m_shaderAttrib, ShaderStride, GL_FLOAT, GL_FALSE,
-                               VertexSize, (GLvoid*) ShaderOffset );
+        glVertexAttribPointer( m_shaderAttrib, SHADER_STRIDE, GL_FLOAT, GL_FALSE,
+                               VERTEX_SIZE, (GLvoid*) SHADER_OFFSET );
     }
 
     glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, m_indicesBuffer );
@@ -191,6 +188,7 @@ void GPU_CACHED_MANAGER::EndDrawing()
 
     glBindBuffer( GL_ARRAY_BUFFER, 0 );
     glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+    cached->ClearDirty();
 
     // Deactivate vertex array
     glDisableClientState( GL_COLOR_ARRAY );
@@ -205,7 +203,7 @@ void GPU_CACHED_MANAGER::EndDrawing()
     m_isDrawing = false;
 
 #ifdef __WXDEBUG__
-    prof_end( &totalRealTime );
+    totalRealTime.Stop();
     wxLogTrace( "GAL_PROFILE",
                 wxT( "GPU_CACHED_MANAGER::EndDrawing(): %.1f ms" ), totalRealTime.msecs() );
 #endif /* __WXDEBUG__ */
@@ -251,8 +249,7 @@ void GPU_NONCACHED_MANAGER::DrawAll()
 void GPU_NONCACHED_MANAGER::EndDrawing()
 {
 #ifdef __WXDEBUG__
-    prof_counter totalRealTime;
-    prof_start( &totalRealTime );
+    PROF_COUNTER totalRealTime;
 #endif /* __WXDEBUG__ */
 
     if( m_container->GetSize() == 0 )
@@ -260,23 +257,28 @@ void GPU_NONCACHED_MANAGER::EndDrawing()
 
     VERTEX*  vertices       = m_container->GetAllVertices();
     GLfloat* coordinates    = (GLfloat*) ( vertices );
-    GLubyte* colors         = (GLubyte*) ( vertices ) + ColorOffset;
+    GLubyte* colors         = (GLubyte*) ( vertices ) + COLOR_OFFSET;
+
+    if( m_enableDepthTest )
+        glEnable( GL_DEPTH_TEST );
+    else
+        glDisable( GL_DEPTH_TEST );
 
     // Prepare buffers
     glEnableClientState( GL_VERTEX_ARRAY );
     glEnableClientState( GL_COLOR_ARRAY );
 
-    glVertexPointer( CoordStride, GL_FLOAT, VertexSize, coordinates );
-    glColorPointer( ColorStride, GL_UNSIGNED_BYTE, VertexSize, colors );
+    glVertexPointer( COORD_STRIDE, GL_FLOAT, VERTEX_SIZE, coordinates );
+    glColorPointer( COLOR_STRIDE, GL_UNSIGNED_BYTE, VERTEX_SIZE, colors );
 
     if( m_shader != NULL )    // Use shader if applicable
     {
-        GLfloat* shaders = (GLfloat*) ( vertices ) + ShaderOffset / sizeof(GLfloat);
+        GLfloat* shaders = (GLfloat*) ( vertices ) + SHADER_OFFSET / sizeof(GLfloat);
 
         m_shader->Use();
         glEnableVertexAttribArray( m_shaderAttrib );
-        glVertexAttribPointer( m_shaderAttrib, ShaderStride, GL_FLOAT, GL_FALSE,
-                               VertexSize, shaders );
+        glVertexAttribPointer( m_shaderAttrib, SHADER_STRIDE, GL_FLOAT, GL_FALSE,
+                               VERTEX_SIZE, shaders );
     }
 
     glDrawArrays( GL_TRIANGLES, 0, m_container->GetSize() );
@@ -295,9 +297,16 @@ void GPU_NONCACHED_MANAGER::EndDrawing()
         m_shader->Deactivate();
     }
 
+    m_container->Clear();
+
 #ifdef __WXDEBUG__
-    prof_end( &totalRealTime );
+    totalRealTime.Stop();
     wxLogTrace( "GAL_PROFILE",
                 wxT( "GPU_NONCACHED_MANAGER::EndDrawing(): %.1f ms" ), totalRealTime.msecs() );
 #endif /* __WXDEBUG__ */
+}
+
+void GPU_MANAGER::EnableDepthTest( bool aEnabled )
+{
+    m_enableDepthTest = aEnabled;
 }

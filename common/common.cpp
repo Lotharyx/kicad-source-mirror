@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2014-2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2008-2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2015 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2014-2018 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2008 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,7 +28,7 @@
  */
 
 #include <fctsys.h>
-#include <wxstruct.h>
+#include <eda_base_frame.h>
 #include <base_struct.h>
 #include <common.h>
 #include <macros.h>
@@ -39,8 +39,11 @@
 #include <wx/config.h>
 #include <wx/utils.h>
 #include <wx/stdpaths.h>
+#include <wx/url.h>
 
 #include <pgm_base.h>
+
+using KIGFX::COLOR4D;
 
 
 /**
@@ -51,20 +54,30 @@
  *       application class.
  */
 
-bool           g_ShowPageLimits = true;
-EDA_UNITS_T    g_UserUnit;
-EDA_COLOR_T    g_GhostColor;
+COLOR4D        g_GhostColor;
 
 
-/* Class LOCALE_IO
- * is a class that can be instantiated within a scope in which you are expecting
- * exceptions to be thrown.  Its constructor sets a "C" locale, to read/print files
- * with fp numbers.
- * Its destructor insures that the default locale is restored if an exception
- * is thrown, or not.
- */
+#if defined( _WIN32 ) && defined( DEBUG )
+// a wxAssertHandler_t function to filter wxWidgets alert messages when reading/writing a file
+// when switching the locale to LC_NUMERIC, "C"
+// It is used in class LOCALE_IO to hide a useless (in kicad) wxWidgets alert message
+void KiAssertFilter( const wxString &file, int line,
+                                  const wxString &func, const wxString &cond,
+                                  const wxString &msg)
+{
+    if( !msg.Contains( "Decimal separator mismatch" ) )
+        wxTheApp->OnAssertFailure( file, line, func, cond, msg );
+}
+#endif
 
-std::atomic<unsigned int> LOCALE_IO::m_c_count(0);
+
+std::atomic<unsigned int> LOCALE_IO::m_c_count( 0 );
+
+
+// Note on Windows, setlocale( LC_NUMERIC, "C" ) works fine to read/write
+// files with floating point numbers, but generates a overzealous wx alert
+// in some cases (reading a bitmap for instance)
+// So we disable alerts during the time a file is read or written
 
 LOCALE_IO::LOCALE_IO()
 {
@@ -72,11 +85,16 @@ LOCALE_IO::LOCALE_IO()
     if( m_c_count++ == 0 )
     {
         // Store the user locale name, to restore this locale later, in dtor
-        m_user_locale = setlocale( LC_ALL, 0 );
+        m_user_locale = setlocale( LC_NUMERIC, nullptr );
+#if defined( _WIN32 ) && defined( DEBUG )
+        // Disable wxWidgets alerts
+        wxSetAssertHandler( KiAssertFilter );
+#endif
         // Switch the locale to C locale, to read/write files with fp numbers
-        setlocale( LC_ALL, "C" );
+        setlocale( LC_NUMERIC, "C" );
     }
 }
+
 
 LOCALE_IO::~LOCALE_IO()
 {
@@ -84,7 +102,11 @@ LOCALE_IO::~LOCALE_IO()
     if( --m_c_count == 0 )
     {
         // revert to the user locale
-        setlocale( LC_ALL, m_user_locale.c_str() );
+        setlocale( LC_NUMERIC, m_user_locale.c_str() );
+#if defined( _WIN32 ) && defined( DEBUG )
+        // Enable wxWidgets alerts
+        wxSetDefaultAssertHandler();
+#endif
     }
 }
 
@@ -133,102 +155,32 @@ bool EnsureTextCtrlWidth( wxTextCtrl* aCtrl, const wxString* aString )
 }
 
 
-wxString ReturnUnitSymbol( EDA_UNITS_T aUnit, const wxString& formatString )
+void SelectReferenceNumber( wxTextEntry* aTextEntry )
 {
-    wxString tmp;
-    wxString label;
+    wxString ref = aTextEntry->GetValue();
 
-    switch( aUnit )
+    if( ref.find_first_of( '?' ) != ref.npos )
     {
-    case INCHES:
-        tmp = _( "\"" );
-        break;
-
-    case MILLIMETRES:
-        tmp = _( "mm" );
-        break;
-
-    case UNSCALED_UNITS:
-        break;
-
-    case DEGREES:
-        wxASSERT( false );
-        break;
+        aTextEntry->SetSelection( ref.find_first_of( '?' ), ref.find_last_of( '?' ) + 1 );
     }
-
-    if( formatString.IsEmpty() )
-        return tmp;
-
-    label.Printf( formatString, GetChars( tmp ) );
-
-    return label;
-}
-
-
-wxString GetUnitsLabel( EDA_UNITS_T aUnit )
-{
-    wxString label;
-
-    switch( aUnit )
+    else
     {
-    case INCHES:
-        label = _( "inches" );
-        break;
+        wxString num = ref;
 
-    case MILLIMETRES:
-        label = _( "millimeters" );
-        break;
+        while( !num.IsEmpty() && ( !isdigit( num.Last() ) || !isdigit( num.GetChar( 0 ) ) ) )
+        {
+            if( !isdigit( num.Last() ) )
+                num.RemoveLast();
 
-    case UNSCALED_UNITS:
-        label = _( "units" );
-        break;
+            if( !isdigit( num.GetChar ( 0 ) ) )
+                num = num.Right( num.Length() - 1);
+        }
 
-    case DEGREES:
-        label = _( "degrees" );
-        break;
+        aTextEntry->SetSelection( ref.Find( num ), ref.Find( num ) + num.Length() );
+
+        if( num.IsEmpty() )
+            aTextEntry->SetSelection( -1, -1 );
     }
-
-    return label;
-}
-
-
-wxString GetAbbreviatedUnitsLabel( EDA_UNITS_T aUnit )
-{
-    wxString label;
-
-    switch( aUnit )
-    {
-    case INCHES:
-        label = _( "in" );
-        break;
-
-    case MILLIMETRES:
-        label = _( "mm" );
-        break;
-
-    case UNSCALED_UNITS:
-        break;
-
-    case DEGREES:
-        label = _( "deg" );
-        break;
-
-    default:
-        label = wxT( "??" );
-        break;
-    }
-
-    return label;
-}
-
-
-void AddUnitSymbol( wxStaticText& Stext, EDA_UNITS_T aUnit )
-{
-    wxString msg = Stext.GetLabel();
-
-    msg += ReturnUnitSymbol( aUnit );
-
-    Stext.SetLabel( msg );
 }
 
 
@@ -261,10 +213,10 @@ int ProcessExecute( const wxString& aCommandLine, int aFlags, wxProcess *callbac
 }
 
 
-time_t GetNewTimeStamp()
+timestamp_t GetNewTimeStamp()
 {
-    static time_t oldTimeStamp;
-    time_t newTimeStamp;
+    static timestamp_t oldTimeStamp;
+    timestamp_t newTimeStamp;
 
     newTimeStamp = time( NULL );
 
@@ -300,55 +252,14 @@ double RoundTo0( double x, double precision )
 }
 
 
-wxConfigBase* GetNewConfig( const wxString& aProgName )
+std::unique_ptr<wxConfigBase> GetNewConfig( const wxString& aProgName )
 {
-    wxConfigBase* cfg = 0;
     wxFileName configname;
     configname.AssignDir( GetKicadConfigPath() );
     configname.SetFullName( aProgName );
 
-    cfg = new wxFileConfig( wxT( "" ), wxT( "" ), configname.GetFullPath() );
-    return cfg;
-}
-
-wxString GetKicadLockFilePath()
-{
-    wxFileName lockpath;
-    lockpath.AssignDir( wxGetHomeDir() ); // Default wx behavior
-
-#if defined( __WXMAC__ )
-    // In OSX use the standard per user cache directory
-    lockpath.AppendDir( wxT( "Library" ) );
-    lockpath.AppendDir( wxT( "Caches" ) );
-    lockpath.AppendDir( wxT( "kicad" ) );
-#elif defined( __UNIX__ )
-    wxString envstr;
-    // Try first the standard XDG_RUNTIME_DIR, falling back to XDG_CACHE_HOME
-    if( wxGetEnv( wxT( "XDG_RUNTIME_DIR" ), &envstr ) && !envstr.IsEmpty() )
-    {
-        lockpath.AssignDir( envstr );
-    }
-    else if( wxGetEnv( wxT( "XDG_CACHE_HOME" ), &envstr ) && !envstr.IsEmpty() )
-    {
-        lockpath.AssignDir( envstr );
-    }
-    else
-    {
-        // If all fails, just use ~/.cache
-        lockpath.AppendDir( wxT( ".cache" ) );
-    }
-
-    lockpath.AppendDir( wxT( "kicad" ) );
-#endif
-
-#if defined( __WXMAC__ ) || defined( __UNIX__ )
-    if( !lockpath.DirExists() )
-    {
-        // Lockfiles should be only readable by the user
-        lockpath.Mkdir( 0700, wxPATH_MKDIR_FULL );
-    }
-#endif
-    return lockpath.GetPath();
+    // explicitly use wxFileConfig to prevent storing any settings in the system registry on Windows
+    return std::make_unique<wxFileConfig>( wxT( "" ), wxT( "" ), configname.GetFullPath() );
 }
 
 
@@ -356,28 +267,35 @@ wxString GetKicadConfigPath()
 {
     wxFileName cfgpath;
 
-    // From the wxWidgets wxStandardPaths::GetUserConfigDir() help:
-    //      Unix: ~ (the home directory)
-    //      Windows: "C:\Documents and Settings\username\Application Data"
-    //      Mac: ~/Library/Preferences
+    // http://docs.wxwidgets.org/3.0/classwx_standard_paths.html#a7c7cf595d94d29147360d031647476b0
     cfgpath.AssignDir( wxStandardPaths::Get().GetUserConfigDir() );
 
-#if !defined( __WINDOWS__ ) && !defined( __WXMAC__ )
+    // GetUserConfigDir() does not default to ~/.config which is the current standard
+    // configuration file location on Linux.  This has been fixed in later versions of wxWidgets.
+#if !defined( __WXMSW__ ) && !defined( __WXMAC__ )
+    wxArrayString dirs = cfgpath.GetDirs();
+
+    if( dirs.Last() != ".config" )
+        cfgpath.AppendDir( ".config" );
+#endif
+
     wxString envstr;
 
-    if( !wxGetEnv( wxT( "XDG_CONFIG_HOME" ), &envstr ) || envstr.IsEmpty() )
-    {
-        // XDG_CONFIG_HOME is not set, so use the fallback
-        cfgpath.AppendDir( wxT( ".config" ) );
-    }
-    else
+    // This shouldn't cause any issues on Windows or MacOS.
+    if( wxGetEnv( wxT( "XDG_CONFIG_HOME" ), &envstr ) && !envstr.IsEmpty() )
     {
         // Override the assignment above with XDG_CONFIG_HOME
         cfgpath.AssignDir( envstr );
     }
-#endif
 
     cfgpath.AppendDir( wxT( "kicad" ) );
+
+    // Use KICAD_CONFIG_HOME to allow the user to force a specific configuration path.
+    if( wxGetEnv( wxT( "KICAD_CONFIG_HOME" ), &envstr ) && !envstr.IsEmpty() )
+    {
+        // Override the assignment above with KICAD_CONFIG_HOME
+        cfgpath.AssignDir( envstr );
+    }
 
     if( !cfgpath.DirExists() )
     {
@@ -385,6 +303,154 @@ wxString GetKicadConfigPath()
     }
 
     return cfgpath.GetPath();
+}
+
+
+enum Bracket
+{
+    Bracket_None,
+    Bracket_Normal  = ')',
+    Bracket_Curly   = '}',
+#ifdef  __WINDOWS__
+    Bracket_Windows = '%',    // yeah, Windows people are a bit strange ;-)
+#endif
+    Bracket_Max
+};
+
+
+//
+// Stolen from wxExpandEnvVars and then heavily optimized
+//
+wxString KIwxExpandEnvVars(const wxString& str)
+{
+    size_t strlen = str.length();
+
+    wxString strResult;
+    strResult.Alloc( strlen );
+
+    for( size_t n = 0; n < strlen; n++ )
+    {
+        wxUniChar str_n = str[n];
+
+        switch( str_n.GetValue() )
+        {
+#ifdef __WINDOWS__
+        case wxT( '%' ):
+#endif // __WINDOWS__
+        case wxT( '$' ):
+        {
+            Bracket bracket;
+#ifdef __WINDOWS__
+            if( str_n == wxT( '%' ) )
+              bracket = Bracket_Windows;
+            else
+#endif // __WINDOWS__
+            if( n == strlen - 1 )
+            {
+                bracket = Bracket_None;
+            }
+            else
+            {
+                switch( str[n + 1].GetValue() )
+                {
+                case wxT( '(' ):
+                    bracket = Bracket_Normal;
+                    str_n = str[++n];                   // skip the bracket
+                    break;
+
+                case wxT( '{' ):
+                    bracket = Bracket_Curly;
+                    str_n = str[++n];                   // skip the bracket
+                    break;
+
+                default:
+                    bracket = Bracket_None;
+                }
+            }
+
+            size_t m = n + 1;
+            wxUniChar str_m = str[m];
+
+            while( m < strlen && ( wxIsalnum( str_m ) || str_m == wxT( '_' ) ) )
+                str_m = str[++m];
+
+            wxString strVarName( str.c_str() + n + 1, m - n - 1 );
+
+#ifdef __WXWINCE__
+            const bool expanded = false;
+#else
+            // NB: use wxGetEnv instead of wxGetenv as otherwise variables
+            //     set through wxSetEnv may not be read correctly!
+            bool expanded = false;
+            wxString tmp;
+
+            if( wxGetEnv( strVarName, &tmp ) )
+            {
+                strResult += tmp;
+                expanded = true;
+            }
+            else
+#endif
+            {
+                // variable doesn't exist => don't change anything
+#ifdef  __WINDOWS__
+                if ( bracket != Bracket_Windows )
+#endif
+                if ( bracket != Bracket_None )
+                    strResult << str[n - 1];
+
+                strResult << str_n << strVarName;
+            }
+
+            // check the closing bracket
+            if( bracket != Bracket_None )
+            {
+                if( m == strlen || str_m != (wxChar)bracket )
+                {
+                    // under MSW it's common to have '%' characters in the registry
+                    // and it's annoying to have warnings about them each time, so
+                    // ignore them silently if they are not used for env vars
+                    //
+                    // under Unix, OTOH, this warning could be useful for the user to
+                    // understand why isn't the variable expanded as intended
+#ifndef __WINDOWS__
+                    wxLogWarning( _( "Environment variables expansion failed: missing '%c' "
+                                     "at position %u in '%s'." ),
+                                  (char)bracket, (unsigned int) (m + 1), str.c_str() );
+#endif // __WINDOWS__
+                }
+                else
+                {
+                    // skip closing bracket unless the variables wasn't expanded
+                    if( !expanded )
+                        strResult << (wxChar)bracket;
+
+                    str_m = str[++m];
+                }
+            }
+
+            n = m - 1;  // skip variable name
+            str_n = str[n];
+        }
+            break;
+
+        case wxT( '\\' ):
+            // backslash can be used to suppress special meaning of % and $
+            if( n != strlen - 1 && (str[n + 1] == wxT( '%' ) || str[n + 1] == wxT( '$' )) )
+            {
+                str_n = str[++n];
+                strResult += str_n;
+
+                break;
+            }
+            //else: fall through
+
+        default:
+            strResult += str_n;
+        }
+    }
+
+    return strResult;
 }
 
 
@@ -397,10 +463,24 @@ const wxString ExpandEnvVarSubstitutions( const wxString& aString )
 
     MUTLOCK lock( getenv_mutex );
 
-    // We reserve the right to do this another way, by providing our own member
-    // function.
-    return wxExpandEnvVars( aString );
+    // We reserve the right to do this another way, by providing our own member function.
+    return KIwxExpandEnvVars( aString );
 }
+
+
+const wxString ResolveUriByEnvVars( const wxString& aUri )
+{
+    // URL-like URI: return as is.
+    wxURL url( aUri );
+
+    if( url.GetError() == wxURL_NOERR )
+        return aUri;
+
+    // Otherwise, the path points to a local file. Resolve environment
+    // variables if any.
+    return ExpandEnvVarSubstitutions( aUri );
+}
+
 
 bool EnsureFileDirectoryExists( wxFileName*     aTargetFullFileName,
                                 const wxString& aBaseFilename,
@@ -415,7 +495,7 @@ bool EnsureFileDirectoryExists( wxFileName*     aTargetFullFileName,
     {
         if( aReporter )
         {
-            msg.Printf( _( "Cannot make path '%s' absolute with respect to '%s'." ),
+            msg.Printf( _( "Cannot make path \"%s\" absolute with respect to \"%s\"." ),
                         GetChars( aTargetFullFileName->GetPath() ),
                         GetChars( baseFilePath ) );
             aReporter->Report( msg, REPORTER::RPT_ERROR );
@@ -433,7 +513,7 @@ bool EnsureFileDirectoryExists( wxFileName*     aTargetFullFileName,
         {
             if( aReporter )
             {
-                msg.Printf( _( "Output directory '%s' created.\n" ), GetChars( outputPath ) );
+                msg.Printf( _( "Output directory \"%s\" created.\n" ), GetChars( outputPath ) );
                 aReporter->Report( msg, REPORTER::RPT_INFO );
                 return true;
             }
@@ -442,7 +522,7 @@ bool EnsureFileDirectoryExists( wxFileName*     aTargetFullFileName,
         {
             if( aReporter )
             {
-                msg.Printf( _( "Cannot create output directory '%s'.\n" ),
+                msg.Printf( _( "Cannot create output directory \"%s\".\n" ),
                             GetChars( outputPath ) );
                 aReporter->Report( msg, REPORTER::RPT_ERROR );
             }
@@ -465,7 +545,7 @@ wxString GetOSXKicadUserDataDir()
     // Since appname is different if started via launcher or standalone binary
     // map all to "kicad" here
     udir.RemoveLastDir();
-    udir.AppendDir( wxT( "kicad" ) );
+    udir.AppendDir( "kicad" );
 
     return udir.GetPath();
 }
@@ -501,3 +581,320 @@ wxString GetOSXKicadDataDir()
     return ddir.GetPath();
 }
 #endif
+
+
+// add this only if it is not in wxWidgets (for instance before 3.1.0)
+#ifdef USE_KICAD_WXSTRING_HASH
+size_t std::hash<wxString>::operator()( const wxString& s ) const
+{
+    return std::hash<std::wstring>{}( s.ToStdWstring() );
+}
+#endif
+
+
+#ifdef USE_KICAD_WXPOINT_LESS
+bool std::less<wxPoint>::operator()( const wxPoint& aA, const wxPoint& aB ) const
+{
+    if( aA.x == aB.x )
+        return aA.y < aB.y;
+
+    return aA.x < aB.x;
+}
+#endif
+
+
+/**
+ * Performance enhancements to file and directory operations.
+ *
+ * Note: while it's annoying to have to make copies of wxWidgets stuff and then
+ * add platform-specific performance optimizations, the following routines offer
+ * SIGNIFICANT performance benefits.
+ */
+
+/**
+ * WX_FILENAME
+ *
+ * A wrapper around a wxFileName which avoids expensive calls to wxFileName::SplitPath()
+ * and string concatenations by caching the path and filename locally and only resolving
+ * the wxFileName when it has to.
+ */
+WX_FILENAME::WX_FILENAME( const wxString& aPath, const wxString& aFilename ) :
+        m_fn( aPath, aFilename ),
+        m_path( aPath ),
+        m_fullName( aFilename )
+{ }
+
+
+void WX_FILENAME::SetFullName( const wxString& aFileNameAndExtension )
+{
+    m_fullName = aFileNameAndExtension;
+}
+
+
+wxString WX_FILENAME::GetName() const
+{
+    size_t dot = m_fullName.find_last_of( wxT( '.' ) );
+    return m_fullName.substr( 0, dot );
+}
+
+
+wxString WX_FILENAME::GetFullName() const
+{
+    return m_fullName;
+}
+
+
+wxString WX_FILENAME::GetPath() const
+{
+    return m_path;
+}
+
+
+wxString WX_FILENAME::GetFullPath() const
+{
+    return m_path + wxT( '/' ) + m_fullName;
+}
+
+
+// Write locally-cached values to the wxFileName.  MUST be called before using m_fn.
+void WX_FILENAME::resolve()
+{
+    size_t dot = m_fullName.find_last_of( wxT( '.' ) );
+    m_fn.SetName( m_fullName.substr( 0, dot ) );
+    m_fn.SetExt( m_fullName.substr( dot + 1 ) );
+}
+
+
+long long WX_FILENAME::GetTimestamp()
+{
+    resolve();
+
+    if( m_fn.FileExists() )
+        return m_fn.GetModificationTime().GetValue().GetValue();
+
+    return 0;
+}
+
+
+/**
+ * A copy of wxMatchWild(), which wxWidgets attributes to Douglas A. Lewis
+ * <dalewis@cs.Buffalo.EDU> and ircII's reg.c.
+ *
+ * This version is modified to skip any encoding conversions (for performance).
+ */
+bool matchWild( const char* pat, const char* text, bool dot_special )
+{
+    if( !*text )
+    {
+        /* Match if both are empty. */
+        return !*pat;
+    }
+
+    const char *m = pat,
+    *n = text,
+    *ma = NULL,
+    *na = NULL;
+    int just = 0,
+    acount = 0,
+    count = 0;
+
+    if( dot_special && (*n == '.') )
+    {
+        /* Never match so that hidden Unix files
+         * are never found. */
+        return false;
+    }
+
+    for(;;)
+    {
+        if( *m == '*' )
+        {
+            ma = ++m;
+            na = n;
+            just = 1;
+            acount = count;
+        }
+        else if( *m == '?' )
+        {
+            m++;
+
+            if( !*n++ )
+                return false;
+        }
+        else
+        {
+            if( *m == '\\' )
+            {
+                m++;
+
+                /* Quoting "nothing" is a bad thing */
+                if( !*m )
+                    return false;
+            }
+            if( !*m )
+            {
+                /*
+                * If we are out of both strings or we just
+                * saw a wildcard, then we can say we have a
+                * match
+                */
+                if( !*n )
+                    return true;
+
+                if( just )
+                    return true;
+
+                just = 0;
+                goto not_matched;
+            }
+
+            /*
+            * We could check for *n == NULL at this point, but
+            * since it's more common to have a character there,
+            * check to see if they match first (m and n) and
+            * then if they don't match, THEN we can check for
+            * the NULL of n
+            */
+            just = 0;
+
+            if( *m == *n )
+            {
+                m++;
+                count++;
+                n++;
+            }
+            else
+            {
+                not_matched:
+
+                /*
+                 * If there are no more characters in the
+                 * string, but we still need to find another
+                 * character (*m != NULL), then it will be
+                 * impossible to match it
+                 */
+                if( !*n )
+                    return false;
+
+                if( ma )
+                {
+                    m = ma;
+                    n = ++na;
+                    count = acount;
+                }
+                else
+                    return false;
+            }
+        }
+    }
+}
+
+
+/**
+ * A copy of ConvertFileTimeToWx() because wxWidgets left it as a static function
+ * private to src/common/filename.cpp.
+ */
+#if wxUSE_DATETIME && defined(__WIN32__) && !defined(__WXMICROWIN__)
+
+// Convert between wxDateTime and FILETIME which is a 64-bit value representing
+// the number of 100-nanosecond intervals since January 1, 1601 UTC.
+//
+// This is the offset between FILETIME epoch and the Unix/wxDateTime Epoch.
+static wxInt64 EPOCH_OFFSET_IN_MSEC = wxLL(11644473600000);
+
+
+static void ConvertFileTimeToWx( wxDateTime *dt, const FILETIME &ft )
+{
+    wxLongLong t( ft.dwHighDateTime, ft.dwLowDateTime );
+    t /= 10000; // Convert hundreds of nanoseconds to milliseconds.
+    t -= EPOCH_OFFSET_IN_MSEC;
+
+    *dt = wxDateTime( t );
+}
+
+#endif // wxUSE_DATETIME && __WIN32__
+
+
+/**
+ * TimestampDir
+ *
+ * This routine offers SIGNIFICANT performance benefits over using wxWidgets to gather
+ * timestamps from matching files in a directory.
+ * @param aDirPath the directory to search
+ * @param aFilespec a (wildcarded) file spec to match against
+ * @return a hash of the last-mod-dates of all matching files in the directory
+ */
+long long TimestampDir( const wxString& aDirPath, const wxString& aFilespec )
+{
+    long long timestamp = 0;
+
+#if defined( __WIN32__ )
+    // Win32 version.
+    // Save time by not searching for each path twice: once in wxDir.GetNext() and once in
+    // wxFileName.GetModificationTime().  Also cuts out wxWidgets' string-matching and case
+    // conversion by staying on the MSW side of things.
+    std::wstring filespec( aDirPath.t_str() );
+    filespec += '\\';
+    filespec += aFilespec.t_str();
+
+    WIN32_FIND_DATA findData;
+    wxDateTime      lastModDate;
+
+    HANDLE fileHandle = ::FindFirstFile( filespec.data(), &findData );
+
+    if( fileHandle != INVALID_HANDLE_VALUE )
+    {
+        do
+        {
+            ConvertFileTimeToWx( &lastModDate, findData.ftLastWriteTime );
+            timestamp += lastModDate.GetValue().GetValue();
+        }
+        while ( FindNextFile( fileHandle, &findData ) != 0 );
+    }
+
+    FindClose( fileHandle );
+#else
+    // POSIX version.
+    // Save time by not converting between encodings -- do everything on the file-system side.
+    std::string filespec( aFilespec.fn_str() );
+    std::string dir_path( aDirPath.fn_str() );
+
+    DIR* dir = opendir( dir_path.c_str() );
+
+    if( dir )
+    {
+        for( dirent* dir_entry = readdir( dir ); dir_entry; dir_entry = readdir( dir ) )
+        {
+            if( !matchWild( filespec.c_str(), dir_entry->d_name, true ) )
+                continue;
+
+            std::string entry_path = dir_path + '/' + dir_entry->d_name;
+            struct stat entry_stat;
+
+            wxCRT_Lstat( entry_path.c_str(), &entry_stat );
+
+            // Timestamp the source file, not the symlink
+            if( S_ISLNK( entry_stat.st_mode ) )    // wxFILE_EXISTS_SYMLINK
+            {
+                char buffer[ PATH_MAX + 1 ];
+                ssize_t pathLen = readlink( entry_path.c_str(), buffer, PATH_MAX );
+
+                if( pathLen > 0 )
+                {
+                    buffer[ pathLen ] = '\0';
+                    entry_path = dir_path + buffer;
+
+                    wxCRT_Lstat( entry_path.c_str(), &entry_stat );
+                }
+            }
+
+            if( S_ISREG( entry_stat.st_mode ) )    // wxFileExists()
+                timestamp += entry_stat.st_mtime * 1000;
+        }
+
+        closedir( dir );
+    }
+#endif
+
+    return timestamp;
+}

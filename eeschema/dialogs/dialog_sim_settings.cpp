@@ -66,7 +66,6 @@ DIALOG_SIM_SETTINGS::DIALOG_SIM_SETTINGS( wxWindow* aParent )
     m_sdbSizerOK->SetDefault();
     updateNetlistOpts();
 
-    FixOSXCancelButtonIssue();
 }
 
 
@@ -95,9 +94,9 @@ bool DIALOG_SIM_SETTINGS::TransferDataFromWindow()
     else if( page == m_pgDC )
     {
         // At least one source has to be enabled
-        if( !m_dcEnable1->IsChecked() && !m_dcEnable1->IsChecked() )
+        if( !m_dcEnable1->IsChecked() && !m_dcEnable2->IsChecked() )
         {
-            DisplayError( this, wxT( "You need to enable at least one source" ) );
+            DisplayError( this, _( "You need to enable at least one source" ) );
             return false;
         }
 
@@ -107,7 +106,7 @@ bool DIALOG_SIM_SETTINGS::TransferDataFromWindow()
         {
             if( empty( m_dcSource1 ) )
             {
-                DisplayError( this, wxT( "You need to select DC source (sweep 1)" ) );
+                DisplayError( this, _( "You need to select DC source (sweep 1)" ) );
                 return false;
             }
 
@@ -118,8 +117,10 @@ bool DIALOG_SIM_SETTINGS::TransferDataFromWindow()
 
             try
             {
-                simCmd += wxString::Format( "v%s %s %s %s",
-                    m_dcSource1->GetValue(),
+                wxString dcSource = m_exporter->GetSpiceDevice( m_dcSource1->GetValue() );
+
+                simCmd += wxString::Format( "%s %s %s %s",
+                    dcSource,
                     SPICE_VALUE( m_dcStart1->GetValue() ).ToSpiceString(),
                     SPICE_VALUE( m_dcStop1->GetValue() ).ToSpiceString(),
                     SPICE_VALUE( m_dcIncr1->GetValue() ).ToSpiceString() );
@@ -129,13 +130,22 @@ bool DIALOG_SIM_SETTINGS::TransferDataFromWindow()
                 DisplayError( this, e.what() );
                 return false;
             }
+            catch( const KI_PARAM_ERROR& e )
+            {
+                DisplayError( this, e.What() );
+                return false;
+            }
+            catch( ... )
+            {
+                return false;
+            }
         }
 
         if( m_dcEnable2->IsChecked() )
         {
             if( empty( m_dcSource2 ) )
             {
-                DisplayError( this, wxT( "You need to select DC source (sweep 2)" ) );
+                DisplayError( this, _( "You need to select DC source (sweep 2)" ) );
                 return false;
             }
 
@@ -146,8 +156,10 @@ bool DIALOG_SIM_SETTINGS::TransferDataFromWindow()
 
             try
             {
-                simCmd += wxString::Format( "v%s %s %s %s",
-                    m_dcSource2->GetValue(),
+                wxString dcSource = m_exporter->GetSpiceDevice( m_dcSource2->GetValue() );
+
+                simCmd += wxString::Format( "%s %s %s %s",
+                    dcSource,
                     SPICE_VALUE( m_dcStart2->GetValue() ).ToSpiceString(),
                     SPICE_VALUE( m_dcStop2->GetValue() ).ToSpiceString(),
                     SPICE_VALUE( m_dcIncr2->GetValue() ).ToSpiceString() );
@@ -157,6 +169,16 @@ bool DIALOG_SIM_SETTINGS::TransferDataFromWindow()
                 DisplayError( this, e.what() );
                 return false;
             }
+            catch( const KI_PARAM_ERROR& e )
+            {
+                DisplayError( this, e.What() );
+                return false;
+            }
+            catch( ... )
+            {
+                return false;
+            }
+
         }
 
         m_simCommand = simCmd;
@@ -175,9 +197,15 @@ bool DIALOG_SIM_SETTINGS::TransferDataFromWindow()
         wxString ref = empty( m_noiseRef )
             ? wxString() : wxString::Format( ", %d", netMap.at( m_noiseRef->GetValue() ) );
 
-        m_simCommand = wxString::Format( ".noise v(%d%s) v%s %s %s %s %s",
+        wxString noiseSource = m_exporter->GetSpiceDevice( m_noiseSrc->GetValue() );
+
+        // Add voltage source prefix if needed
+        if( noiseSource[0] != 'v' && noiseSource[0] != 'V' )
+            noiseSource += 'v' + noiseSource;
+
+        m_simCommand = wxString::Format( ".noise v(%d%s) %s %s %s %s %s",
             netMap.at( m_noiseMeas->GetValue() ), ref,
-            m_noiseSrc->GetValue(), scaleToString( m_noiseScale->GetSelection() ),
+            noiseSource, scaleToString( m_noiseScale->GetSelection() ),
             m_noisePointsNumber->GetValue(),
             SPICE_VALUE( m_noiseFreqStart->GetValue() ).ToSpiceString(),
             SPICE_VALUE( m_noiseFreqStop->GetValue() ).ToSpiceString() );
@@ -240,7 +268,7 @@ bool DIALOG_SIM_SETTINGS::TransferDataToWindow()
 
 int DIALOG_SIM_SETTINGS::ShowModal()
 {
-    // Fill out comboboxes that allow to select nets
+    // Fill out comboboxes that allows one to select nets
     // Map comoboxes to their current values
     std::map<wxComboBox*, wxString> cmbNet = {
         { m_noiseMeas, m_noiseMeas->GetStringSelection() },
@@ -266,7 +294,7 @@ int DIALOG_SIM_SETTINGS::ShowModal()
     }
 
 
-    // Fill out comboboxes that allow to select power sources
+    // Fill out comboboxes that allows one to select power sources
     std::map<wxComboBox*, wxString> cmbSrc = {
         { m_dcSource1, m_dcSource1->GetStringSelection() },
         { m_dcSource2, m_dcSource2->GetStringSelection() },

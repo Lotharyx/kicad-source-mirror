@@ -24,6 +24,7 @@
 
 #include <layers_id_colors_and_visibility.h>
 #include <map>
+#include <unordered_set>
 
 #include <boost/range/adaptor/map.hpp>
 
@@ -47,7 +48,7 @@ class INDEX
 public:
     typedef std::list<ITEM*>            NET_ITEMS_LIST;
     typedef SHAPE_INDEX<ITEM*>          ITEM_SHAPE_INDEX;
-    typedef boost::unordered_set<ITEM*> ITEM_SET;
+    typedef std::unordered_set<ITEM*>   ITEM_SET;
 
     INDEX();
     ~INDEX();
@@ -183,6 +184,8 @@ INDEX::ITEM_SHAPE_INDEX* INDEX::getSubindex( const ITEM* aItem )
                 idx_n = SI_PadsTop;
             else if( l.Start() == F_Cu )
                 idx_n = SI_PadsBottom;
+            else
+                idx_n = SI_Traces + 2 * l.Start() + SI_SegStraight;
         }
         break;
 
@@ -195,7 +198,12 @@ INDEX::ITEM_SHAPE_INDEX* INDEX::getSubindex( const ITEM* aItem )
         break;
     }
 
-    assert( idx_n >= 0 && idx_n < MaxSubIndices );
+    if( idx_n < 0 || idx_n >= MaxSubIndices )
+    {
+        wxASSERT( idx_n >= 0 );
+        wxASSERT( idx_n < MaxSubIndices );
+        return nullptr;
+    }
 
     if( !m_subIndices[idx_n] )
         m_subIndices[idx_n] = new ITEM_SHAPE_INDEX;
@@ -206,6 +214,9 @@ INDEX::ITEM_SHAPE_INDEX* INDEX::getSubindex( const ITEM* aItem )
 void INDEX::Add( ITEM* aItem )
 {
     ITEM_SHAPE_INDEX* idx = getSubindex( aItem );
+
+    if( !idx )
+        return;
 
     idx->Add( aItem );
     m_allItems.insert( aItem );
@@ -221,9 +232,11 @@ void INDEX::Remove( ITEM* aItem )
 {
     ITEM_SHAPE_INDEX* idx = getSubindex( aItem );
 
+    if( !idx )
+        return;
+
     idx->Remove( aItem );
     m_allItems.erase( aItem );
-
     int net = aItem->Net();
 
     if( net >= 0 && m_netMap.find( net ) != m_netMap.end() )

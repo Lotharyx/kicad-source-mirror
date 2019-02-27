@@ -32,7 +32,6 @@
 
 #include <eda_text.h>
 #include <class_board_item.h>
-#include <PolyLine.h>
 
 
 class LINE_READER;
@@ -55,20 +54,22 @@ public:
         return aItem && PCB_TEXT_T == aItem->Type();
     }
 
-    virtual const wxPoint& GetPosition() const override
+    virtual const wxPoint GetPosition() const override
     {
-        return m_Pos;
+        return EDA_TEXT::GetTextPos();
     }
 
     virtual void SetPosition( const wxPoint& aPos ) override
     {
-        m_Pos = aPos;
+        EDA_TEXT::SetTextPos( aPos );
     }
 
     void Move( const wxPoint& aMoveVector ) override
     {
-        m_Pos += aMoveVector;
+        EDA_TEXT::Offset( aMoveVector );
     }
+
+    void SetTextAngle( double aAngle );
 
     void Rotate( const wxPoint& aRotCentre, double aAngle ) override;
 
@@ -77,9 +78,9 @@ public:
     void Draw( EDA_DRAW_PANEL* panel, wxDC* DC,
                GR_DRAWMODE aDrawMode, const wxPoint& offset = ZeroOffset ) override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfo(  EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
-    bool HitTest( const wxPoint& aPosition ) const override
+    virtual bool HitTest( const wxPoint& aPosition ) const override
     {
         return TextHitTest( aPosition );
     }
@@ -87,7 +88,7 @@ public:
     /** @copydoc BOARD_ITEM::HitTest(const EDA_RECT& aRect,
      *                               bool aContained = true, int aAccuracy ) const
      */
-    bool HitTest( const EDA_RECT& aRect, bool aContained = true, int aAccuracy = 0 ) const override
+    virtual bool HitTest( const EDA_RECT& aRect, bool aContained = true, int aAccuracy = 0 ) const override
     {
         return TextHitTest( aRect, aContained, aAccuracy );
     }
@@ -96,21 +97,6 @@ public:
     {
         return wxT( "PTEXT" );
     }
-
-    /**
-     * Function TransformBoundingBoxWithClearanceToPolygon
-     * Convert the text bounding box to a rectangular polygon
-     * depending on the text orientation, the bounding box
-     * is not always horizontal or vertical
-     * Used in filling zones calculations
-     * Circles and arcs are approximated by segments
-     * @param aCornerBuffer = a buffer to store the polygon
-     * @param aClearanceValue = the clearance around the text bounding box
-     * to the real clearance value (usually near from 1.0)
-     */
-    void TransformBoundingBoxWithClearanceToPolygon(
-                    SHAPE_POLY_SET& aCornerBuffer,
-                    int                    aClearanceValue ) const;
 
     /**
      * Function TransformShapeWithClearanceToPolygonSet
@@ -129,14 +115,16 @@ public:
                                                int                aCircleToSegmentsCount,
                                                double             aCorrectionFactor ) const;
 
-    wxString GetSelectMenuText() const override;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    BITMAP_DEF GetMenuImage() const override { return  add_text_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
     // Virtual function
     const EDA_RECT GetBoundingBox() const override;
 
     EDA_ITEM* Clone() const override;
+
+    virtual void SwapData( BOARD_ITEM* aImage ) override;
 
 #if defined(DEBUG)
     virtual void Show( int nestLevel, std::ostream& os ) const override { ShowDummy( os ); }

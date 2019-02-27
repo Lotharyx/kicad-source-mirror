@@ -1,8 +1,8 @@
 #
 #  This program source code file is part of KICAD, a free EDA CAD application.
 #
-#  Copyright (C) 2015 Wayne Stambaugh <stambaughw@verizon.net>
-#  Copyright (C) 2015-2016 KiCad Developers, see AUTHORS.txt for contributors.
+#  Copyright (C) 2015 Wayne Stambaugh <stambaughw@gmail.com>
+#  Copyright (C) 2015-2018 KiCad Developers, see AUTHORS.txt for contributors.
 #
 #  This program is free software; you can redistribute it and/or
 #  modify it under the terms of the GNU General Public License
@@ -23,22 +23,23 @@
 #
 
 # Automagically create version header file if the version string was
-# not defined during the build configuration.  If
-# CreateGitVersionHeader cannot determine the current repo version, a
-# version.h file is still created with KICAD_BUILD_VERSION set to
-# "no-vcs-found".
-if( NOT KICAD_BUILD_VERSION )
-    set( _wvh_version_str "no-vcs-found" )
+# not defined during the build configuration.  If CreateGitVersionHeader
+# cannot determine the current repo version, a version.h file is still
+# created with KICAD_VERSION set in KiCadVersion.cmake.
+include( ${CMAKE_MODULE_PATH}/KiCadVersion.cmake )
 
-    # Attempt to detect if we have a git repo and set the version string.
-    if( EXISTS "${SRC_PATH}/.git" )
-        message( STATUS "Using Git to determine build version string." )
-        include( ${CMAKE_MODULE_PATH}/CreateGitVersionHeader.cmake )
-        create_git_version_header( ${SRC_PATH} )
-        set( _wvh_version_str ${KICAD_BUILD_VERSION} )
-    endif()
-else()
-    set( _wvh_version_str ${KICAD_BUILD_VERSION} )
+# Always use git if it's available to determine the version string.
+message( STATUS "Using Git to determine build version string." )
+include( ${CMAKE_MODULE_PATH}/CreateGitVersionHeader.cmake )
+create_git_version_header( ${SRC_PATH} )
+
+# $KICAD_VERSION will always be set to something.  Even if it is the default
+# value set in KiCadVersion.cmake
+set( KICAD_VERSION_FULL "${KICAD_VERSION}" )
+
+# Optional user version information defined at configuration.
+if( KICAD_VERSION_EXTRA )
+    set( KICAD_VERSION_FULL "${KICAD_VERSION_FULL}-${KICAD_VERSION_EXTRA}" )
 endif()
 
 set( _wvh_new_version_text
@@ -50,9 +51,7 @@ set( _wvh_new_version_text
 #ifndef __KICAD_VERSION_H__
 #define __KICAD_VERSION_H__
 
-#define KICAD_BUILD_VERSION \"${_wvh_version_str}\"
-#define KICAD_BRANCH_NAME \"${KICAD_BRANCH_NAME}\"
-#define KICAD_FULL_VERSION \"${KICAD_FULL_VERSION}\"
+#define KICAD_VERSION_FULL \"${KICAD_VERSION_FULL}\"
 
 #endif  /* __KICAD_VERSION_H__ */
 " )
@@ -69,7 +68,7 @@ if( EXISTS ${OUTPUT_FILE} )
 endif()
 
 if( _wvh_write_version_file )
-    message( STATUS "Writing ${OUTPUT_FILE} file with version: ${_wvh_version_str}" )
+    message( STATUS "Writing ${OUTPUT_FILE} file with version: ${KICAD_VERSION_FULL}" )
 
     file( WRITE ${OUTPUT_FILE} ${_wvh_new_version_text} )
 

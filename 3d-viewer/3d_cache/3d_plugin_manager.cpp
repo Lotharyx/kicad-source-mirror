@@ -36,6 +36,7 @@
 
 #include "common.h"
 #include "pgm_base.h"
+#include "3d_plugin_dir.h"
 #include "3d_plugin_manager.h"
 #include "plugins/3d/3d_plugin.h"
 #include "3d_cache/sg/scenegraph.h"
@@ -130,24 +131,42 @@ void S3D_PLUGIN_MANAGER::loadPlugins( void )
 
     std::string testpath = std::string( fn.GetPathWithSep().ToUTF8() );
     checkPluginPath( testpath, searchpaths );
+
+    // add subdirectories too
+    wxDir debugPluginDir;
+    wxString subdir;
+
+    debugPluginDir.Open( testpath );
+
+    if( debugPluginDir.IsOpened() &&
+        debugPluginDir.GetFirst( &subdir, wxEmptyString, wxDIR_DIRS ) )
+    {
+        checkPluginPath( testpath + subdir, searchpaths );
+
+        while( debugPluginDir.GetNext( &subdir ) )
+            checkPluginPath( testpath + subdir, searchpaths );
+    }
     #endif
 
-    #ifndef _WIN32  // suppress 'kicad' subdir since it is redundant on MSWin
-    fn.Assign( wxStandardPaths::Get().GetPluginsDir(), "" );
-    fn.RemoveLastDir();
-    fn.AppendDir( wxT( "kicad" ) );
+    #ifndef _WIN32
+        // PLUGINDIR = CMAKE_INSTALL_FULL_LIBDIR path is the absolute path
+        // corresponding to the install path used for constructing KICAD_USER_PLUGIN
+
+        wxString tfname = wxString::FromUTF8Unchecked( PLUGINDIR );
+        fn.Assign( tfname, "");
+        fn.AppendDir( "kicad" );
     #else
+        // on windows the plugins directory is within the executable's directory
         fn.Assign( wxStandardPaths::Get().GetExecutablePath() );
     #endif
 
     fn.AppendDir( wxT( "plugins" ) );
     fn.AppendDir( wxT( "3d" ) );
+
+    // checks plugin directory relative to executable path
     checkPluginPath( std::string( fn.GetPathWithSep().ToUTF8() ), searchpaths );
 
-    checkPluginPath( wxT( "/usr/lib/kicad/plugins/3d" ), searchpaths );
-    checkPluginPath( wxT( "/usr/local/lib/kicad/plugins/3d" ), searchpaths );
-    checkPluginPath( wxT( "/opt/kicad/lib/kicad/plugins/3d" ), searchpaths );
-
+    // check for per-user third party plugins
     // note: GetUserDataDir() gives '.pcbnew' rather than '.kicad' since it uses the exe name;
     fn.Assign( wxStandardPaths::Get().GetUserDataDir(), "" );
     fn.RemoveLastDir();
@@ -466,6 +485,12 @@ SCENEGRAPH* S3D_PLUGIN_MANAGER::Load3DModel( const wxString& aFileName, std::str
 {
     wxFileName raw( aFileName );
     wxString ext = raw.GetExt();
+
+    #ifdef _WIN32
+    // note: plugins only have a lowercase filter within Windows; including an uppercase
+    // filter will result in duplicate file entries and should be avoided.
+    ext.LowerCase();
+    #endif
 
     std::pair < std::multimap< const wxString, KICAD_PLUGIN_LDR_3D* >::iterator,
         std::multimap< const wxString, KICAD_PLUGIN_LDR_3D* >::iterator > items;

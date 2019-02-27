@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2014 CERN
- * Copyright (C) 1992-2014 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
@@ -38,13 +38,14 @@ enum FRAME_T
     FRAME_SCH_VIEWER,
     FRAME_SCH_VIEWER_MODAL,
     FRAME_SIMULATOR,
-    
+
     FRAME_PCB,
     FRAME_PCB_MODULE_EDITOR,
     FRAME_PCB_MODULE_VIEWER,
     FRAME_PCB_MODULE_VIEWER_MODAL,
-    FRAME_PCB_FOOTPRINT_WIZARD_MODAL,
+    FRAME_PCB_FOOTPRINT_WIZARD,
     FRAME_PCB_DISPLAY3D,
+    FRAME_PCB_FOOTPRINT_PREVIEW,
 
     FRAME_CVPCB,
     FRAME_CVPCB_DISPLAY,
@@ -62,7 +63,11 @@ enum FRAME_T
     // C++ project manager is not a KIWAY_PLAYER
     KICAD_MAIN_FRAME_T = KIWAY_PLAYER_COUNT,
 
-    FRAME_T_COUNT
+    FRAME_T_COUNT,
+
+    // Library table dialogs are transient and are never returned
+    DIALOG_SCH_LIBRARY_TABLE = FRAME_T_COUNT,
+    DIALOG_PCB_LIBRARY_TABLE
 };
 
     //TEXT_EDITOR_FRAME_T,

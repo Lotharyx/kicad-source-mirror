@@ -25,21 +25,31 @@
 #ifndef PICKER_TOOL_H
 #define PICKER_TOOL_H
 
-#include <tool/tool_interactive.h>
 #include <boost/optional/optional.hpp>
-#include <boost/function.hpp>
 
+#include "pcb_tool.h"
 /**
  * @brief Generic tool for picking a point.
  */
-class PICKER_TOOL : public TOOL_INTERACTIVE
+class PICKER_TOOL : public PCB_TOOL
 {
 public:
     PICKER_TOOL();
     ~PICKER_TOOL() {}
 
-    ///> Mouse event click handler type.
-    typedef boost::function<bool(const VECTOR2D&)> CLICK_HANDLER;
+    ///> Event handler types.
+    typedef std::function<bool(const VECTOR2D&)> CLICK_HANDLER;
+    typedef std::function<void(void)> CANCEL_HANDLER;
+    typedef std::function<void(const int&)> FINALIZE_HANDLER;
+
+    enum pickerEndState
+    {
+        WAIT_CANCEL,
+        CLICK_CANCEL,
+        END_ACTIVATE,
+        EVT_CANCEL,
+        EXCEPTION_CANCEL
+    };
 
     ///> @copydoc TOOL_INTERACTIVE::Reset()
     void Reset( RESET_REASON aReason ) override {}
@@ -72,20 +82,10 @@ public:
     inline void SetCursorCapture( bool aEnable ) { m_cursorCapture = aEnable; }
 
     /**
-     * Function GetPoint()
-     * Returns picked point.
+     * Function SetLayerSet()
+     * Sets the tool's snap layer set
      */
-    inline boost::optional<VECTOR2D> GetPoint() const
-    {
-        assert( !m_picking );
-        return m_picked;
-    }
-
-    /**
-     * Function IsPicking()
-     * Returns information whether the tool is still active.
-     */
-    bool IsPicking() const { return m_picking; }
+    inline void SetLayerSet( LSET aLayerSet ) { m_layerMask = aLayerSet; }
 
     /**
      * Function SetClickHandler()
@@ -98,8 +98,28 @@ public:
         m_clickHandler = aHandler;
     }
 
-    ///> @copydoc TOOL_INTERACTIVE::SetTransitions();
-    void SetTransitions() override;
+    /**
+     * Function SetCancelHandler()
+     * Sets a handler for cancel events (ESC or context-menu Cancel).
+     */
+    inline void SetCancelHandler( CANCEL_HANDLER aHandler )
+    {
+        assert( !m_cancelHandler );
+        m_cancelHandler = aHandler;
+    }
+
+    /**
+     * Function SetFinalizeHandler()
+     * Sets a handler for the finalize event. Takes the state of the exit from the Main loop
+     */
+    inline void SetFinalizeHandler( FINALIZE_HANDLER aHandler )
+    {
+        assert( !m_finalizeHandler );
+        m_finalizeHandler = aHandler;
+    }
+
+    ///> @copydoc TOOL_INTERACTIVE::setTransitions();
+    void setTransitions() override;
 
 private:
     // Tool settings.
@@ -108,14 +128,18 @@ private:
     bool m_cursorCapture;
     bool m_autoPanning;
 
-    ///> Optional mouse click event handler.
-    boost::optional<CLICK_HANDLER> m_clickHandler;
+    ///> The layer set to use for optional snapping
+    LSET m_layerMask;
+
+    ///> Optional event handlers.
+    OPT<CLICK_HANDLER> m_clickHandler;
+    OPT<CANCEL_HANDLER> m_cancelHandler;
 
     ///> Picked point (if any).
-    boost::optional<VECTOR2D> m_picked;
+    OPT<VECTOR2D> m_picked;
 
-    ///> Activity status.
-    bool m_picking;
+    ///> Optional finalize state handler.
+    OPT<FINALIZE_HANDLER> m_finalizeHandler;
 
     ///> Reinitializes tool to its initial state.
     void reset();

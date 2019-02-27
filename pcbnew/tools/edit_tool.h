@@ -28,21 +28,31 @@
 
 #include <math/vector2d.h>
 #include <tools/pcb_tool.h>
-#include <view/view_group.h>
+#include <tools/selection_tool.h>
+#include <status_popup.h>
+
 
 class BOARD_COMMIT;
 class BOARD_ITEM;
-class SELECTION_TOOL;
+class CONNECTIVITY_DATA;
 
-namespace KIGFX
-{
-class VIEW_GROUP;
-}
+/**
+ * Function EditToolSelectionFilter
+ *
+ * A CLIENT_SELECTION_FILTER which promotes pad selections to their parent modules and
+ * optionally excludes locked items and/or transient items (such as markers).
+ */
+
+#define EXCLUDE_LOCKED      0x0001
+#define EXCLUDE_LOCKED_PADS 0x0002
+#define EXCLUDE_TRANSIENTS  0x0004
+
+void EditToolSelectionFilter( GENERAL_COLLECTOR& aCollector, int aFlags );
 
 /**
  * Class EDIT_TOOL
  *
- * The interactive edit tool. Allows to move, rotate, flip and change properties of items selected
+ * The interactive edit tool. Allows one to move, rotate, flip and change properties of items selected
  * using the pcbnew.InteractiveSelection tool.
  */
 
@@ -66,6 +76,13 @@ public:
     int Main( const TOOL_EVENT& aEvent );
 
     /**
+     * Function Drag()
+     *
+     * todo
+     */
+    int Drag( const TOOL_EVENT& aEvent );
+
+    /**
      * Function Edit()
      *
      * Displays properties window for the selected object.
@@ -87,6 +104,13 @@ public:
     int Flip( const TOOL_EVENT& aEvent );
 
     /**
+     * Function Mirror
+     *
+     * Mirrors the current selection. The mirror axis passes through the current point.
+     */
+    int Mirror( const TOOL_EVENT& aEvent );
+
+    /**
      * Function Remove()
      *
      * Deletes currently selected items. The rotation point is the current cursor position.
@@ -96,7 +120,7 @@ public:
     /**
      * Function Duplicate()
      *
-     * Duplicates a selection and starts a move action
+     * Duplicates the current selection and starts a move action.
      */
     int Duplicate( const TOOL_EVENT& aEvent );
 
@@ -115,9 +139,60 @@ public:
      */
     int CreateArray( const TOOL_EVENT& aEvent );
 
+    /**
+     * Function ExchangeFootprints()
+     *
+     * Invoke the dialog used to update or exchange the footprints used for
+     * modules.  The mode depends on the PCB_ACTIONS held by the TOOL_EVENT.
+     */
+    int ExchangeFootprints( const TOOL_EVENT& aEvent );
+
+    ///> Launches a tool to measure between points
+    int MeasureTool( const TOOL_EVENT& aEvent );
+
+    /**
+     * Function FootprintFilter()
+     *
+     * A selection filter which prunes the selection to contain only items
+     * of type PCB_MODULE_T
+     */
+    static void FootprintFilter( const VECTOR2I&, GENERAL_COLLECTOR& aCollector );
+
+    /**
+     * Function PadFilter()
+     *
+     * A selection filter which prunes the selection to contain only items
+     * of type PCB_PAD_T
+     */
+    static void PadFilter( const VECTOR2I&, GENERAL_COLLECTOR& aCollector );
 
     ///> Sets up handlers for various events.
-    void SetTransitions() override;
+    void setTransitions() override;
+
+    /**
+     * Function copyToClipboard()
+     * Sends the current selection to the clipboard by formatting it as a fake pcb
+     * see AppendBoardFromClipboard for importing
+     * @return True if it was sent succesfully
+     */
+    int copyToClipboard( const TOOL_EVENT& aEvent );
+
+    int copyToClipboardWithAnchor( const TOOL_EVENT& aEvent );
+
+    int doCopyToClipboard( bool withAnchor );
+
+    /**
+     * Function cutToClipboard()
+     * Cuts the current selection to the clipboard by formatting it as a fake pcb
+     * see AppendBoardFromClipboard for importing
+     * @return True if it was sent succesfully
+     */
+    int cutToClipboard( const TOOL_EVENT& aEvent );
+
+    BOARD_COMMIT* GetCurrentCommit() const
+    {
+        return m_commit.get();
+    }
 
 private:
     ///> Selection tool used for obtaining selected items
@@ -126,50 +201,24 @@ private:
     ///> Flag determining if anything is being dragged right now
     bool m_dragging;
 
-    ///> Offset from the dragged item's center (anchor)
-    wxPoint m_offset;
+    ///> Flag determining whether we are prompting for locked removal
+    bool m_lockedSelected;
 
     ///> Last cursor position (needed for getModificationPoint() to avoid changes
     ///> of edit reference point).
     VECTOR2I m_cursor;
 
-    ///> The required update flag for modified items
-    KIGFX::VIEW_ITEM::VIEW_UPDATE_FLAGS m_updateFlag;
-
-    ///> Enables higher order update flag
-    void enableUpdateFlag( KIGFX::VIEW_ITEM::VIEW_UPDATE_FLAGS aFlag )
-    {
-        if( m_updateFlag < aFlag )
-            m_updateFlag = aFlag;
-    }
-
-    ///> Updates ratsnest for selected items.
-    ///> @param aRedraw says if selected items should be drawn using the simple mode (e.g. one line
-    ///> per item).
-    void updateRatsnest( bool aRedraw );
-
     ///> Returns the right modification point (e.g. for rotation), depending on the number of
     ///> selected items.
-    wxPoint getModificationPoint( const SELECTION& aSelection );
-
-    ///> If there are no items currently selected, it tries to choose the item that is under
-    ///> the cursor or displays a disambiguation menu if there are multiple items.
-    bool hoverSelection( bool aSanitize = true );
+    bool updateModificationPoint( SELECTION& aSelection );
 
     int editFootprintInFpEditor( const TOOL_EVENT& aEvent );
 
-    bool invokeInlineRouter();
+    bool invokeInlineRouter( int aDragMode );
+    bool isInteractiveDragEnabled() const;
 
-    template<class T> T* uniqueSelected()
-    {
-        const SELECTION& selection = m_selectionTool->GetSelection();
-
-        if( selection.items.GetCount() != 1 )
-            return NULL;
-
-        BOARD_ITEM* item = selection.Item<BOARD_ITEM>( 0 );
-        return dyn_cast<T*>( item );
-    }
+    bool changeTrackWidthOnClick( const SELECTION& selection );
+    bool pickCopyReferencePoint( VECTOR2I& aP );
 
     std::unique_ptr<BOARD_COMMIT> m_commit;
 };

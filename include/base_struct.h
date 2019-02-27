@@ -3,8 +3,8 @@
  *
  * Copyright (C) 2013-2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2008-2015 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2008-2015 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2004-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2008 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 2004-2018 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -33,25 +33,18 @@
 #define BASE_STRUCT_H_
 
 #include <core/typeinfo.h>
+#include "common.h"
 
-#include <colors.h>
-#include <bitmaps.h>
-#include <richio.h>
+#include <bitmap_types.h>
 #include <view/view_item.h>
-#include <class_eda_rect.h>
-#include <functional>
-
 
 #if defined(DEBUG)
 #include <iostream>         // needed for Show()
+
 extern std::ostream& operator <<( std::ostream& out, const wxSize& size );
 
 extern std::ostream& operator <<( std::ostream& out, const wxPoint& pt );
 #endif
-
-
-/// Flag to enable find and replace tracing using the WXTRACE environment variable.
-extern const wxString traceFindReplace;
 
 
 /**
@@ -111,6 +104,9 @@ typedef const INSPECTOR_FUNC& INSPECTOR;    /// std::function passed to nested u
 
 // These define are used for the .m_Flags and .m_UndoRedoStatus member of the
 // class EDA_ITEM
+//
+// NB: DO NOT ADD FLAGS ANYWHERE BUT AT THE END: THE FLAG-SET IS STORED AS AN INTEGER IN FILES.
+//
 #define IS_CHANGED     (1 << 0)    ///< Item was edited, and modified
 #define IS_LINKED      (1 << 1)    ///< Used in calculation to mark linked items (temporary use)
 #define IN_EDIT        (1 << 2)    ///< Item currently edited
@@ -142,7 +138,9 @@ typedef const INSPECTOR_FUNC& INSPECTOR;    /// std::function passed to nested u
 #define BRIGHTENED     (1 << 26)   ///< item is drawn with a bright contour
 
 #define DP_COUPLED     (1 << 27)   ///< item is coupled with another item making a differential pair
-                                  ///< (applies to segments only)
+                                   ///< (applies to segments only)
+#define UR_TRANSIENT   (1 << 28)   ///< indicates the item is owned by the undo/redo stack
+
 
 #define EDA_ITEM_ALL_FLAGS -1
 
@@ -171,7 +169,7 @@ protected:
     DHEAD*        m_List;         ///< which DLIST I am on.
 
     EDA_ITEM*     m_Parent;       ///< Linked list: Link (parent struct)
-    time_t        m_TimeStamp;    ///< Time stamp used for logical links
+    timestamp_t   m_TimeStamp;    ///< Time stamp used for logical links
 
     /// Set to true to override the visibility setting of the item.
     bool          m_forceVisible;
@@ -205,8 +203,8 @@ public:
         return m_StructType;
     }
 
-    void SetTimeStamp( time_t aNewTimeStamp ) { m_TimeStamp = aNewTimeStamp; }
-    time_t GetTimeStamp() const { return m_TimeStamp; }
+    void SetTimeStamp( timestamp_t aNewTimeStamp ) { m_TimeStamp = aNewTimeStamp; }
+    timestamp_t GetTimeStamp() const { return m_TimeStamp; }
 
     EDA_ITEM* Next() const { return Pnext; }
     EDA_ITEM* Back() const { return Pback; }
@@ -229,12 +227,12 @@ public:
     inline bool IsBrightened() const { return m_Flags & BRIGHTENED; }
 
     inline void SetWireImage() { SetFlags( IS_WIRE_IMAGE ); }
-    inline void SetSelected() { SetFlags( SELECTED ); ViewUpdate( COLOR ); }
-    inline void SetHighlighted() { SetFlags( HIGHLIGHTED ); ViewUpdate( COLOR ); }
+    inline void SetSelected() { SetFlags( SELECTED ); }
+    inline void SetHighlighted() { SetFlags( HIGHLIGHTED ); }
     inline void SetBrightened() { SetFlags( BRIGHTENED ); }
 
-    inline void ClearSelected() { ClearFlags( SELECTED ); ViewUpdate( COLOR ); }
-    inline void ClearHighlighted() { ClearFlags( HIGHLIGHTED ); ViewUpdate( COLOR ); }
+    inline void ClearSelected() { ClearFlags( SELECTED ); }
+    inline void ClearHighlighted() { ClearFlags( HIGHLIGHTED ); }
     inline void ClearBrightened() { ClearFlags( BRIGHTENED ); }
 
     void SetModified();
@@ -260,6 +258,23 @@ public:
     STATUS_FLAGS GetFlags() const { return m_Flags; }
 
     /**
+     * Function IsType
+     * Checks whether the item is one of the listed types
+     * @param aScanTypes List of item types
+     * @return true if the item type is contained in the list aScanTypes
+     */
+    bool IsType( const KICAD_T aScanTypes[] )
+    {
+        for( const KICAD_T* p = aScanTypes; *p != EOT; ++p )
+        {
+            if( m_StructType == *p )
+                return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Function SetForceVisible
      * is used to set and cleag force visible flag used to force the item to be drawn
      * even if it's draw attribute is set to not visible.
@@ -279,7 +294,7 @@ public:
      *
      * @param aList is the list to populate.
      */
-    virtual void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList )
+    virtual void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList )
     {
     }
 
@@ -305,17 +320,7 @@ public:
      * system.
      * It is OK to overestimate the size by a few counts.
      */
-    virtual const EDA_RECT GetBoundingBox() const
-    {
-#if defined(DEBUG)
-        printf( "Missing GetBoundingBox()\n" );
-        Show( 0, std::cout ); // tell me which classes still need GetBoundingBox support
-#endif
-
-        // return a zero-sized box per default. derived classes should override
-        // this
-        return EDA_RECT( wxPoint( 0, 0 ), wxSize( 0, 0 ) );
-    }
+    virtual const EDA_RECT GetBoundingBox() const;
 
     /**
      * Function Clone
@@ -386,7 +391,7 @@ public:
      *
      * @return The menu text string.
      */
-    virtual wxString GetSelectMenuText() const;
+    virtual wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const;
 
     /**
      * Function GetMenuImage
@@ -395,7 +400,7 @@ public:
      * images.
      * @return The menu image associated with the item.
      */
-    virtual BITMAP_DEF GetMenuImage() const { return right_xpm; }
+    virtual BITMAP_DEF GetMenuImage() const;
 
     /**
      * Function Matches
@@ -483,10 +488,8 @@ public:
      */
     EDA_ITEM& operator=( const EDA_ITEM& aItem );
 
-    /// @copydoc VIEW_ITEM::ViewBBox()
     virtual const BOX2I ViewBBox() const override;
 
-    /// @copydoc VIEW_ITEM::ViewGetLayers()
     virtual void ViewGetLayers( int aLayers[], int& aCount ) const override;
 
 #if defined(DEBUG)

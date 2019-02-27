@@ -5,9 +5,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2015 Jean-Pierre Charras, jean-pierre.charras
- * Copyright (C) 2011 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2018 Jean-Pierre Charras, jean-pierre.charras
+ * Copyright (C) 2011-2016 Wayne Stambaugh <stambaughw@verizon.net>
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,29 +26,25 @@
  * or you may write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
-
 #include <fctsys.h>
 #include <kiway.h>
 #include <common.h>
 #include <confirm.h>
 #include <build_version.h>
 #include <macros.h>
-#include <fpid.h>
+#include <lib_id.h>
 #include <fp_lib_table.h>
-#include <reporter.h>
 #include <html_messagebox.h>
 
 #include <cvpcb.h>
 #include <cvpcb_mainframe.h>
-#include <listview_classes.h>
-#include <wildcards_and_files_ext.h>
+#include <listboxes.h>
 #include <fp_conflict_assignment_selector.h>
 
 
 void CVPCB_MAINFRAME::SetNewPkg( const wxString& aFootprintName )
 {
     COMPONENT* component;
-    bool       hasFootprint = false;
     int        componentIndex;
 
     if( m_netlist.IsEmpty() )
@@ -71,39 +67,10 @@ void CVPCB_MAINFRAME::SetNewPkg( const wxString& aFootprintName )
         if( component == NULL )
             return;
 
-        // Check to see if the component has already a footprint set.
-        hasFootprint = !component->GetFPID().empty();
+        SetNewPkg( aFootprintName, componentIndex );
 
-        FPID fpid;
-
-        if( !aFootprintName.IsEmpty() )
-        {
-            wxCHECK_RET( fpid.Parse( aFootprintName ) < 0,
-                         wxString::Format( wxT( "<%s> is not a valid FPID." ),
-                                           GetChars( aFootprintName ) ) );
-        }
-
-        component->SetFPID( fpid );
-
-        // create the new component description
-        wxString   description = wxString::Format( CMP_FORMAT, componentIndex + 1,
-                            GetChars( component->GetReference() ),
-                            GetChars( component->GetValue() ),
-                            GetChars( FROM_UTF8( component->GetFPID().Format().c_str() ) ) );
-
-        // If the component hasn't had a footprint associated with it
-        // it now has, so we decrement the count of components without
-        // a footprint assigned.
-        if( !hasFootprint )
-            m_undefinedComponentCnt -= 1;
-
-        // Set the new description and deselect the processed component
-        m_compListBox->SetString( componentIndex, description );
         m_compListBox->SetSelection( componentIndex, false );
     }
-
-    // Mark this "session" as modified
-    m_modified = true;
 
     // select the next component, if there is one
     if( componentIndex < (m_compListBox->GetCount() - 1) )
@@ -116,23 +83,64 @@ void CVPCB_MAINFRAME::SetNewPkg( const wxString& aFootprintName )
 }
 
 
-/// Return true if the resultant FPID has a certain nickname.  The guess
+void CVPCB_MAINFRAME::SetNewPkg( const wxString& aFootprintName, int aIndex )
+{
+    COMPONENT* component;
+
+    if( m_netlist.IsEmpty() )
+        return;
+
+    component = m_netlist.GetComponent( aIndex );
+
+    if( component == NULL )
+        return;
+
+    LIB_ID fpid;
+
+    if( !aFootprintName.IsEmpty() )
+    {
+        wxCHECK_RET( fpid.Parse( aFootprintName, LIB_ID::ID_PCB ) < 0,
+                     wxString::Format( _( "\"%s\" is not a valid LIB_ID." ), aFootprintName ) );
+    }
+
+    component->SetFPID( fpid );
+
+    // create the new component description
+    wxString   description = wxString::Format( CMP_FORMAT, aIndex + 1,
+                        GetChars( component->GetReference() ),
+                        GetChars( component->GetValue() ),
+                        GetChars( FROM_UTF8( component->GetFPID().Format().c_str() ) ) );
+
+    // Set the new description and deselect the processed component
+    m_compListBox->SetString( aIndex, description );
+
+    // Mark this "session" as modified
+    m_modified = true;
+
+    // update the statusbar
+    DisplayStatus();
+}
+
+
+/// Return true if the resultant LIB_ID has a certain nickname.  The guess
 /// is only made if this footprint resides in only one library.
 /// @return int - 0 on success, 1 on not found, 2 on ambiguous i.e. multiple matches
-static int guessNickname( FP_LIB_TABLE* aTbl, FPID* aFootprintId )
+static int guessNickname( FP_LIB_TABLE* aTbl, LIB_ID* aFootprintId )
 {
     if( aFootprintId->GetLibNickname().size() )
         return 0;
 
     wxString    nick;
-    wxString    fpname = aFootprintId->GetFootprintName();
+    wxString    fpname = aFootprintId->GetLibItemName();
 
     std::vector<wxString> nicks = aTbl->GetLogicalLibs();
 
     // Search each library going through libraries alphabetically.
     for( unsigned libNdx = 0;  libNdx<nicks.size();  ++libNdx )
     {
-        wxArrayString fpnames = aTbl->FootprintEnumerate( nicks[libNdx] );
+        wxArrayString fpnames;
+
+        aTbl->FootprintEnumerate( fpnames, nicks[libNdx] );
 
         for( unsigned nameNdx = 0;  nameNdx<fpnames.size();   ++nameNdx )
         {
@@ -156,7 +164,7 @@ static int guessNickname( FP_LIB_TABLE* aTbl, FPID* aFootprintId )
 }
 
 
-bool CVPCB_MAINFRAME::ReadNetListAndLinkFiles( const std::string& aNetlist )
+bool CVPCB_MAINFRAME::ReadNetListAndFpFiles( const std::string& aNetlist )
 {
     wxString        msg;
     bool            hasMissingNicks = false;
@@ -167,13 +175,15 @@ bool CVPCB_MAINFRAME::ReadNetListAndLinkFiles( const std::string& aNetlist )
         return false;
 
     LoadProjectFile();
+
+    wxSafeYield();
+
     LoadFootprintFiles();
 
     BuildFOOTPRINTS_LISTBOX();
     BuildLIBRARY_LISTBOX();
 
     m_compListBox->Clear();
-    m_undefinedComponentCnt = 0;
 
     if( m_netlist.AnyFootprintsLinked() )
     {
@@ -194,7 +204,7 @@ bool CVPCB_MAINFRAME::ReadNetListAndLinkFiles( const std::string& aNetlist )
     {
         msg = _(
             "Some of the assigned footprints are legacy entries (are missing lib nicknames). "
-            "Would you like CvPcb to attempt to convert them to the new required FPID format? "
+            "Would you like CvPcb to attempt to convert them to the new required LIB_ID format? "
             "(If you answer no, then these assignments will be cleared out and you will "
             "have to re-assign these footprints yourself.)"
             );
@@ -212,9 +222,9 @@ bool CVPCB_MAINFRAME::ReadNetListAndLinkFiles( const std::string& aNetlist )
                     if( component->GetFPID().IsLegacy() )
                     {
                         // get this first here, it's possibly obsoleted if we get it too soon.
-                        FP_LIB_TABLE*   tbl = Prj().PcbFootprintLibs();
+                        FP_LIB_TABLE*   tbl = Prj().PcbFootprintLibs( Kiway() );
 
-                        int guess = guessNickname( tbl, (FPID*) &component->GetFPID() );
+                        int guess = guessNickname( tbl, (LIB_ID*) &component->GetFPID() );
 
                         switch( guess )
                         {
@@ -226,17 +236,17 @@ bool CVPCB_MAINFRAME::ReadNetListAndLinkFiles( const std::string& aNetlist )
 
                         case 1:
                             msg += wxString::Format( _(
-                                    "Component '%s' footprint '%s' was <b>not found</b> in any library.\n" ),
+                                    "Component \"%s\" footprint \"%s\" was <b>not found</b> in any library.\n" ),
                                     GetChars( component->GetReference() ),
-                                    GetChars( component->GetFPID().GetFootprintName() )
+                                    GetChars( component->GetFPID().GetLibItemName() )
                                     );
                             break;
 
                         case 2:
                             msg += wxString::Format( _(
-                                    "Component '%s' footprint '%s' was found in <b>multiple</b> libraries.\n" ),
+                                    "Component \"%s\" footprint \"%s\" was found in <b>multiple</b> libraries.\n" ),
                                     GetChars( component->GetReference() ),
-                                    GetChars( component->GetFPID().GetFootprintName() )
+                                    GetChars( component->GetFPID().GetLibItemName() )
                                     );
                             break;
                         }
@@ -281,7 +291,7 @@ bool CVPCB_MAINFRAME::ReadNetListAndLinkFiles( const std::string& aNetlist )
 
                 if( component->GetFPID().IsLegacy() )
                 {
-                    component->SetFPID( FPID() /* empty */ );
+                    component->SetFPID( LIB_ID() /* empty */ );
                     m_modified = true;
                 }
             }
@@ -350,12 +360,6 @@ bool CVPCB_MAINFRAME::ReadNetListAndLinkFiles( const std::string& aNetlist )
                     GetChars( FROM_UTF8( component->GetFPID().Format().c_str() ) ) );
 
         m_compListBox->AppendLine( msg );
-
-        if( component->GetFPID().empty() )
-        {
-            m_undefinedComponentCnt += 1;
-            continue;
-        }
     }
 
     if( !m_netlist.IsEmpty() )
@@ -363,12 +367,11 @@ bool CVPCB_MAINFRAME::ReadNetListAndLinkFiles( const std::string& aNetlist )
 
     DisplayStatus();
 
-    UpdateTitle();
     return true;
 }
 
 
-void CVPCB_MAINFRAME::SaveFootprintAssociation()
+bool CVPCB_MAINFRAME::SaveFootprintAssociation( bool doSaveSchematic )
 {
     STRING_FORMATTER sf;
 
@@ -376,5 +379,8 @@ void CVPCB_MAINFRAME::SaveFootprintAssociation()
 
     Kiway().ExpressMail( FRAME_SCH, MAIL_BACKANNOTATE_FOOTPRINTS, sf.GetString() );
 
-    SetStatusText( _("Footprint association sent to Eeschema") );
+    if( doSaveSchematic )
+        Kiway().ExpressMail( FRAME_SCH, MAIL_SCH_SAVE, std::string( "" ) );
+
+    return true;    // we can't tell if it was successful, so just assume the best
 }

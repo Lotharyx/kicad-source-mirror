@@ -29,6 +29,7 @@
 
 #include "ccontainer2d.h"
 #include <vector>
+#include <mutex>
 #include <boost/range/algorithm/partition.hpp>
 #include <boost/range/algorithm/nth_element.hpp>
 #include <wx/debug.h>
@@ -46,6 +47,7 @@ CGENERICCONTAINER2D::CGENERICCONTAINER2D( OBJECT2D_TYPE aObjType )
 
 void CGENERICCONTAINER2D::Clear()
 {
+    std::lock_guard<std::mutex> lock( m_lock );
     m_bbox.Reset();
 
     for( LIST_OBJECT2D::iterator ii = m_objects.begin();
@@ -338,9 +340,9 @@ void CBVHCONTAINER2D::recursiveBuild_MIDDLE_SPLIT( BVH_CONTAINER_NODE_2D *aNodeP
         // Divide the objects
         switch( axis_to_split )
         {
-            case 0: aNodeParent->m_LeafList.sort( sortByCentroid_X );
-            case 1: aNodeParent->m_LeafList.sort( sortByCentroid_Y );
-            case 2: aNodeParent->m_LeafList.sort( sortByCentroid_Z );
+            case 0: aNodeParent->m_LeafList.sort( sortByCentroid_X ); break;
+            case 1: aNodeParent->m_LeafList.sort( sortByCentroid_Y ); break;
+            case 2: aNodeParent->m_LeafList.sort( sortByCentroid_Z ); break;
         }
 
         unsigned int i = 0;

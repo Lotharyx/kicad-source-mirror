@@ -44,7 +44,7 @@ VERTEX_MANAGER::VERTEX_MANAGER( bool aCached ) :
     m_gpu.reset( GPU_MANAGER::MakeManager( m_container.get() ) );
 
     // There is no shader used by default
-    for( unsigned int i = 0; i < ShaderStride; ++i )
+    for( unsigned int i = 0; i < SHADER_STRIDE; ++i )
         m_shader[i] = 0.0f;
 }
 
@@ -279,8 +279,13 @@ void VERTEX_MANAGER::putVertex( VERTEX& aTarget, GLfloat aX, GLfloat aY, GLfloat
     aTarget.a = m_color[3];
 
     // Apply currently used shader
-    for( unsigned int j = 0; j < ShaderStride; ++j )
+    for( unsigned int j = 0; j < SHADER_STRIDE; ++j )
     {
         aTarget.shader[j] = m_shader[j];
     }
+}
+
+void VERTEX_MANAGER::EnableDepthTest( bool aEnabled )
+{
+    m_gpu->EnableDepthTest( aEnabled );
 }

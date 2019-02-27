@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2004-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2017 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -42,10 +42,10 @@ class LIB_RECTANGLE  : public LIB_ITEM
     bool    m_isStartPointSelected; // Flag: is the upper left edge selected?
 
     void drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                      EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
+                      COLOR4D aColor, GR_DRAWMODE aDrawMode, void* aData,
                       const TRANSFORM& aTransform ) override;
 
-    void calcEdit( const wxPoint& aPosition ) override;
+    void CalcEdit( const wxPoint& aPosition ) override;
 
 public:
     LIB_RECTANGLE( LIB_PART * aParent );
@@ -59,11 +59,12 @@ public:
         return wxT( "LIB_RECTANGLE" );
     }
 
+    wxString GetTypeName() override
+    {
+        return _( "Rectangle" );
+    }
+
     void SetEndPosition( const wxPoint& aPosition ) { m_End = aPosition; }
-
-    bool Save( OUTPUTFORMATTER& aFormatter ) override;
-
-    bool Load( LINE_READER& aLineReader, wxString& aErrorMsg ) override;
 
     bool HitTest( const wxPoint& aPosition ) const override;
 
@@ -73,7 +74,7 @@ public:
 
     const EDA_RECT GetBoundingBox() const override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
     void BeginEdit( STATUS_FLAGS aEditMode, const wxPoint aStartPoint = wxPoint( 0, 0 ) ) override;
 
@@ -106,9 +107,9 @@ public:
 
     wxPoint GetEnd() const { return m_End; }
 
-    wxString GetSelectMenuText() const override;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    BITMAP_DEF GetMenuImage() const override { return  add_rectangle_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
     EDA_ITEM* Clone() const override;
 

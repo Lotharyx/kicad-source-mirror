@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2015-2016 Mario Luzeiro <mrluzeiro@ua.pt>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2015-2017 Mario Luzeiro <mrluzeiro@ua.pt>
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -271,7 +271,7 @@ SFVEC3F CBBOX::Offset( const SFVEC3F &p ) const
 // https://github.com/mmp/pbrt-v2/blob/master/src/core/geometry.cpp#L68
 // /////////////////////////////////////////////////////////////////////////
 #if 0
-bool CBBOX::Intersect( const RAY &aRay, float *aOutHitt0, float *aOutHitt1 )
+bool CBBOX::Intersect( const RAY &aRay, float *aOutHitt0, float *aOutHitt1 ) const
 {
     float t0 = 0.0f;
     float t1 = FLT_MAX;
@@ -317,10 +317,10 @@ bool CBBOX::Intersect( const RAY &aRay,
     const SFVEC3F bounds[2] = {m_min, m_max};
 
     // Check for ray intersection against x and y slabs
-    float tmin  = (bounds[    aRay.m_dirIsNeg[0]].x - aRay.m_Origin.x) * aRay.m_InvDir.x;
-    float tmax  = (bounds[1 - aRay.m_dirIsNeg[0]].x - aRay.m_Origin.x) * aRay.m_InvDir.x;
-    float tymin = (bounds[    aRay.m_dirIsNeg[1]].y - aRay.m_Origin.y) * aRay.m_InvDir.y;
-    float tymax = (bounds[1 - aRay.m_dirIsNeg[1]].y - aRay.m_Origin.y) * aRay.m_InvDir.y;
+          float tmin  = (bounds[    aRay.m_dirIsNeg[0]].x - aRay.m_Origin.x) * aRay.m_InvDir.x;
+          float tmax  = (bounds[1 - aRay.m_dirIsNeg[0]].x - aRay.m_Origin.x) * aRay.m_InvDir.x;
+    const float tymin = (bounds[    aRay.m_dirIsNeg[1]].y - aRay.m_Origin.y) * aRay.m_InvDir.y;
+    const float tymax = (bounds[1 - aRay.m_dirIsNeg[1]].y - aRay.m_Origin.y) * aRay.m_InvDir.y;
 
     if( (tmin > tymax) || (tymin > tmax) )
         return false;

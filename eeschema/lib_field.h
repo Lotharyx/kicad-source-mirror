@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2004-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2019 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2004-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -37,8 +37,7 @@ class SCH_LEGACY_PLUGIN_CACHE;
 
 
 /**
- * Class LIB_FIELD
- * is used in symbol libraries.  At least MANDATORY_FIELDS are always present
+ * Field object used in symbol libraries.  At least MANDATORY_FIELDS are always present
  * in a ram resident library symbol.  All constructors must ensure this because
  * the component property editor assumes it.
  * <p>
@@ -62,7 +61,7 @@ class LIB_FIELD : public LIB_ITEM, public EDA_TEXT
     int      m_id;           ///< @see enum NumFieldType
     wxString m_name;         ///< Name (not the field text value itself, that is .m_Text)
 
-    wxString m_savedText;    ///< Temporary storage for the string when edition.
+    wxString m_savedText;    ///< Temporary storage for the string when editing.
     bool     m_rotate;       ///< Flag to indicate a rotation occurred while editing.
     bool     m_updateText;   ///< Flag to indicate text change occurred while editing.
 
@@ -74,7 +73,7 @@ class LIB_FIELD : public LIB_ITEM, public EDA_TEXT
      * </p>
      */
     void drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                      EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
+                      COLOR4D aColor, GR_DRAWMODE aDrawMode, void* aData,
                       const TRANSFORM& aTransform ) override;
 
     /**
@@ -82,13 +81,15 @@ class LIB_FIELD : public LIB_ITEM, public EDA_TEXT
      *
      * @param aPosition - The position to edit the circle in drawing coordinates.
      */
-    void calcEdit( const wxPoint& aPosition ) override;
+    void CalcEdit( const wxPoint& aPosition ) override;
 
     friend class SCH_LEGACY_PLUGIN_CACHE;   // Required to access m_name.
 
 public:
 
     LIB_FIELD( int idfield = 2 );
+
+    LIB_FIELD( int aID, wxString& aName );
 
     LIB_FIELD( LIB_PART * aParent, int idfield = 2 );
 
@@ -99,6 +100,11 @@ public:
     wxString GetClass() const override
     {
         return wxT( "LIB_FIELD" );
+    }
+
+    wxString GetTypeName() override
+    {
+        return _( "Field" );
     }
 
     /**
@@ -121,9 +127,7 @@ public:
     wxString GetName( bool aTranslate = true ) const;
 
     /**
-     * Function SetName
-     *
-     * Sets a user definable field name to \a aName.
+     * Set a user definable field name to \a aName.
      *
      * Reserved fields such as value and reference are not renamed.  If the field name is
      * changed, the field modified flag is set.  If the field is the child of a component,
@@ -139,10 +143,6 @@ public:
 
     int GetPenSize( ) const override;
 
-    bool Save( OUTPUTFORMATTER& aFormatter ) override;
-
-    bool Load( LINE_READER& aLineReader, wxString& errorMsg ) override;
-
     /**
      * Copy parameters of this field to another field. Pointers are not copied.
      *
@@ -150,10 +150,7 @@ public:
      */
     void Copy( LIB_FIELD* aTarget ) const;
 
-    void SetFields( const std::vector <LIB_FIELD> aFields );
-
     /**
-     * Function IsVoid
      * @return true if the field value is void (no text in this field)
      */
     bool IsVoid() const
@@ -161,40 +158,22 @@ public:
         return m_Text.IsEmpty();
     }
 
+    void ViewGetLayers( int aLayers[], int& aCount ) const override;
+
     /**
-     * Function IsVisible
      * @return true is this field is visible, false if flagged invisible
      */
-    bool IsVisible()
-    {
-        return (m_Attributs & TEXT_NO_VISIBLE) == 0 ? true : false;
-    }
+    bool IsVisible() const { return EDA_TEXT::IsVisible(); }  // why needed?
 
     const EDA_RECT GetBoundingBox() const override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
     bool HitTest( const wxPoint& aPosition ) const override;
 
     bool HitTest( const wxPoint &aPosition, int aThreshold, const TRANSFORM& aTransform ) const override;
 
-    void operator=( const LIB_FIELD& field )
-    {
-        m_id = field.m_id;
-        m_Text = field.m_Text;
-        m_name = field.m_name;
-        m_Pos = field.m_Pos;
-        m_Size = field.m_Size;
-        m_Thickness = field.m_Thickness;
-        m_Orient = field.m_Orient;
-        m_Mirror = field.m_Mirror;
-        m_Attributs = field.m_Attributs;
-        m_Italic = field.m_Italic;
-        m_Bold = field.m_Bold;
-        m_HJustify = field.m_HJustify;
-        m_VJustify = field.m_VJustify;
-        m_Parent = field.m_Parent;
-    }
+    void operator=( const LIB_FIELD& field );
 
     /**
      * Return the text of a field.
@@ -208,9 +187,9 @@ public:
      * @param unit - The package unit number.  Only effects reference field.
      * @return Field text.
      */
-    wxString GetFullText( int unit = 1 );
+    wxString GetFullText( int unit = 1 ) const;
 
-    EDA_COLOR_T GetDefaultColor() override;
+    COLOR4D GetDefaultColor() override;
 
     void BeginEdit( STATUS_FLAGS aEditMode, const wxPoint aStartPoint = wxPoint( 0, 0 ) ) override;
 
@@ -239,7 +218,7 @@ public:
 
     void Move( const wxPoint& aPosition ) override;
 
-    wxPoint GetPosition() const override { return m_Pos; }
+    wxPoint GetPosition() const override { return EDA_TEXT::GetTextPos(); }
 
     void MirrorHorizontal( const wxPoint& aCenter ) override;
 
@@ -250,13 +229,13 @@ public:
     void Plot( PLOTTER* aPlotter, const wxPoint& aOffset, bool aFill,
                const TRANSFORM& aTransform ) override;
 
-    int GetWidth() const override { return m_Thickness; }
+    int GetWidth() const override { return GetThickness(); }
 
-    void SetWidth( int aWidth ) override { m_Thickness = aWidth; }
+    void SetWidth( int aWidth ) override { SetThickness( aWidth ); }
 
-    wxString GetSelectMenuText() const override;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    BITMAP_DEF GetMenuImage() const override { return  move_field_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
     EDA_ITEM* Clone() const override;
 

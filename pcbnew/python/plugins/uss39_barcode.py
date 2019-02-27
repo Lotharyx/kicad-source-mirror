@@ -14,9 +14,9 @@
 #  MA 02110-1301, USA.
 
 from __future__ import division
+import functools
 import pcbnew as B
-
-import HelpfulFootprintWizardPlugin
+import FootprintWizardBase
 
 '''
 Created on Jan 16, 2015
@@ -42,14 +42,14 @@ class Uss39:
         self.Text = self.makePrintable(text)
 
      __str__ = lambda self: self.Text
-     makePrintable = lambda self, text: ''.join((c for c in text.upper() if ptd.has_key(c)))
+     makePrintable = lambda self, text: ''.join((c for c in text.upper() if c in ptd))
 
      def getBarCodePattern(self, text = None):
         text = text if not(text is None) else self.Text
         # Reformated text with start and end characters
-        return reduce(lambda a1, a2: a1 + [0] + a2, [map(int, ptd[c]) for c in ("*%s*" % self.makePrintable(text))])
+        return functools.reduce(lambda a1, a2: list(a1) + [0] + list(a2), [map(int, ptd[c]) for c in ("*%s*" % self.makePrintable(text))])
 
-class Uss39Wizard(HelpfulFootprintWizardPlugin.HelpfulFootprintWizardPlugin):
+class Uss39Wizard(FootprintWizardBase.FootprintWizard):
     GetName = lambda self: 'BARCODE USS-39'
     GetDescription = lambda self: 'USS-39 Barcode'
     GetReferencePrefix = lambda self: 'BARCODE'
@@ -61,18 +61,20 @@ class Uss39Wizard(HelpfulFootprintWizardPlugin.HelpfulFootprintWizardPlugin):
         self.AddParam("Barcode", "Height", self.uMM, 3.0)
         self.AddParam("Barcode", "Margin", self.uMM, 2.0)
         self.AddParam("Barcode", "Contents", self.uString, 'BARCODE')
+
         self.AddParam("Caption", "Enabled", self.uBool, True)
         self.AddParam("Caption", "Height", self.uMM, 1.2)
         self.AddParam("Caption", "Thickness", self.uMM, 0.12)
 
     def CheckParameters(self):
+
         # Reset constants
         self.CourtyardLineWidth = B.FromMM(0.05)
         # Set bar height to the greater of 6.35mm or 0.15*L
         # Set quiet width to 10*X
         # User-defined parameters
         # Create barcode object
-        self.Barcode = Uss39('=' + str(self.parameters['Barcode']['*Contents']))
+        self.Barcode = Uss39('=' + str(self.parameters['Barcode']['Contents']))
         self.X = int(self.parameters['Barcode']['Pixel Width'])
         self.module.Value().SetText( str(self.Barcode) )
         self.C = len(str(self.Barcode))

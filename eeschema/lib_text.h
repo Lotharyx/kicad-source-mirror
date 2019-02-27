@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2004-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2017 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -34,25 +34,24 @@
 
 
 /**
- * Class LIB_TEXT
- * defines a component library graphical text item.
+ * Define a symbol library graphical text item.
  * <p>
  * This is only a graphical text item.  Field text like the reference designator,
- * component value, etc. are not LIB_TEXT items.  See the #LIB_FIELD class for the
+ * symbol value, etc. are not LIB_TEXT items.  See the #LIB_FIELD class for the
  * field item definition.
  * </p>
  */
 class LIB_TEXT : public LIB_ITEM, public EDA_TEXT
 {
-    wxString m_savedText;         ///< Temporary storage for the string when edition.
+    wxString m_savedText;         ///< Temporary storage for the string when editing.
     bool m_rotate;                ///< Flag to indicate a rotation occurred while editing.
     bool m_updateText;            ///< Flag to indicate text change occurred while editing.
 
     void drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                      EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
+                      COLOR4D aColor, GR_DRAWMODE aDrawMode, void* aData,
                       const TRANSFORM& aTransform ) override;
 
-    void calcEdit( const wxPoint& aPosition ) override;
+    void CalcEdit( const wxPoint& aPosition ) override;
 
 public:
     LIB_TEXT( LIB_PART * aParent );
@@ -66,6 +65,13 @@ public:
         return wxT( "LIB_TEXT" );
     }
 
+    wxString GetTypeName() override
+    {
+        return _( "Text" );
+    }
+
+    void ViewGetLayers( int aLayers[], int& aCount ) const override;
+
     /**
      * Sets the text item string to \a aText.
      *
@@ -77,10 +83,6 @@ public:
      * @param aText - New text value.
      */
     void SetText( const wxString& aText ) override;
-
-    bool Save( OUTPUTFORMATTER& aFormatter ) override;
-
-    bool Load( LINE_READER& aLineReader, wxString& aErrorMsg ) override;
 
     bool HitTest( const wxPoint& aPosition ) const override;
 
@@ -94,7 +96,7 @@ public:
 
     int GetPenSize( ) const override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
     const EDA_RECT GetBoundingBox() const override;
 
@@ -112,7 +114,7 @@ public:
 
     void Move( const wxPoint& aPosition ) override;
 
-    wxPoint GetPosition() const override { return m_Pos; }
+    wxPoint GetPosition() const override { return EDA_TEXT::GetTextPos(); }
 
     void MirrorHorizontal( const wxPoint& aCenter ) override;
 
@@ -123,13 +125,13 @@ public:
     void Plot( PLOTTER* aPlotter, const wxPoint& aOffset, bool aFill,
                const TRANSFORM& aTransform ) override;
 
-    int GetWidth() const override { return m_Thickness; }
+    int GetWidth() const override { return GetThickness(); }
 
-    void SetWidth( int aWidth ) override { m_Thickness = aWidth; }
+    void SetWidth( int aWidth ) override { SetThickness( aWidth ); }
 
-    wxString GetSelectMenuText() const override;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    BITMAP_DEF GetMenuImage() const override { return  add_text_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
     EDA_ITEM* Clone() const override;
 

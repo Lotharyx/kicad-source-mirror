@@ -2,6 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2016 CERN
+ * Copyright (C) 2016-2018 KiCad Developers, see AUTHORS.txt for contributors.
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
@@ -23,11 +24,14 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <schframe.h>
+#include <wx/stc/stc.h>
+
+#include <sch_edit_frame.h>
 #include <eeschema_id.h>
 #include <kiway.h>
 #include <confirm.h>
 #include <bitmaps.h>
+#include <wildcards_and_files_ext.h>
 
 #include <widgets/tuner_slider.h>
 #include <dialogs/dialog_signal_list.h>
@@ -65,6 +69,11 @@ public:
         return *this;
     }
 
+    bool HasMessage() const override
+    {
+        return false;       // Technically "indeterminate" rather than false.
+    }
+
     void OnSimStateChange( SPICE_SIMULATOR* aObject, SIM_STATE aNewState ) override
     {
         wxCommandEvent* event = NULL;
@@ -78,6 +87,10 @@ public:
             case SIM_RUNNING:
                 event = new wxCommandEvent( EVT_SIM_STARTED );
                 break;
+
+            default:
+                wxFAIL;
+                return;
         }
 
         wxQueueEvent( m_parent, event );
@@ -120,6 +133,12 @@ SIM_PLOT_FRAME::SIM_PLOT_FRAME( KIWAY* aKiway, wxWindow* aParent )
     icon.CopyFromBitmap( KiBitmap( simulator_xpm ) );
     SetIcon( icon );
 
+    // Gives a minimal size
+    SetSizeHints( 500, 400, -1, -1, -1, -1 );
+
+    // Get the previous size and position of windows:
+    LoadSettings( config() );
+
     m_simulator = SPICE_SIMULATOR::CreateInstance( "ngspice" );
 
     if( !m_simulator )
@@ -159,18 +178,24 @@ SIM_PLOT_FRAME::SIM_PLOT_FRAME( KIWAY* aKiway, wxWindow* aParent )
     m_toolSettings = m_toolBar->AddTool( wxID_ANY, _( "Settings" ),
             KiBitmap( sim_settings_xpm ), _( "Simulation settings" ), wxITEM_NORMAL );
 
-    Connect( m_toolSimulate->GetId(), wxEVT_COMMAND_TOOL_CLICKED, wxCommandEventHandler( SIM_PLOT_FRAME::onSimulate ), NULL, this );
-    Connect( m_toolAddSignals->GetId(), wxEVT_COMMAND_TOOL_CLICKED, wxCommandEventHandler( SIM_PLOT_FRAME::onAddSignal ), NULL, this );
-    Connect( m_toolProbe->GetId(), wxEVT_COMMAND_TOOL_CLICKED, wxCommandEventHandler( SIM_PLOT_FRAME::onProbe ), NULL, this );
-    Connect( m_toolTune->GetId(), wxEVT_COMMAND_TOOL_CLICKED, wxCommandEventHandler( SIM_PLOT_FRAME::onTune ), NULL, this );
-    Connect( m_toolSettings->GetId(), wxEVT_COMMAND_TOOL_CLICKED, wxCommandEventHandler( SIM_PLOT_FRAME::onSettings ), NULL, this );
+    Connect( m_toolSimulate->GetId(), wxEVT_COMMAND_TOOL_CLICKED,
+             wxCommandEventHandler( SIM_PLOT_FRAME::onSimulate ), NULL, this );
+    Connect( m_toolAddSignals->GetId(), wxEVT_COMMAND_TOOL_CLICKED,
+             wxCommandEventHandler( SIM_PLOT_FRAME::onAddSignal ), NULL, this );
+    Connect( m_toolProbe->GetId(), wxEVT_COMMAND_TOOL_CLICKED,
+             wxCommandEventHandler( SIM_PLOT_FRAME::onProbe ), NULL, this );
+    Connect( m_toolTune->GetId(), wxEVT_COMMAND_TOOL_CLICKED,
+             wxCommandEventHandler( SIM_PLOT_FRAME::onTune ), NULL, this );
+    Connect( m_toolSettings->GetId(), wxEVT_COMMAND_TOOL_CLICKED,
+             wxCommandEventHandler( SIM_PLOT_FRAME::onSettings ), NULL, this );
 
     // Bind toolbar buttons event to existing menu event handlers, so they behave the same
-    Bind( wxEVT_COMMAND_MENU_SELECTED, &SIM_PLOT_FRAME::onSimulate,  this, m_runSimulation->GetId() );
-    Bind( wxEVT_COMMAND_MENU_SELECTED, &SIM_PLOT_FRAME::onAddSignal, this, m_addSignals->GetId() );
-    Bind( wxEVT_COMMAND_MENU_SELECTED, &SIM_PLOT_FRAME::onProbe,     this, m_probeSignals->GetId() );
-    Bind( wxEVT_COMMAND_MENU_SELECTED, &SIM_PLOT_FRAME::onTune,      this, m_tuneValue->GetId() );
-    Bind( wxEVT_COMMAND_MENU_SELECTED, &SIM_PLOT_FRAME::onSettings,  this, m_settings->GetId() );
+    Bind( wxEVT_COMMAND_MENU_SELECTED, &SIM_PLOT_FRAME::onSimulate,    this, m_runSimulation->GetId() );
+    Bind( wxEVT_COMMAND_MENU_SELECTED, &SIM_PLOT_FRAME::onAddSignal,   this, m_addSignals->GetId() );
+    Bind( wxEVT_COMMAND_MENU_SELECTED, &SIM_PLOT_FRAME::onProbe,       this, m_probeSignals->GetId() );
+    Bind( wxEVT_COMMAND_MENU_SELECTED, &SIM_PLOT_FRAME::onTune,        this, m_tuneValue->GetId() );
+    Bind( wxEVT_COMMAND_MENU_SELECTED, &SIM_PLOT_FRAME::onShowNetlist, this, m_showNetlist->GetId() );
+    Bind( wxEVT_COMMAND_MENU_SELECTED, &SIM_PLOT_FRAME::onSettings,    this, m_settings->GetId() );
 
     m_toolBar->Realize();
     m_plotNotebook->SetPageText( 0, _( "Welcome!" ) );
@@ -178,8 +203,16 @@ SIM_PLOT_FRAME::SIM_PLOT_FRAME( KIWAY* aKiway, wxWindow* aParent )
     // the settings dialog will be created later, on demand.
     // if created in the ctor, for some obscure reason, there is an issue
     // on Windows: when open it, the simulator frame is sent to the background.
-    // instead of beeing behind the dialog frame (as it does)
+    // instead of being behind the dialog frame (as it does)
     m_settingsDlg = NULL;
+
+    // resize the subwindows size. At least on Windows, calling wxSafeYield before
+    // resizing the subwindows forces the wxSplitWindows size events automatically generated
+    // by wxWidgets to be executed before our resize code.
+    // Otherwise, the changes made by setSubWindowsSashSize are overwritten by one these
+    // events
+    wxSafeYield();
+    setSubWindowsSashSize();
 }
 
 
@@ -191,6 +224,53 @@ SIM_PLOT_FRAME::~SIM_PLOT_FRAME()
 
     if( m_settingsDlg )
         m_settingsDlg->Destroy();
+}
+
+#define PLOT_PANEL_WIDTH_ENTRY "SimPlotPanelWidth"
+#define PLOT_PANEL_HEIGHT_ENTRY "SimPlotPanelHeight"
+#define SIGNALS_PANEL_HEIGHT_ENTRY "SimSignalPanelHeight"
+#define CURSORS_PANEL_HEIGHT_ENTRY "SimCursorsPanelHeight"
+
+void SIM_PLOT_FRAME::SaveSettings( wxConfigBase* aCfg )
+{
+    // Save main frame size and position:
+    EDA_BASE_FRAME::SaveSettings( aCfg );
+
+    // Save subwindows sizes
+    aCfg->Write( PLOT_PANEL_WIDTH_ENTRY, m_splitterLeftRight->GetSashPosition() );
+    aCfg->Write( PLOT_PANEL_HEIGHT_ENTRY, m_splitterPlotAndConsole->GetSashPosition() );
+    aCfg->Write( SIGNALS_PANEL_HEIGHT_ENTRY, m_splitterSignals->GetSashPosition() );
+    aCfg->Write( CURSORS_PANEL_HEIGHT_ENTRY, m_splitterTuneValues->GetSashPosition() );
+}
+
+
+void SIM_PLOT_FRAME::LoadSettings( wxConfigBase* aCfg )
+{
+    // Read main frame size and position:
+    EDA_BASE_FRAME::LoadSettings( aCfg );
+    SetSize( m_FramePos.x, m_FramePos.y, m_FrameSize.x, m_FrameSize.y );
+
+    // Read subwindows sizes (should be > 0 )
+    aCfg->Read( PLOT_PANEL_WIDTH_ENTRY, &m_splitterLeftRightSashPosition, -1 );
+    aCfg->Read( PLOT_PANEL_HEIGHT_ENTRY, &m_splitterPlotAndConsoleSashPosition, -1 );
+    aCfg->Read( SIGNALS_PANEL_HEIGHT_ENTRY, &m_splitterSignalsSashPosition, -1 );
+    aCfg->Read( CURSORS_PANEL_HEIGHT_ENTRY, &m_splitterTuneValuesSashPosition, -1 );
+}
+
+
+void SIM_PLOT_FRAME::setSubWindowsSashSize()
+{
+    if( m_splitterLeftRightSashPosition > 0 )
+        m_splitterLeftRight->SetSashPosition( m_splitterLeftRightSashPosition );
+
+    if( m_splitterPlotAndConsoleSashPosition > 0 )
+        m_splitterPlotAndConsole->SetSashPosition( m_splitterPlotAndConsoleSashPosition );
+
+    if( m_splitterSignalsSashPosition > 0 )
+        m_splitterSignals->SetSashPosition( m_splitterSignalsSashPosition );
+
+    if( m_splitterTuneValuesSashPosition > 0 )
+        m_splitterTuneValues->SetSashPosition( m_splitterTuneValuesSashPosition );
 }
 
 
@@ -249,7 +329,7 @@ SIM_PLOT_PANEL* SIM_PLOT_FRAME::NewPlotPanel( SIM_TYPE aSimType )
         m_welcomePanel = nullptr;
     }
 
-    m_plotNotebook->AddPage( plotPanel, wxString::Format( wxT( "Plot%u" ),
+    m_plotNotebook->AddPage( plotPanel, wxString::Format( _( "Plot%u" ),
             (unsigned int) m_plotNotebook->GetPageCount() + 1 ), true );
 
     m_plots[plotPanel] = PLOT_INFO();
@@ -297,14 +377,15 @@ void SIM_PLOT_FRAME::AddTuner( SCH_COMPONENT* aComponent )
 
     try
     {
-        TUNER_SLIDER* tuner = new TUNER_SLIDER( this, m_sidePanel, aComponent );
+        TUNER_SLIDER* tuner = new TUNER_SLIDER( this, m_tunePanel, aComponent );
         m_tuneSizer->Add( tuner );
         m_tuners.push_back( tuner );
-        m_sidePanel->Layout();
+        m_tunePanel->Layout();
     }
-    catch( ... )
+    catch( const KI_PARAM_ERROR& e )
     {
         // Sorry, no bonus
+        DisplayError( nullptr, e.What() );
     }
 }
 
@@ -315,7 +396,7 @@ void SIM_PLOT_FRAME::RemoveTuner( TUNER_SLIDER* aTuner, bool aErase )
         m_tuners.remove( aTuner );
 
     aTuner->Destroy();
-    m_sidePanel->Layout();
+    m_tunePanel->Layout();
 }
 
 
@@ -324,6 +405,12 @@ SIM_PLOT_PANEL* SIM_PLOT_FRAME::CurrentPlot() const
     wxWindow* curPage = m_plotNotebook->GetCurrentPage();
 
     return ( curPage == m_welcomePanel ) ? nullptr : static_cast<SIM_PLOT_PANEL*>( curPage );
+}
+
+
+const NETLIST_EXPORTER_PSPICE_SIM* SIM_PLOT_FRAME::GetExporter() const
+{
+    return m_exporter.get();
 }
 
 
@@ -383,7 +470,7 @@ void SIM_PLOT_FRAME::removePlot( const wxString& aPlotName, bool aErase )
         traceMap.erase( traceIt );
     }
 
-    wxASSERT( plotPanel->IsShown( aPlotName ) );
+    wxASSERT( plotPanel->TraceShown( aPlotName ) );
     plotPanel->DeleteTrace( aPlotName );
     plotPanel->Fit();
 
@@ -394,8 +481,7 @@ void SIM_PLOT_FRAME::removePlot( const wxString& aPlotName, bool aErase )
 
 void SIM_PLOT_FRAME::updateNetlistExporter()
 {
-    m_exporter.reset( new NETLIST_EXPORTER_PSPICE_SIM( m_schematicFrame->BuildNetListBase(),
-        Prj().SchLibs(), Prj().SchSearchS() ) );
+    m_exporter.reset( new NETLIST_EXPORTER_PSPICE_SIM( m_schematicFrame->BuildNetListBase(), &Prj() ) );
 }
 
 
@@ -498,7 +584,7 @@ void SIM_PLOT_FRAME::updateSignalList()
     {
         wxBitmap bitmap( isize, isize );
         bmDC.SelectObject( bitmap );
-        wxColor tcolor = trace.second->GetTraceColour();
+        wxColour tcolor = trace.second->GetTraceColour();
 
         wxColour bgColor = m_signals->wxWindow::GetBackgroundColour();
         bmDC.SetPen( wxPen( bgColor ) );
@@ -642,7 +728,16 @@ bool SIM_PLOT_FRAME::loadWorkbook( const wxString& aPath )
 
 bool SIM_PLOT_FRAME::saveWorkbook( const wxString& aPath )
 {
-    wxTextFile file( aPath );
+
+    wxString savePath = aPath;
+
+    if( !savePath.Lower().EndsWith(".wbk"))
+    {
+        savePath += ".wbk";
+    };
+
+
+    wxTextFile file( savePath );
 
     if( file.Exists() )
     {
@@ -719,7 +814,7 @@ void SIM_PLOT_FRAME::menuNewPlot( wxCommandEvent& aEvent )
 void SIM_PLOT_FRAME::menuOpenWorkbook( wxCommandEvent& event )
 {
     wxFileDialog openDlg( this, _( "Open simulation workbook" ), m_savedWorkbooksPath, "",
-            _( "Workbook file (*.wbk)|*.wbk" ), wxFD_OPEN | wxFD_FILE_MUST_EXIST );
+                          WorkbookFileWildcard(), wxFD_OPEN | wxFD_FILE_MUST_EXIST );
 
     if( openDlg.ShowModal() == wxID_CANCEL )
         return;
@@ -736,8 +831,8 @@ void SIM_PLOT_FRAME::menuSaveWorkbook( wxCommandEvent& event )
     if( !CurrentPlot() )
         return;
 
-    wxFileDialog saveDlg( this, _( "Save simulation workbook" ), m_savedWorkbooksPath, "",
-                _( "Workbook file (*.wbk)|*.wbk" ), wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
+    wxFileDialog saveDlg( this, _( "Save Simulation Workbook" ), m_savedWorkbooksPath, "",
+                          WorkbookFileWildcard(), wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     if( saveDlg.ShowModal() == wxID_CANCEL )
         return;
@@ -754,8 +849,8 @@ void SIM_PLOT_FRAME::menuSaveImage( wxCommandEvent& event )
     if( !CurrentPlot() )
         return;
 
-    wxFileDialog saveDlg( this, _( "Save plot as image" ), "", "",
-                _( "PNG file (*.png)|*.png" ), wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
+    wxFileDialog saveDlg( this, _( "Save Plot as Image" ), "", "",
+                          PngFileWildcard(), wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     if( saveDlg.ShowModal() == wxID_CANCEL )
         return;
@@ -771,8 +866,8 @@ void SIM_PLOT_FRAME::menuSaveCsv( wxCommandEvent& event )
 
     const wxChar SEPARATOR = ';';
 
-    wxFileDialog saveDlg( this, _( "Save plot data" ), "", "",
-                "CSV file (*.csv)|*.csv", wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
+    wxFileDialog saveDlg( this, _( "Save Plot Data" ), "", "",
+                          CsvFileWildcard(), wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     if( saveDlg.ShowModal() == wxID_CANCEL )
         return;
@@ -841,8 +936,7 @@ void SIM_PLOT_FRAME::menuShowGridUpdate( wxUpdateUIEvent& event )
 {
     SIM_PLOT_PANEL* plot = CurrentPlot();
 
-    if( plot )
-        event.Check( plot ? plot->IsGridShown() : false );
+    event.Check( plot ? plot->IsGridShown() : false );
 }
 
 
@@ -995,9 +1089,61 @@ void SIM_PLOT_FRAME::onTune( wxCommandEvent& event )
     m_schematicFrame->Raise();
 }
 
+void SIM_PLOT_FRAME::onShowNetlist( wxCommandEvent& event )
+{
+    class NETLIST_VIEW_DIALOG : public wxDialog
+    {
+    public:
+        enum
+        {
+            MARGIN_LINE_NUMBERS
+        };
+
+        void onClose( wxCloseEvent& evt )
+        {
+            EndModal( GetReturnCode() );
+        }
+
+        NETLIST_VIEW_DIALOG(wxWindow* parent, wxString source) :
+            wxDialog(parent, wxID_ANY, "SPICE Netlist",
+                     wxDefaultPosition, wxSize(1500,900),
+                     wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+        {
+            wxStyledTextCtrl* text = new wxStyledTextCtrl( this, wxID_ANY );
+
+            text->SetMarginWidth( MARGIN_LINE_NUMBERS, 50 );
+            text->StyleSetForeground( wxSTC_STYLE_LINENUMBER, wxColour( 75, 75, 75 ) );
+            text->StyleSetBackground( wxSTC_STYLE_LINENUMBER, wxColour( 220, 220, 220 ) );
+            text->SetMarginType( MARGIN_LINE_NUMBERS, wxSTC_MARGIN_NUMBER );
+
+            text->SetWrapMode( wxSTC_WRAP_WORD );
+
+            text->SetText( source );
+
+            text->StyleClearAll();
+            text->SetLexer( wxSTC_LEX_SPICE );
+
+            wxBoxSizer* sizer = new wxBoxSizer( wxVERTICAL );
+            sizer->Add( text, 1, wxEXPAND );
+            SetSizer( sizer );
+
+            Connect( wxEVT_CLOSE_WINDOW, wxCloseEventHandler( NETLIST_VIEW_DIALOG::onClose ), NULL,
+                    this );
+        }
+    };
+
+    if( m_schematicFrame == NULL || m_simulator == NULL )
+        return;
+
+    NETLIST_VIEW_DIALOG dlg( this, m_simulator->GetNetlist() );
+    dlg.ShowModal();
+}
+
 
 void SIM_PLOT_FRAME::onClose( wxCloseEvent& aEvent )
 {
+    SaveSettings( config() );
+
     if( IsSimulationRunning() )
         m_simulator->Stop();
 
@@ -1147,18 +1293,16 @@ SIM_PLOT_FRAME::SIGNAL_CONTEXT_MENU::SIGNAL_CONTEXT_MENU( const wxString& aSigna
 {
     SIM_PLOT_PANEL* plot = m_plotFrame->CurrentPlot();
 
-    AddMenuItem( this, HIDE_SIGNAL, _( "Hide signal" ),
+    AddMenuItem( this, HIDE_SIGNAL, _( "Hide Signal" ),
                  _( "Erase the signal from plot screen" ),
                  KiBitmap( delete_xpm ) );
 
     TRACE* trace = plot->GetTrace( m_signal );
 
     if( trace->HasCursor() )
-        AddMenuItem( this, HIDE_CURSOR, _( "Hide cursor" ),
-                     wxEmptyString, KiBitmap( mirepcb_xpm ) );
+        AddMenuItem( this, HIDE_CURSOR, _( "Hide Cursor" ), KiBitmap( pcb_target_xpm ) );
     else
-        AddMenuItem( this, SHOW_CURSOR, _( "Show cursor" ),
-                     wxEmptyString, KiBitmap( mirepcb_xpm ) );
+        AddMenuItem( this, SHOW_CURSOR, _( "Show Cursor" ), KiBitmap( pcb_target_xpm ) );
 
     Connect( wxEVT_COMMAND_MENU_SELECTED, wxMenuEventHandler( SIGNAL_CONTEXT_MENU::onMenuEvent ), NULL, this );
 }

@@ -188,7 +188,7 @@ bool MEANDER_PLACER::doMove( const VECTOR2I& aP, ITEM* aEndItem, int aTargetLeng
 }
 
 
-bool MEANDER_PLACER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem )
+bool MEANDER_PLACER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem, bool aForceFinish )
 {
     if( !m_currentNode )
         return false;
@@ -233,7 +233,7 @@ int MEANDER_PLACER::CurrentLayer() const
 }
 
 
-const wxString MEANDER_PLACER::TuningInfo() const
+const wxString MEANDER_PLACER::TuningInfo( EDA_UNITS_T aUnits ) const
 {
     wxString status;
 
@@ -252,9 +252,9 @@ const wxString MEANDER_PLACER::TuningInfo() const
         return _( "?" );
     }
 
-    status += LengthDoubleToString( (double) m_lastLength, false );
+    status += ::MessageTextFromValue( aUnits, m_lastLength, false );
     status += "/";
-    status += LengthDoubleToString( (double) m_settings.m_targetLength, false );
+    status += ::MessageTextFromValue( aUnits, m_settings.m_targetLength, false );
 
     return status;
 }

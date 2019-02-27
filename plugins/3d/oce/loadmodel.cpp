@@ -28,10 +28,11 @@
 #include <cstring>
 #include <map>
 #include <vector>
+#include <wx/string.h>
+#include <wx/wfstream.h>
 
 #if ( defined( DEBUG_OCE ) && DEBUG_OCE > 3 )
 #include <wx/filename.h>
-#include <wx/string.h>
 #endif
 
 #include <TDocStd_Document.hxx>
@@ -39,7 +40,6 @@
 #include <TopoDS_Shape.hxx>
 #include <Quantity_Color.hxx>
 #include <XCAFApp_Application.hxx>
-#include <Handle_XCAFApp_Application.hxx>
 
 #include <AIS_Shape.hxx>
 
@@ -52,7 +52,6 @@
 
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ColorTool.hxx>
-#include <Handle_XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 
 #include <BRep_Tool.hxx>
@@ -79,6 +78,7 @@
 
 // precision for mesh creation; 0.07 should be good enough for ECAD viewing
 #define USER_PREC (0.14)
+
 // angular deflection for meshing
 // 10 deg (36 faces per circle) = 0.17453293
 // 20 deg (18 faces per circle) = 0.34906585
@@ -268,16 +268,15 @@ enum FormatType
 
 FormatType fileType( const char* aFileName )
 {
-    std::ifstream ifile;
-    ifile.open( aFileName );
+    wxString fname( wxString::FromUTF8Unchecked( aFileName ) );
+    wxFileInputStream ifile( fname );
 
-    if( !ifile.is_open() )
+    if( !ifile.IsOk() )
         return FMT_NONE;
 
     char iline[82];
     memset( iline, 0, 82 );
-    ifile.getline( iline, 82 );
-    ifile.close();
+    ifile.Read( iline, 82 );
     iline[81] = 0;  // ensure NULL termination when string is too long
 
     // check for STEP in Part 21 format
@@ -304,8 +303,6 @@ FormatType fileType( const char* aFileName )
 
 void getTag( TDF_Label& label, std::string& aTag )
 {
-    aTag.clear();
-
     if( label.IsNull() )
         return;
 
@@ -399,12 +396,8 @@ bool readIGES( Handle(TDocStd_Document)& m_doc, const char* fname )
     if( stat != IFSelect_RetDone )
         return false;
 
-    // Enable user-defined shape precision
-    if( !Interface_Static::SetIVal( "read.precision.mode", 1 ) )
-        return false;
-
-    // Set the shape conversion precision to USER_PREC (default 0.0001 has too many triangles)
-    if( !Interface_Static::SetRVal( "read.precision.val", USER_PREC ) )
+    // Enable file-defined shape precision
+    if( !Interface_Static::SetIVal( "read.precision.mode", 0 ) )
         return false;
 
     // set other translation options

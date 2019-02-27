@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2004-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2017 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -61,13 +61,13 @@ class LIB_ARC : public LIB_ITEM
      * Draws the arc.
      */
     void drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                      EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
+                      COLOR4D aColor, GR_DRAWMODE aDrawMode, void* aData,
                       const TRANSFORM& aTransform ) override;
 
     /**
      * Draw the graphics when the arc is being edited.
      */
-    void drawEditGraphics( EDA_RECT* aClipBox, wxDC* aDC, EDA_COLOR_T aColor ) override;
+    void drawEditGraphics( EDA_RECT* aClipBox, wxDC* aDC, COLOR4D aColor ) override;
 
     /**
      * Calculates the center, radius, and angles at \a aPosition when the arc is being edited.
@@ -76,12 +76,8 @@ class LIB_ARC : public LIB_ITEM
      *
      * @param aPosition - The current mouse position in drawing coordinates.
      */
-    void calcEdit( const wxPoint& aPosition ) override;
+    void CalcEdit( const wxPoint& aPosition ) override;
 
-    /**
-     * Calculate the radius and angle of an arc using the start, end, and center points.
-     */
-    void calcRadiusAngles();
 
 public:
     LIB_ARC( LIB_PART * aParent );
@@ -95,10 +91,10 @@ public:
         return wxT( "LIB_ARC" );
     }
 
-
-    bool Save( OUTPUTFORMATTER& aFormatter ) override;
-
-    bool Load( LINE_READER& aLineReader, wxString& aErrorMsg ) override;
+    wxString GetTypeName() override
+    {
+        return _( "Arc" );
+    }
 
     bool HitTest( const wxPoint& aPosition ) const override;
 
@@ -106,7 +102,7 @@ public:
 
     const EDA_RECT GetBoundingBox() const override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
     int GetPenSize() const override;
 
@@ -149,13 +145,23 @@ public:
 
     int GetSecondRadiusAngle() const { return m_t2; }
 
+    wxPoint GetStart() const { return m_ArcStart; }
+
     void SetStart( const wxPoint& aPoint ) { m_ArcStart = aPoint; }
+
+    wxPoint GetEnd() const { return m_ArcEnd; }
 
     void SetEnd( const wxPoint& aPoint ) { m_ArcEnd = aPoint; }
 
-    wxString GetSelectMenuText() const override;
+    /**
+     * Calculate the radius and angle of an arc using the start, end, and center points.
+     */
+    void CalcRadiusAngles();
 
-    BITMAP_DEF GetMenuImage() const override { return  add_arc_xpm; }
+
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
+
+    BITMAP_DEF GetMenuImage() const override;
 
     EDA_ITEM* Clone() const override;
 

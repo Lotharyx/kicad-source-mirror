@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2007 Jean-Pierre Charras, jean-pierre.charras@gipsa-lab.inpg.fr
  * Copyright (C) 2011 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -31,7 +31,7 @@
 #include <fctsys.h>
 #include <class_drawpanel.h>
 #include <confirm.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <msgpanel.h>
 
 #include <class_board.h>
@@ -41,12 +41,15 @@
 #include <class_pcb_text.h>
 #include <class_text_mod.h>
 #include <class_module.h>
-#include <class_mire.h>
+#include <class_pcb_target.h>
+#include <origin_viewitem.h>
 #include <project.h>
 
 #include <pcbnew.h>
 #include <pcbnew_id.h>
 #include <menus_helpers.h>
+#include <tools/pcb_editor_control.h>
+#include <tools/pcbnew_control.h>
 
 
 /* Handle the left button mouse click, when a tool is active
@@ -209,7 +212,7 @@ void PCB_EDIT_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
             if( net )
             {
                 MSG_PANEL_ITEMS items;
-                net->GetMsgPanelInfo( items );
+                net->GetMsgPanelInfo( m_UserUnits, items );
                 SetMsgPanel( items );
             }
         }
@@ -225,7 +228,7 @@ void PCB_EDIT_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
 
         break;
 
-    case ID_PCB_MIRE_BUTT:
+    case ID_PCB_TARGET_BUTT:
         if( (curr_item == NULL) || (curr_item->GetFlags() == 0) )
         {
             SetCurItem( (BOARD_ITEM*) CreateTarget( aDC ) );
@@ -237,7 +240,7 @@ void PCB_EDIT_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
         }
         else
         {
-            DisplayError( this, wxT( "OnLeftClick err: not a PCB_TARGET_T" ) );
+            wxLogDebug( wxT( "OnLeftClick err: not a PCB_TARGET_T" ) );
         }
 
         break;
@@ -253,12 +256,6 @@ void PCB_EDIT_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
 
             if( GetToolId() == ID_PCB_ARC_BUTT )
                 shape = S_ARC;
-
-            if( IsCopperLayer( GetActiveLayer() ) )
-            {
-                DisplayError( this, _( "Graphic not allowed on Copper layers" ) );
-                break;
-            }
 
             if( (curr_item == NULL) || (curr_item->GetFlags() == 0) )
             {
@@ -280,7 +277,7 @@ void PCB_EDIT_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
     case ID_TRACK_BUTT:
         if( !IsCopperLayer( GetActiveLayer() ) )
         {
-            DisplayError( this, _( "Tracks on Copper layers only " ) );
+            DisplayError( this, _( "Tracks on Copper layers only" ) );
             break;
         }
 
@@ -330,7 +327,7 @@ void PCB_EDIT_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
         }
         else
         {
-            DisplayError( this, wxT( "PCB_EDIT_FRAME::OnLeftClick() zone internal error" ) );
+            wxLogDebug( wxT( "PCB_EDIT_FRAME::OnLeftClick() zone internal error" ) );
         }
 
         break;
@@ -356,7 +353,7 @@ void PCB_EDIT_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
         }
         else
         {
-            DisplayError( this, wxT( "OnLeftClick err: not a PCB_TEXT_T" ) );
+            wxLogDebug( wxT( "OnLeftClick err: not a PCB_TEXT_T" ) );
         }
 
         break;
@@ -365,13 +362,21 @@ void PCB_EDIT_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
         if( (curr_item == NULL) || (curr_item->GetFlags() == 0) )
         {
             m_canvas->MoveCursorToCrossHair();
-            curr_item = (BOARD_ITEM*) LoadModuleFromLibrary(
-                    wxEmptyString, Prj().PcbFootprintLibs(), true, aDC );
+            MODULE* module = SelectFootprintFromLibTree();
 
-            SetCurItem( curr_item );
+            SetCurItem( (BOARD_ITEM*) module );
 
-            if( curr_item )
-                StartMoveModule( (MODULE*) curr_item, aDC, false );
+            if( module )
+            {
+                m_canvas->MoveCursorToCrossHair();
+                module->SetLink( 0 );
+                AddModuleToBoard( module );
+
+                if( aDC )
+                    module->Draw( m_canvas, aDC, GR_OR );
+
+                StartMoveModule( module, aDC, false );
+            }
         }
         else if( curr_item->Type() == PCB_MODULE_T )
         {
@@ -380,7 +385,7 @@ void PCB_EDIT_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
         }
         else
         {
-            DisplayError( this, wxT( "Internal err: Struct not PCB_MODULE_T" ) );
+            wxLogDebug( wxT( "Internal err: Struct not PCB_MODULE_T" ) );
         }
 
         break;
@@ -406,8 +411,7 @@ void PCB_EDIT_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
         }
         else
         {
-            DisplayError( this,
-                          wxT( "PCB_EDIT_FRAME::OnLeftClick() error item is not a DIMENSION" ) );
+            wxLogDebug( wxT( "PCB_EDIT_FRAME::OnLeftClick() error item is not a DIMENSION" ) );
         }
 
         break;
@@ -427,21 +431,32 @@ void PCB_EDIT_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
         break;
 
     case ID_PCB_PLACE_OFFSET_COORD_BUTT:
-        m_canvas->DrawAuxiliaryAxis( aDC, GR_XOR );
-        SetAuxOrigin( GetCrossHairPosition() );
-        m_canvas->DrawAuxiliaryAxis( aDC, GR_COPY );
-        OnModify();
+        PCB_EDITOR_CONTROL::SetDrillOrigin( GetGalCanvas()->GetView(), this,
+                                            new KIGFX::ORIGIN_VIEWITEM( GetAuxOrigin(), UR_TRANSIENT ),
+                                            GetCrossHairPosition() );
+        m_canvas->Refresh();
         break;
 
     case ID_PCB_PLACE_GRID_COORD_BUTT:
-        m_canvas->DrawGridAxis( aDC, GR_XOR, GetBoard()->GetGridOrigin() );
-        SetGridOrigin( GetCrossHairPosition() );
-        m_canvas->DrawGridAxis( aDC, GR_COPY, GetBoard()->GetGridOrigin() );
+        PCBNEW_CONTROL::SetGridOrigin( GetGalCanvas()->GetView(), this,
+                                       new KIGFX::ORIGIN_VIEWITEM( GetBoard()->GetGridOrigin(), UR_TRANSIENT ),
+                                       GetCrossHairPosition() );
+        m_canvas->Refresh();
+        break;
+
+    case ID_PCB_DRAW_VIA_BUTT:
+        DisplayError( this, _( "Via Tool not available in Legacy Toolset" ) );
+        SetNoToolSelected();
+        break;
+
+    case ID_PCB_MEASUREMENT_TOOL:
+        DisplayError( this, _( "Measurement Tool not available in Legacy Toolset" ) );
+        SetNoToolSelected();
         break;
 
     default:
-        DisplayError( this, wxT( "PCB_EDIT_FRAME::OnLeftClick() id error" ) );
-        SetToolID( ID_NO_TOOL_SELECTED, m_canvas->GetDefaultCursor(), wxEmptyString );
+        wxLogDebug( wxT( "PCB_EDIT_FRAME::OnLeftClick() id error" ) );
+        SetNoToolSelected();
         break;
     }
 }
@@ -539,7 +554,9 @@ void PCB_EDIT_FRAME::OnLeftDClick( wxDC* aDC, const wxPoint& aPosition )
 
         if( curr_item->Type() != PCB_LINE_T )
         {
-            DisplayError( this, wxT( "curr_item Type error" ) );
+            DisplayErrorMessage( this, "Item type is incorrect",
+                                 wxString::Format( "Selected item type is %d\n"
+                                         "Expected: %d", curr_item->Type(), PCB_LINE_T ) );
             m_canvas->SetAutoPanRequest( false );
             break;
         }
@@ -566,7 +583,7 @@ void PCB_EDIT_FRAME::OnEditItemRequest( wxDC* aDC, BOARD_ITEM* aItem )
         break;
 
     case PCB_TEXT_T:
-        InstallTextPCBOptionsFrame( static_cast<TEXTE_PCB*>( aItem ), aDC );
+        InstallTextOptionsFrame( aItem, aDC );
         break;
 
     case PCB_PAD_T:
@@ -574,7 +591,7 @@ void PCB_EDIT_FRAME::OnEditItemRequest( wxDC* aDC, BOARD_ITEM* aItem )
         break;
 
     case PCB_MODULE_T:
-        InstallModuleOptionsFrame( static_cast<MODULE*>( aItem ), aDC );
+        InstallFootprintPropertiesDialog( static_cast<MODULE*>( aItem ), aDC );
         break;
 
     case PCB_TARGET_T:
@@ -586,11 +603,11 @@ void PCB_EDIT_FRAME::OnEditItemRequest( wxDC* aDC, BOARD_ITEM* aItem )
         break;
 
     case PCB_MODULE_TEXT_T:
-        InstallTextModOptionsFrame( static_cast<TEXTE_MODULE*>( aItem ), aDC );
+        InstallTextOptionsFrame( aItem, aDC );
         break;
 
     case PCB_LINE_T:
-        InstallGraphicItemPropertiesDialog( static_cast<DRAWSEGMENT*>( aItem ), aDC );
+        InstallGraphicItemPropertiesDialog( aItem );
         break;
 
     case PCB_ZONE_AREA_T:

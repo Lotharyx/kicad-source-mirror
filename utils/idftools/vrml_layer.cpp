@@ -3,7 +3,7 @@
  *
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013  Cirilo Bernardo
+ * Copyright (C) 2013-2017  Cirilo Bernardo
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -36,6 +36,7 @@
 #include <iomanip>
 #include <cmath>
 #include <vrml_layer.h>
+#include <trigo.h>
 
 #ifndef CALLBACK
 #define CALLBACK
@@ -317,9 +318,6 @@ int VRML_LAYER::NewContour(  bool aPlatedHole )
 
     std::list<int>* contour = new std::list<int>;
 
-    if( !contour )
-        return -1;
-
     contours.push_back( contour );
     areas.push_back( 0.0 );
 
@@ -347,13 +345,6 @@ bool VRML_LAYER::AddVertex( int aContourID, double aXpos, double aYpos )
     }
 
     VERTEX_3D* vertex = new VERTEX_3D;
-
-    if( !vertex )
-    {
-        error = "AddVertex(): a new vertex could not be allocated";
-        return false;
-    }
-
     vertex->x   = aXpos;
     vertex->y   = aYpos;
     vertex->i   = idx++;
@@ -576,6 +567,31 @@ bool VRML_LAYER::AddSlot( double aCenterX, double aCenterY,
     }
 
     return !fail;
+}
+
+
+bool VRML_LAYER::AddPolygon( const std::vector< wxRealPoint >& aPolySet, double aCenterX,
+        double aCenterY, double aAngle )
+{
+    int pad = NewContour( false );
+
+    if( pad < 0 )
+    {
+        error = "AddPolygon(): failed to add a contour";
+        return false;
+    }
+
+    for( auto corner : aPolySet )
+    {
+        // The sense of polygon rotations is reversed
+        RotatePoint( &corner.x, &corner.y, -aAngle );
+        AddVertex( pad, aCenterX + corner.x, aCenterY + corner.y );
+    }
+
+    if( !EnsureWinding( pad, false ) )
+        return false;
+
+    return true;
 }
 
 
@@ -980,7 +996,7 @@ bool VRML_LAYER::pushOutline( VRML_LAYER* holes )
 
 
 // writes out the vertex list for a planar feature
-bool VRML_LAYER::WriteVertices( double aZcoord, std::ofstream& aOutFile, int aPrecision )
+bool VRML_LAYER::WriteVertices( double aZcoord, std::ostream& aOutFile, int aPrecision )
 {
     if( ordmap.size() < 3 )
     {
@@ -1026,7 +1042,7 @@ bool VRML_LAYER::WriteVertices( double aZcoord, std::ofstream& aOutFile, int aPr
 // writes out the vertex list for a 3D feature; top and bottom are the
 // Z values for the top and bottom; top must be > bottom
 bool VRML_LAYER::Write3DVertices( double aTopZ, double aBottomZ,
-                                  std::ofstream& aOutFile, int aPrecision )
+                                  std::ostream& aOutFile, int aPrecision )
 {
     if( ordmap.size() < 3 )
     {
@@ -1113,7 +1129,7 @@ bool VRML_LAYER::Write3DVertices( double aTopZ, double aBottomZ,
 // writes out the index list;
 // 'top' indicates the vertex ordering and should be
 // true for a polygon visible from above the PCB
-bool VRML_LAYER::WriteIndices( bool aTopFlag, std::ofstream& aOutFile )
+bool VRML_LAYER::WriteIndices( bool aTopFlag, std::ostream& aOutFile )
 {
     if( triplets.empty() )
     {
@@ -1161,7 +1177,7 @@ bool VRML_LAYER::WriteIndices( bool aTopFlag, std::ofstream& aOutFile )
 
 
 // writes out the index list for a 3D feature
-bool VRML_LAYER::Write3DIndices( std::ofstream& aOutFile, bool aIncludePlatedHoles )
+bool VRML_LAYER::Write3DIndices( std::ostream& aOutFile, bool aIncludePlatedHoles )
 {
     if( outline.empty() )
     {
@@ -1383,12 +1399,6 @@ VERTEX_3D* VRML_LAYER::AddExtraVertex( double aXpos, double aYpos, bool aPlatedH
 {
     VERTEX_3D* vertex = new VERTEX_3D;
 
-    if( !vertex )
-    {
-        error = "AddExtraVertex(): could not allocate a new vertex";
-        return NULL;
-    }
-
     if( eidx == 0 )
         eidx = idx + hidx;
 
@@ -1436,9 +1446,6 @@ void VRML_LAYER::glEnd( void )
         {
             // add the loop to the list of outlines
             std::list<int>* loop = new std::list<int>;
-
-            if( !loop )
-                break;
 
             double firstX = 0.0;
             double firstY = 0.0;
@@ -1703,7 +1710,7 @@ int VRML_LAYER::GetSize( void )
 // renumbering of all vertices from 'start'. Returns the end number.
 // Take care when using this call since tesselators cannot work on
 // the internal data concurrently
-int VRML_LAYER::Import( int start, GLUtesselator* tess )
+int VRML_LAYER::Import( int start, GLUtesselator* aTesselator )
 {
     if( start < 0 )
     {
@@ -1711,7 +1718,7 @@ int VRML_LAYER::Import( int start, GLUtesselator* tess )
         return -1;
     }
 
-    if( !tess )
+    if( !aTesselator )
     {
         error = "Import(): NULL tesselator pointer";
         return -1;
@@ -1741,7 +1748,7 @@ int VRML_LAYER::Import( int start, GLUtesselator* tess )
         cbeg = contours[i]->begin();
         cend = contours[i]->end();
 
-        gluTessBeginContour( tess );
+        gluTessBeginContour( aTesselator );
 
         while( cbeg != cend )
         {
@@ -1749,10 +1756,10 @@ int VRML_LAYER::Import( int start, GLUtesselator* tess )
             pt[0] = vp->x;
             pt[1] = vp->y;
             pt[2] = 0.0;
-            gluTessVertex( tess, pt, vp );
+            gluTessVertex( aTesselator, pt, vp );
         }
 
-        gluTessEndContour( tess );
+        gluTessEndContour( aTesselator );
     }
 
     return start;

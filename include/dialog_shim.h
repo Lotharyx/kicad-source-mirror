@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2012 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2012-2016 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2012-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,11 +28,41 @@
 #include <wx/dialog.h>
 #include <hashtables.h>
 #include <kiway_player.h>
+class wxGridEvent;
 
-#define DLGSHIM_USE_SETFOCUS      0
+
+
+struct WINDOW_THAWER
+{
+    WINDOW_THAWER( wxWindow* aWindow )
+    {
+        m_window = aWindow;
+        m_freezeCount = 0;
+
+        while( m_window->IsFrozen() )
+        {
+            m_window->Thaw();
+            m_freezeCount++;
+        }
+    }
+
+    ~WINDOW_THAWER()
+    {
+        while( m_freezeCount > 0 )
+        {
+            m_window->Freeze();
+            m_freezeCount--;
+        }
+    }
+
+protected:
+    wxWindow* m_window;
+    int       m_freezeCount;
+};
+
 
 class WDO_ENABLE_DISABLE;
-class EVENT_LOOP;
+class WX_EVENT_LOOP;
 
 // These macros are for DIALOG_SHIM only, NOT for KIWAY_PLAYER.  KIWAY_PLAYER
 // has its own support for quasi modal and its platform specific issues are different
@@ -73,11 +103,20 @@ public:
     DIALOG_SHIM( wxWindow* aParent, wxWindowID id, const wxString& title,
             const   wxPoint& pos = wxDefaultPosition,
             const   wxSize&  size = wxDefaultSize,
-            long    style = wxDEFAULT_DIALOG_STYLE,
+            long    style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER,
             const   wxString& name = wxDialogNameStr
             );
 
     ~DIALOG_SHIM();
+
+    /**
+     * Sets the window (usually a wxTextCtrl) that should be focused when the dialog is
+     * shown.
+     */
+    void SetInitialFocus( wxWindow* aWindow )
+    {
+        m_initialFocusTarget = aWindow;
+    }
 
     int ShowQuasiModal();      // disable only the parent window, otherwise modal.
 
@@ -88,6 +127,10 @@ public:
     bool Show( bool show ) override;
 
     bool Enable( bool enable ) override;
+
+    void OnPaint( wxPaintEvent &event );
+
+    EDA_UNITS_T GetUserUnits() const override { return m_units; }
 
 protected:
 
@@ -108,27 +151,44 @@ protected:
      */
     void FinishDialogSettings();
 
-    /** A ugly hack to fix an issue on OSX:
-     * when typing ctrl+c in a wxTextCtrl inside a dialog, it is closed instead of
-     * copying a text if a button with wxID_CANCEL is used in a wxStdDialogButtonSizer,
-     * when the dlg is created by wxFormBuilder:
-     * the label is &Cancel, and this accelerator key has priority
-     * to copy text standard accelerator, and the dlg is closed when trying to copy text
-     * this function do nothing on other platforms
+    /**
+     * Set the dialog to the given dimensions in "dialog units". These are units equivalent
+     * to 4* the average character width and 8* the average character height, allowing a dialog
+     * to be sized in a way that scales it with the system font.
      */
-    void FixOSXCancelButtonIssue();
+    void SetSizeInDU( int x, int y );
 
-    std::string m_hash_key;     // alternate for class_map when classname re-used.
+    /**
+     * Convert an integer number of dialog units to pixels, horizontally. See SetSizeInDU or
+     * wxDialog documentation for more information.
+     */
+    int HorizPixelsFromDU( int x );
+
+    /**
+     * Convert an integer number of dialog units to pixels, vertically. See SetSizeInDU or
+     * wxDialog documentation for more information.
+     */
+    int VertPixelsFromDU( int y );
+
+    EDA_UNITS_T         m_units;        // userUnits for display and parsing
+    std::string         m_hash_key;     // alternate for class_map when classname re-used
+
+    // On MacOS (at least) SetFocus() calls made in the constructor will fail because a
+    // window that isn't yet visible will return false to AcceptsFocus().  So we must delay
+    // the initial-focus SetFocus() call to the first paint event.
+    bool                m_firstPaintEvent;
+    wxWindow*           m_initialFocusTarget;
 
     // variables for quasi-modal behavior support, only used by a few derivatives.
-    EVENT_LOOP*         m_qmodal_loop;      // points to nested event_loop, NULL means not qmodal and dismissed
+    WX_EVENT_LOOP*      m_qmodal_loop;      // points to nested event_loop, NULL means not qmodal and dismissed
     bool                m_qmodal_showing;
     WDO_ENABLE_DISABLE* m_qmodal_parent_disabler;
 
-#if DLGSHIM_USE_SETFOCUS
 private:
-    void    onInit( wxInitDialogEvent& aEvent );
-#endif
+    void OnGridEditorShown( wxGridEvent& event );
+    void OnGridEditorHidden( wxGridEvent& event );
+
+    DECLARE_EVENT_TABLE()
 };
 
 #endif  // DIALOG_SHIM_

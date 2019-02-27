@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2007, 2008 Lubo Racko <developer@lura.sk>
  * Copyright (C) 2007, 2008, 2012-2013 Alexander Lunev <al.lunev@yahoo.com>
- * Copyright (C) 2012 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -79,7 +79,7 @@ PCB_POLYGON::~PCB_POLYGON()
     }
 }
 
-void PCB_POLYGON::AssignNet( wxString aNetName )
+void PCB_POLYGON::AssignNet( const wxString& aNetName )
 {
     m_net = aNetName;
     m_netCode = GetNetCode( m_net );
@@ -94,12 +94,16 @@ void PCB_POLYGON::SetOutline( VERTICES_ARRAY* aOutline )
     for( i = 0; i < (int) aOutline->GetCount(); i++ )
         m_outline.Add( new wxRealPoint( (*aOutline)[i]->x, (*aOutline)[i]->y ) );
 
-    m_positionX = m_outline[0]->x;
-    m_positionY = m_outline[0]->y;
+    if( m_outline.Count() > 0 )
+    {
+        m_positionX = m_outline[0]->x;
+        m_positionY = m_outline[0]->y;
+    }
 }
 
 void PCB_POLYGON::FormPolygon( XNODE*   aNode, VERTICES_ARRAY* aPolygon,
-                               wxString aDefaultMeasurementUnit, wxString aActualConversion )
+                               const wxString& aDefaultMeasurementUnit,
+                               const wxString& aActualConversion )
 {
     XNODE*      lNode;
     double      x, y;
@@ -120,15 +124,12 @@ void PCB_POLYGON::FormPolygon( XNODE*   aNode, VERTICES_ARRAY* aPolygon,
 }
 
 
-bool PCB_POLYGON::Parse( XNODE*         aNode,
-                         wxString       aDefaultMeasurementUnit,
-                         wxString       aActualConversion,
-                         wxStatusBar*   aStatusBar )
+bool PCB_POLYGON::Parse( XNODE*          aNode,
+                         const wxString& aDefaultMeasurementUnit,
+                         const wxString& aActualConversion )
 {
     XNODE*      lNode;
     wxString    propValue;
-
-    // aStatusBar->SetStatusText( aStatusBar->GetStatusText() + wxT( " Polygon..." ) );
 
     lNode = FindNode( aNode, wxT( "netNameRef" ) );
 
@@ -157,6 +158,25 @@ bool PCB_POLYGON::Parse( XNODE*         aNode,
 
 void PCB_POLYGON::AddToModule( MODULE* aModule )
 {
+    if( IsNonCopperLayer( m_KiCadLayer ) )
+    {
+        EDGE_MODULE* dwg = new EDGE_MODULE( aModule, S_POLYGON );
+        aModule->GraphicalItemsList().PushBack( dwg );
+
+        dwg->SetWidth( 0 );
+        dwg->SetLayer( m_KiCadLayer );
+
+        auto outline = new std::vector<wxPoint>;
+        for( auto point : m_outline )
+            outline->push_back( wxPoint( point->x, point->y ) );
+
+        dwg->SetPolyPoints( *outline );
+        dwg->SetStart0( *outline->begin() );
+        dwg->SetEnd0( outline->back() );
+        dwg->SetDrawCoord();
+
+        delete( outline );
+    }
 }
 
 
@@ -174,26 +194,19 @@ void PCB_POLYGON::AddToBoard()
         zone->SetNetCode( m_netCode );
 
         // add outline
-        int outline_hatch = CPolyLine::DIAGONAL_EDGE;
+        int outline_hatch = ZONE_CONTAINER::DIAGONAL_EDGE;
 
-        zone->Outline()->Start( m_KiCadLayer, KiROUND( m_outline[i]->x ),
-                                KiROUND( m_outline[i]->y ), outline_hatch );
-
-        for( i = 1; i < (int) m_outline.GetCount(); i++ )
+        for( i = 0; i < (int) m_outline.GetCount(); i++ )
         {
             zone->AppendCorner( wxPoint( KiROUND( m_outline[i]->x ),
-                                         KiROUND( m_outline[i]->y ) ) );
+                                         KiROUND( m_outline[i]->y ) ), -1 );
         }
-
-        zone->Outline()->CloseLastContour();
 
         zone->SetZoneClearance( m_width );
 
         zone->SetPriority( m_priority );
 
-        zone->Outline()->SetHatch( outline_hatch,
-                                   Mils2iu( zone->Outline()->GetDefaultHatchPitchMils() ),
-                                   true );
+        zone->SetHatch( outline_hatch, zone->GetDefaultHatchPitch(), true );
 
         if ( m_objType == wxT( 'K' ) )
         {
@@ -210,9 +223,16 @@ void PCB_POLYGON::AddToBoard()
         }
 
         //if( m_filled )
-        //    cvpcb is not linked
         //    zone->BuildFilledPolysListData( m_board );
     }
+}
+
+
+void PCB_POLYGON::Flip()
+{
+    PCB_COMPONENT::Flip();
+
+    m_KiCadLayer = FlipLayer( m_KiCadLayer );
 }
 
 

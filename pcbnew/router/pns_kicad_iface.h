@@ -31,10 +31,13 @@ class PNS_PCBNEW_DEBUG_DECORATOR;
 
 class BOARD;
 class BOARD_COMMIT;
+class PCB_DISPLAY_OPTIONS;
+class PCB_TOOL;
+
 namespace KIGFX
 {
     class VIEW;
-};
+}
 
 class PNS_KICAD_IFACE : public PNS::ROUTER_IFACE {
 public:
@@ -42,7 +45,8 @@ public:
     ~PNS_KICAD_IFACE();
 
     void SetRouter( PNS::ROUTER* aRouter ) override;
-    void SetHostFrame( PCB_EDIT_FRAME* aFrame );
+    void SetHostTool( PCB_TOOL* aTool );
+    void SetDisplayOptions( PCB_DISPLAY_OPTIONS* aDispOptions );
 
     void SetBoard( BOARD* aBoard );
     void SetView( KIGFX::VIEW* aView );
@@ -63,20 +67,22 @@ private:
     PNS_PCBNEW_RULE_RESOLVER* m_ruleResolver;
     PNS_PCBNEW_DEBUG_DECORATOR* m_debugDecorator;
 
-    std::unique_ptr< PNS::SOLID >   syncPad( D_PAD* aPad );
-    std::unique_ptr< PNS::SEGMENT > syncTrack( TRACK* aTrack );
-    std::unique_ptr< PNS::VIA >     syncVia( VIA* aVia );
+    std::unique_ptr<PNS::SOLID> syncPad( D_PAD* aPad );
+    std::unique_ptr<PNS::SEGMENT> syncTrack( TRACK* aTrack );
+    std::unique_ptr<PNS::VIA> syncVia( VIA* aVia );
+    bool syncTextItem( PNS::NODE* aWorld, EDA_TEXT* aText, PCB_LAYER_ID aLayer );
+    bool syncGraphicalItem( PNS::NODE* aWorld, DRAWSEGMENT* aItem );
+    bool syncZone( PNS::NODE* aWorld, ZONE_CONTAINER* aZone );
 
     KIGFX::VIEW* m_view;
     KIGFX::VIEW_GROUP* m_previewItems;
     std::unordered_set<BOARD_CONNECTED_ITEM*> m_hiddenItems;
 
-    PNS::NODE* m_world;
     PNS::ROUTER* m_router;
     BOARD* m_board;
-    PICKED_ITEMS_LIST m_undoBuffer;
-    PCB_EDIT_FRAME* m_frame;
+    PCB_TOOL* m_tool;
     std::unique_ptr<BOARD_COMMIT> m_commit;
+    PCB_DISPLAY_OPTIONS* m_dispOptions;
 };
 
 #endif

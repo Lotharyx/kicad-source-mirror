@@ -1,7 +1,13 @@
+# .cpp files are compiled with extra ${WSHADOW_FLAGS}
+if( COMPILER_SUPPORTS_WSHADOW )
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${WSHADOW_FLAGS}")
+endif()
+
 add_definitions(-DPL_EDITOR)
 
 include_directories(BEFORE ${INC_BEFORE})
 include_directories(
+    ../include/legacy_wx
     dialogs
     ../common/dialogs
     ${INC_AFTER}
@@ -12,8 +18,8 @@ set( PL_EDITOR_SRCS
     dialogs/dialogs_for_printing.cpp
     dialogs/dialog_new_dataitem_base.cpp
     dialogs/dialog_new_dataitem.cpp
-    class_pl_editor_screen.cpp
-    class_pl_editor_layout.cpp
+    pl_editor_screen.cpp
+    pl_editor_layout.cpp
     design_tree_frame.cpp
     events_functions.cpp
     controle.cpp
@@ -35,8 +41,8 @@ set( PL_EDITOR_EXTRA_SRCS
     ../common/base_screen.cpp
     ../common/base_units.cpp
     ../common/eda_text.cpp
-    ../common/class_page_info.cpp
     ../common/dialogs/dialog_page_settings.cpp
+    ../common/page_info.cpp
 )
 
 
@@ -75,7 +81,17 @@ target_link_libraries( pl_editor
     #singletop  # replaces common, giving us restrictive control and link warnings.
     # There's way too much crap coming in from common yet.
     common
-    bitmaps
+    gal
+    legacy_wx
+    common
+    gal
+    legacy_wx
+    common
+    gal
+    legacy_wx
+    common
+    gal
+    legacy_wx
     ${wxWidgets_LIBRARIES}
     )
 
@@ -93,9 +109,14 @@ add_library( pl_editor_kiface MODULE
     )
 target_link_libraries( pl_editor_kiface
     common
-    polygon
-    bitmaps
     gal
+    legacy_wx
+    common
+    gal
+    legacy_wx
+    common
+    gal
+    legacy_wx
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
     )

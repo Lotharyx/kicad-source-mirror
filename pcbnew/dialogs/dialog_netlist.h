@@ -28,26 +28,28 @@
 #ifndef _DIALOG_NETLIST_H_
 #define _DIALOG_NETLIST_H_
 
-#include <dialog_netlist_fbp.h>
+#include <dialog_netlist_base.h>
 
 
 class MODULE;
 class NETLIST;
 
 
-class DIALOG_NETLIST : public DIALOG_NETLIST_FBP
+class DIALOG_NETLIST : public DIALOG_NETLIST_BASE
 {
 private:
     PCB_EDIT_FRAME* m_parent;
-    wxDC*           m_dc;
-    bool            m_silentMode;   // if true, do not display warning message about undo
     wxConfigBase*   m_config;
+    bool            m_initialized;
+    bool            m_runDragCommand;
 
 public:
-    DIALOG_NETLIST( PCB_EDIT_FRAME* aParent, wxDC* aDC, const wxString & aNetlistFullFilename );
+    DIALOG_NETLIST( PCB_EDIT_FRAME* aParent, const wxString & aNetlistFullFilename );
     ~DIALOG_NETLIST();
 
 private:
+    void onFilenameChanged();
+
     /**
      * Function verifyFootprints
      * compares the netlist to the board and builds a list of duplicate, missing, and
@@ -69,27 +71,16 @@ private:
                            wxArrayString&          aMissing,
                            std::vector< MODULE* >& aNotInNetlist );
 
-    /**
-     * Function loadFootprints
-     * loads the footprints for each #COMPONENT in \a aNetlist from the list of libraries.
-     *
-     * @param aNetlist is the netlist of components to load the footprints into.
-     */
-    void loadFootprints( NETLIST& aNetlist );
+    void loadNetlist( bool aDryRun );
 
     // Virtual event handlers:
     void OnOpenNetlistClick( wxCommandEvent& event ) override;
-    void OnReadNetlistFileClick( wxCommandEvent& event ) override;
+    void OnUpdatePCB( wxCommandEvent& event ) override;
+    void OnFilenameKillFocus( wxFocusEvent& event ) override;
+    void OnMatchChanged( wxCommandEvent& event ) override;
+    void OnOptionChanged( wxCommandEvent& event ) override;
     void OnTestFootprintsClick( wxCommandEvent& event ) override;
     void OnCompileRatsnestClick( wxCommandEvent& event ) override;
-    void OnCancelClick( wxCommandEvent& event ) override;
-    void OnSaveMessagesToFile( wxCommandEvent& aEvent ) override;
-    void OnClickSilentMode( wxCommandEvent& event ) override
-    {
-        m_silentMode = m_checkBoxSilentMode->GetValue();
-    }
-
-    void OnUpdateUISaveMessagesToFile( wxUpdateUIEvent& aEvent ) override;
     void OnUpdateUIValidNetlistFile( wxUpdateUIEvent& aEvent ) override;
 };
 

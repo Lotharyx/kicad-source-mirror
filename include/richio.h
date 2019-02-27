@@ -70,7 +70,7 @@ std::string
     StrPrintf( const char* format, ... );
 
 
-#define LINE_READER_LINE_DEFAULT_MAX        100000
+#define LINE_READER_LINE_DEFAULT_MAX        1000000
 #define LINE_READER_LINE_INITIAL_SIZE       5000
 
 /**
@@ -81,22 +81,22 @@ std::string
 class LINE_READER
 {
 protected:
-    unsigned    length;         ///< no. bytes in line before trailing nul.
-    unsigned    lineNum;
+    unsigned    m_length;         ///< no. bytes in line before trailing nul.
+    unsigned    m_lineNum;
 
-    char*       line;           ///< the read line of UTF8 text
-    unsigned    capacity;       ///< no. bytes allocated for line.
+    char*       m_line;           ///< the read line of UTF8 text
+    unsigned    m_capacity;       ///< no. bytes allocated for line.
 
-    unsigned    maxLineLength;  ///< maximum allowed capacity using resizing.
+    unsigned    m_maxLineLength;  ///< maximum allowed capacity using resizing.
 
-    wxString    source;         ///< origin of text lines, e.g. filename or "clipboard"
+    wxString    m_source;         ///< origin of text lines, e.g. filename or "clipboard"
 
     /**
      * Function expandCapacity
      * will expand the capacity of @a line up to maxLineLength but not greater, so
      * be careful about making assumptions of @a capacity after calling this.
      */
-    void        expandCapacity( unsigned newsize );
+    void        expandCapacity( unsigned aNewsize );
 
 
 public:
@@ -118,7 +118,7 @@ public:
      * @return char* - The beginning of the read line, or NULL if EOF.
      * @throw IO_ERROR when a line is too long.
      */
-    virtual char* ReadLine() throw( IO_ERROR ) = 0;
+    virtual char* ReadLine() = 0;
 
     /**
      * Function GetSource
@@ -129,7 +129,7 @@ public:
      */
     virtual const wxString& GetSource() const
     {
-        return source;
+        return m_source;
     }
 
     /**
@@ -138,7 +138,7 @@ public:
      */
     char* Line() const
     {
-        return line;
+        return m_line;
     }
 
     /**
@@ -158,7 +158,7 @@ public:
      */
     virtual unsigned LineNumber() const
     {
-        return lineNum;
+        return m_lineNum;
     }
 
     /**
@@ -167,7 +167,7 @@ public:
      */
     unsigned Length() const
     {
-        return length;
+        return m_length;
     }
 };
 
@@ -181,8 +181,8 @@ class FILE_LINE_READER : public LINE_READER
 {
 protected:
 
-    bool    iOwn;   ///< if I own the file, I'll promise to close it, else not.
-    FILE*   fp;     ///< I may own this file, but might not.
+    bool    m_iOwn; ///< if I own the file, I'll promise to close it, else not.
+    FILE*   m_fp;   ///< I may own this file, but might not.
 
 public:
 
@@ -205,7 +205,7 @@ public:
      */
     FILE_LINE_READER( const wxString& aFileName,
             unsigned aStartingLineNumber = 0,
-            unsigned aMaxLineLength = LINE_READER_LINE_DEFAULT_MAX ) throw( IO_ERROR );
+            unsigned aMaxLineLength = LINE_READER_LINE_DEFAULT_MAX );
 
     /**
      * Constructor FILE_LINE_READER
@@ -232,7 +232,7 @@ public:
      */
     ~FILE_LINE_READER();
 
-    char* ReadLine() throw( IO_ERROR ) override;
+    char* ReadLine() override;
 
     /**
      * Function Rewind
@@ -241,8 +241,8 @@ public:
      */
     void Rewind()
     {
-        rewind( fp );
-        lineNum = 0;
+        rewind( m_fp );
+        m_lineNum = 0;
     }
 };
 
@@ -254,8 +254,8 @@ public:
 class STRING_LINE_READER : public LINE_READER
 {
 protected:
-    std::string     lines;
-    size_t          ndx;
+    std::string     m_lines;
+    size_t          m_ndx;
 
 public:
 
@@ -279,7 +279,7 @@ public:
      */
     STRING_LINE_READER( const STRING_LINE_READER& aStartingPoint );
 
-    char* ReadLine() throw( IO_ERROR ) override;
+    char* ReadLine() override;
 };
 
 
@@ -302,7 +302,7 @@ public:
      */
     INPUTSTREAM_LINE_READER( wxInputStream* aStream, const wxString& aSource );
 
-    char* ReadLine() throw( IO_ERROR ) override;
+    char* ReadLine() override;
 };
 
 
@@ -326,16 +326,16 @@ public:
  */
 class OUTPUTFORMATTER
 {
-    std::vector<char>   buffer;
+    std::vector<char>   m_buffer;
     char                quoteChar[2];
 
-    int sprint( const char* fmt, ... )  throw( IO_ERROR );
-    int vprint( const char* fmt,  va_list ap )  throw( IO_ERROR );
+    int sprint( const char* fmt, ... );
+    int vprint( const char* fmt,  va_list ap );
 
 
 protected:
     OUTPUTFORMATTER( int aReserve = OUTPUTFMTBUFZ, char aQuoteChar = '"' ) :
-            buffer( aReserve, '\0' )
+            m_buffer( aReserve, '\0' )
     {
         quoteChar[0] = aQuoteChar;
         quoteChar[1] = '\0';
@@ -365,7 +365,7 @@ protected:
      * @param aCount  tells how many bytes to write.
      * @throw IO_ERROR, if there is a problem outputting, such as a full disk.
      */
-    virtual void write( const char* aOutBuf, int aCount ) throw( IO_ERROR ) = 0;
+    virtual void write( const char* aOutBuf, int aCount ) = 0;
 
 #if defined(__GNUG__)   // The GNU C++ compiler defines this
 
@@ -394,7 +394,7 @@ public:
      * @return int - the number of characters output.
      * @throw IO_ERROR, if there is a problem outputting, such as a full disk.
      */
-    int PRINTF_FUNC Print( int nestLevel, const char* fmt, ... ) throw( IO_ERROR );
+    int PRINTF_FUNC Print( int nestLevel, const char* fmt, ... );
 
     /**
      * Function GetQuoteChar
@@ -429,9 +429,9 @@ public:
      *
      * @throw IO_ERROR, if there is any kind of problem with the input string.
      */
-     virtual std::string Quotes( const std::string& aWrapee ) throw( IO_ERROR );
+     virtual std::string Quotes( const std::string& aWrapee );
 
-     std::string Quotew( const wxString& aWrapee ) throw( IO_ERROR );
+     std::string Quotew( const wxString& aWrapee );
 
     //-----</interface functions>-----------------------------------------
 };
@@ -444,7 +444,7 @@ public:
 */
 class STRING_FORMATTER : public OUTPUTFORMATTER
 {
-    std::string             mystring;
+    std::string m_mystring;
 
 public:
 
@@ -463,7 +463,7 @@ public:
      */
     void Clear()
     {
-        mystring.clear();
+        m_mystring.clear();
     }
 
     /**
@@ -474,12 +474,12 @@ public:
 
     const std::string& GetString()
     {
-        return mystring;
+        return m_mystring;
     }
 
 protected:
     //-----<OUTPUTFORMATTER>------------------------------------------------
-    void write( const char* aOutBuf, int aCount ) throw( IO_ERROR ) override;
+    void write( const char* aOutBuf, int aCount ) override;
     //-----</OUTPUTFORMATTER>-----------------------------------------------
 };
 
@@ -504,14 +504,13 @@ public:
      */
     FILE_OUTPUTFORMATTER(   const wxString& aFileName,
                             const wxChar* aMode = wxT( "wt" ),
-                            char aQuoteChar = '"' )
-        throw( IO_ERROR );
+                            char aQuoteChar = '"' );
 
     ~FILE_OUTPUTFORMATTER();
 
 protected:
     //-----<OUTPUTFORMATTER>------------------------------------------------
-    void write( const char* aOutBuf, int aCount ) throw( IO_ERROR ) override;
+    void write( const char* aOutBuf, int aCount ) override;
     //-----</OUTPUTFORMATTER>-----------------------------------------------
 
     FILE*       m_fp;               ///< takes ownership
@@ -526,7 +525,7 @@ protected:
  */
 class STREAM_OUTPUTFORMATTER : public OUTPUTFORMATTER
 {
-    wxOutputStream& os;
+    wxOutputStream& m_os;
 
 public:
     /**
@@ -536,13 +535,13 @@ public:
      */
     STREAM_OUTPUTFORMATTER( wxOutputStream& aStream, char aQuoteChar = '"' ) :
         OUTPUTFORMATTER( OUTPUTFMTBUFZ, aQuoteChar ),
-        os( aStream )
+        m_os( aStream )
     {
     }
 
 protected:
     //-----<OUTPUTFORMATTER>------------------------------------------------
-    void write( const char* aOutBuf, int aCount ) throw( IO_ERROR ) override;
+    void write( const char* aOutBuf, int aCount ) override;
     //-----</OUTPUTFORMATTER>-----------------------------------------------
 };
 

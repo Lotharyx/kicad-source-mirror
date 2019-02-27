@@ -29,8 +29,7 @@
 
 #include <fctsys.h>
 #include <gr_basic.h>
-#include <class_drawpanel.h>
-#include <wxstruct.h>
+#include <sch_draw_panel.h>
 #include <msgpanel.h>
 
 #include <general.h>
@@ -52,17 +51,15 @@ LIB_ITEM::LIB_ITEM( KICAD_T        aType,
     m_Convert           = aConvert;
     m_Fill              = aFillType;
     m_Parent            = (EDA_ITEM*) aComponent;
-    m_typeName          = _( "Undefined" );
     m_isFillable        = false;
-    m_eraseLastDrawItem = false;
 }
 
 
-void LIB_ITEM::GetMsgPanelInfo( MSG_PANEL_ITEMS& aList )
+void LIB_ITEM::GetMsgPanelInfo( EDA_UNITS_T aUnits, MSG_PANEL_ITEMS& aList )
 {
     wxString msg;
 
-    aList.push_back( MSG_PANEL_ITEM( _( "Type" ), m_typeName, CYAN ) );
+    aList.push_back( MSG_PANEL_ITEM( _( "Type" ), GetTypeName(), CYAN ) );
 
     if( m_Unit == 0 )
         msg = _( "All" );
@@ -80,7 +77,7 @@ void LIB_ITEM::GetMsgPanelInfo( MSG_PANEL_ITEMS& aList )
     else
         msg = wxT( "?" );
 
-    aList.push_back( MSG_PANEL_ITEM( _( "Convert" ), msg, BROWN ) );
+    aList.push_back( MSG_PANEL_ITEM( _( "Converted" ), msg, BROWN ) );
 }
 
 
@@ -115,15 +112,16 @@ bool LIB_ITEM::operator<( const LIB_ITEM& aOther ) const
 
 
 void LIB_ITEM::Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC,
-                     const wxPoint& aOffset, EDA_COLOR_T aColor,
+                     const wxPoint& aOffset, COLOR4D aColor,
                      GR_DRAWMODE aDrawMode, void* aData,
                      const TRANSFORM& aTransform )
 {
+    #if 0
     if( InEditMode() )
     {
         // Temporarily disable filling while the item is being edited.
         FILL_T fillMode = m_Fill;
-        EDA_COLOR_T color = GetDefaultColor();
+        COLOR4D color = GetDefaultColor();
 
         m_Fill = NO_FILL;
 
@@ -138,7 +136,7 @@ void LIB_ITEM::Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC,
         }
 #endif
         // Calculate the new attributes at the current cursor position.
-        calcEdit( aOffset );
+        CalcEdit( aOffset );
 
         // Draw the items using the new attributes.
         drawEditGraphics( aPanel->GetClipBox(), aDC, color );
@@ -148,13 +146,23 @@ void LIB_ITEM::Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC,
         m_Fill = fillMode;
     }
     else
+    #endif
     {
         drawGraphic( aPanel, aDC, aOffset, aColor, aDrawMode, aData, aTransform );
     }
 }
 
 
-EDA_COLOR_T LIB_ITEM::GetDefaultColor()
+void LIB_ITEM::ViewGetLayers( int aLayers[], int& aCount ) const
+{
+    // Basic fallback
+    aCount      = 2;
+    aLayers[0]  = LAYER_DEVICE;
+    aLayers[1]  = LAYER_DEVICE_BACKGROUND;
+}
+
+
+COLOR4D LIB_ITEM::GetDefaultColor()
 {
     return GetLayerColor( LAYER_DEVICE );
 }

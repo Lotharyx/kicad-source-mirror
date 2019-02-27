@@ -257,7 +257,7 @@ void SCENEGRAPH::ReNameNodes( void )
 }
 
 
-bool SCENEGRAPH::WriteVRML( std::ofstream& aFile, bool aReuseFlag )
+bool SCENEGRAPH::WriteVRML( std::ostream& aFile, bool aReuseFlag )
 {
     if( m_Transforms.empty() && m_RTransforms.empty()
         && m_Shape.empty() && m_RShape.empty() )
@@ -364,7 +364,7 @@ bool SCENEGRAPH::WriteVRML( std::ofstream& aFile, bool aReuseFlag )
 }
 
 
-bool SCENEGRAPH::WriteCache( std::ofstream& aFile, SGNODE* parentNode )
+bool SCENEGRAPH::WriteCache( std::ostream& aFile, SGNODE* parentNode )
 {
     if( NULL == parentNode && NULL != m_Parent )
     {
@@ -510,7 +510,7 @@ bool SCENEGRAPH::WriteCache( std::ofstream& aFile, SGNODE* parentNode )
 }
 
 
-bool SCENEGRAPH::ReadCache( std::ifstream& aFile, SGNODE* parentNode )
+bool SCENEGRAPH::ReadCache( std::istream& aFile, SGNODE* parentNode )
 {
     if( !m_Transforms.empty() || !m_RTransforms.empty()
         || !m_Shape.empty() || !m_RShape.empty() )
@@ -741,18 +741,18 @@ bool SCENEGRAPH::Prepare( const glm::dmat4* aTransform,
     double rX, rY, rZ;
     // rotation
     rotation_axis.GetVector( rX, rY, rZ );
-    glm::dmat4 rM = glm::rotate( rotation_angle, glm::dvec3( rX, rY, rZ ) );
+    glm::dmat4 rM = glm::rotate( glm::dmat4( 1.0 ), rotation_angle, glm::dvec3( rX, rY, rZ ) );
     // translation
-    glm::dmat4 tM = glm::translate( glm::dvec3( translation.x, translation.y, translation.z ) );
+    glm::dmat4 tM = glm::translate( glm::dmat4( 1.0 ), glm::dvec3( translation.x, translation.y, translation.z ) );
     // center
-    glm::dmat4 cM = glm::translate( glm::dvec3( center.x, center.y, center.z ) );
-    glm::dmat4 ncM = glm::translate( glm::dvec3( -center.x, -center.y, -center.z ) );
+    glm::dmat4 cM = glm::translate( glm::dmat4( 1.0 ), glm::dvec3( center.x, center.y, center.z ) );
+    glm::dmat4 ncM = glm::translate( glm::dmat4( 1.0 ), glm::dvec3( -center.x, -center.y, -center.z ) );
     // scale
     glm::dmat4 sM = glm::scale( glm::dmat4( 1.0 ), glm::dvec3( scale.x, scale.y, scale.z ) );
     // scaleOrientation
     scale_axis.GetVector( rX, rY, rZ );
-    glm::dmat4 srM = glm::rotate( scale_angle, glm::dvec3( rX, rY, rZ ) );
-    glm::dmat4 nsrM = glm::rotate( -scale_angle, glm::dvec3( rX, rY, rZ ) );
+    glm::dmat4 srM = glm::rotate( glm::dmat4( 1.0 ), scale_angle, glm::dvec3( rX, rY, rZ ) );
+    glm::dmat4 nsrM = glm::rotate( glm::dmat4( 1.0 ), -scale_angle, glm::dvec3( rX, rY, rZ ) );
 
     // resultant point:
     // P' = T x C x R x SR x S x -SR x -C x P

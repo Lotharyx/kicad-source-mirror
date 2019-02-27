@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2015-2016 Mario Luzeiro <mrluzeiro@ua.pt>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2015-2017 Mario Luzeiro <mrluzeiro@ua.pt>
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -33,7 +33,9 @@
 #include <stdio.h>
 #include <wx/debug.h>
 
-static unsigned int gs_next_rayID = 0;
+#include <cmath>
+
+//static unsigned int gs_next_rayID = 0;
 
 void RAY::Init( const SFVEC3F& o, const SFVEC3F& d )
 {
@@ -41,17 +43,8 @@ void RAY::Init( const SFVEC3F& o, const SFVEC3F& d )
     m_Dir = d;
     m_InvDir = 1.0f / d;
 
-    if( fabs(m_Dir.x) < FLT_EPSILON )
-        m_InvDir.x = NextFloatDown(FLT_MAX);
-
-    if( fabs(m_Dir.y) < FLT_EPSILON )
-        m_InvDir.y = NextFloatDown(FLT_MAX);
-
-    if( fabs(m_Dir.z) < FLT_EPSILON )
-        m_InvDir.z = NextFloatDown(FLT_MAX);
-
-    rayID = gs_next_rayID;
-    gs_next_rayID++;
+    //rayID = gs_next_rayID;
+    //gs_next_rayID++;
 
     // An Efficient and Robust Ray–Box Intersection Algorithm
     // Amy Williams Steve Barrus R. Keith Morley Peter Shirley
@@ -60,6 +53,7 @@ void RAY::Init( const SFVEC3F& o, const SFVEC3F& d )
     m_dirIsNeg[0] = m_Dir.x < 0.0f;
     m_dirIsNeg[1] = m_Dir.y < 0.0f;
     m_dirIsNeg[2] = m_Dir.z < 0.0f;
+
 
     // ray slope
 
@@ -193,7 +187,7 @@ bool IntersectSegment( const SFVEC2F &aStartA, const SFVEC2F &aEnd_minus_startA,
                 aEnd_minus_startB.y - aEnd_minus_startA.y *
                 aEnd_minus_startB.x;
 
-    if( fabs(rxs) >  glm::epsilon<float>() )
+    if( std::abs( rxs ) >  glm::epsilon<float>() )
     {
         float inv_rxs = 1.0f / rxs;
 
@@ -302,7 +296,7 @@ bool RAYSEG2D::IntersectSegment( const SFVEC2F &aStart,
                 aEnd_minus_start.y - m_End_minus_start.y *
             aEnd_minus_start.x;
 
-    if( fabs( rxs ) >  glm::epsilon<float>() )
+    if( std::abs( rxs ) >  glm::epsilon<float>() )
     {
         const float inv_rxs = 1.0f / rxs;
 
@@ -379,7 +373,7 @@ bool RAYSEG2D::IntersectCircle( const SFVEC2F &aCenter,
 
     // Otherwise check and make sure that the intersections occur on the ray (t
     // > 0) and return the closer one
-    const float discriminant = sqrt( discriminantsqr );
+    const float discriminant = std::sqrt( discriminantsqr );
     const float t1 = (-qd - discriminant);
     const float t2 = (-qd + discriminant);
 

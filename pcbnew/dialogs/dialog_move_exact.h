@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2014 John Beard, john.j.beard@gmail.com
- * Copyright (C) 1992-2014 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -25,22 +25,42 @@
 #ifndef __DIALOG_MOVE_EXACT__
 #define __DIALOG_MOVE_EXACT__
 
-// Include the wxFormBuider header base:
 #include <vector>
-#include <dialog_move_exact_base.h>
+#include <widgets/unit_binder.h>
+
+#include <dialogs/dialog_move_exact_base.h>
+
+
+class PCB_BASE_FRAME;
+
+
+enum ROTATION_ANCHOR
+{
+    ROTATE_AROUND_ITEM_ANCHOR,
+    ROTATE_AROUND_SEL_CENTER,
+    ROTATE_AROUND_USER_ORIGIN,
+    ROTATE_AROUND_AUX_ORIGIN
+};
+
 
 class DIALOG_MOVE_EXACT : public DIALOG_MOVE_EXACT_BASE
 {
 private:
+    wxPoint&          m_translation;
+    double&           m_rotation;
+    ROTATION_ANCHOR&  m_rotationAnchor;
 
-    wxPoint& m_translation;
-    double& m_rotation;
+    UNIT_BINDER       m_moveX;
+    UNIT_BINDER       m_moveY;
+    UNIT_BINDER       m_rotate;
+
+    std::vector<ROTATION_ANCHOR> m_menuIDs;
 
 public:
     // Constructor and destructor
-    DIALOG_MOVE_EXACT( PCB_BASE_FRAME* aParent, wxPoint& translation,
-                       double& rotation );
-    ~DIALOG_MOVE_EXACT();
+    DIALOG_MOVE_EXACT(PCB_BASE_FRAME *aParent, wxPoint& aTranslate,
+                      double& aRotate, ROTATION_ANCHOR& aAnchor );
+    ~DIALOG_MOVE_EXACT() { };
 
 private:
 
@@ -52,7 +72,8 @@ private:
     void OnPolarChanged( wxCommandEvent& event ) override;
     void OnClear( wxCommandEvent& event ) override;
 
-    void OnOkClick( wxCommandEvent& event ) override;
+    // Automatically called when clicking on the OK button
+    bool TransferDataFromWindow() override;
 
     /**
      * Convert a given Cartesian point into a polar representation.
@@ -70,24 +91,28 @@ private:
      */
     bool GetTranslationInIU ( wxPoint& val, bool polar );
 
-    // Update texts (comments) after changing the coordinates type (polar/cartesian)
-    void updateDlgTexts( bool aPolar );
+    void buildRotationAnchorMenu();
+
+    // Update controls and their labels after changing the coordinates type (polar/cartesian)
+    void updateDialogControls( bool aPolar );
 
     /**
      * Persistent dialog options
      */
     struct MOVE_EXACT_OPTIONS
     {
-        bool    polarCoords;
-        double  entry1;
-        double  entry2;
-        double  entryRotation;
+        bool   polarCoords;
+        double entry1;
+        double entry2;
+        double entryRotation;
+        size_t entryAnchorSelection;
 
         MOVE_EXACT_OPTIONS():
-            polarCoords(false),
-            entry1(0),
-            entry2(0),
-            entryRotation(0)
+            polarCoords( false ),
+            entry1( 0 ),
+            entry2( 0 ),
+            entryRotation( 0 ),
+            entryAnchorSelection( 0 )
         {
         }
     };
@@ -97,3 +122,4 @@ private:
 };
 
 #endif      //  __DIALOG_MOVE_EXACT__
+

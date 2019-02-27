@@ -21,8 +21,9 @@
 
 #include <tool/tool_settings.h>
 
+#include <geometry/direction45.h>
+
 #include "pns_routing_settings.h"
-#include "direction.h"
 
 namespace PNS {
 
@@ -44,6 +45,8 @@ ROUTING_SETTINGS::ROUTING_SETTINGS()
     m_canViolateDRC = false;
     m_freeAngleMode = false;
     m_inlineDragEnabled = false;
+    m_snapToTracks = false;
+    m_snapToPads = false;
 }
 
 

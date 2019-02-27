@@ -38,13 +38,11 @@
 #include "pns_index.h"
 #include "pns_router.h"
 
-using boost::unordered_set;
-using boost::unordered_map;
 
 namespace PNS {
 
 #ifdef DEBUG
-static boost::unordered_set<NODE*> allocNodes;
+static std::unordered_set<NODE*> allocNodes;
 #endif
 
 NODE::NODE()
@@ -347,7 +345,7 @@ NODE::OPT_OBSTACLE NODE::NearestObstacle( const LINE* aItem, int aKindMask,
 
         if( aLine.EndsWithVia() )
         {
-            int clearance = GetClearance( obs.m_item, &aLine.Via() );
+            clearance = GetClearance( obs.m_item, &aLine.Via() );
 
             SHAPE_LINE_CHAIN viaHull = aLine.Via().Hull( clearance, aItem->Width() );
 
@@ -593,19 +591,21 @@ void NODE::addSegment( SEGMENT* aSeg )
     m_index->Add( aSeg );
 }
 
-void NODE::Add( std::unique_ptr< SEGMENT > aSegment, bool aAllowRedundant )
+bool NODE::Add( std::unique_ptr< SEGMENT > aSegment, bool aAllowRedundant )
 {
     if( aSegment->Seg().A == aSegment->Seg().B )
     {
         wxLogTrace( "PNS", "attempting to add a segment with same end coordinates, ignoring." );
-        return;
+        return false;
     }
 
     if( !aAllowRedundant && findRedundantSegment( aSegment.get() ) )
-        return;
+        return false;
 
     aSegment->SetOwner( this );
     addSegment( aSegment.release() );
+
+    return true;
 }
 
 void NODE::Add( std::unique_ptr< ITEM > aItem, bool aAllowRedundant )
@@ -757,8 +757,14 @@ void NODE::Remove( ITEM* aItem )
         break;
 
     case ITEM::LINE_T:
-        assert( false );
+    {
+        auto l = static_cast<LINE *> ( aItem );
+
+        for ( auto s : l->LinkedSegments() )
+            Remove( s );
+
         break;
+    }
 
     case ITEM::VIA_T:
         Remove( static_cast<VIA*>( aItem ) );
@@ -1076,7 +1082,7 @@ void NODE::unlinkJoint( const VECTOR2I& aPos, const LAYER_RANGE& aLayers,
 void NODE::Dump( bool aLong )
 {
 #if 0
-    boost::unordered_set<SEGMENT*> all_segs;
+    std::unordered_set<SEGMENT*> all_segs;
     SHAPE_INDEX_LIST<ITEM*>::iterator i;
 
     for( i = m_items.begin(); i != m_items.end(); i++ )
@@ -1198,24 +1204,23 @@ void NODE::releaseGarbage()
 
 
 void NODE::Commit( NODE* aNode )
-{
-    if( aNode->isRoot() )
-        return;
-
-    for( ITEM* item : aNode->m_override )
-    Remove( item );
-
-    for( INDEX::ITEM_SET::iterator i = aNode->m_index->begin();
-         i != aNode->m_index->end(); ++i )
     {
-        (*i)->SetRank( -1 );
-        (*i)->Unmark();
-        Add( std::unique_ptr<ITEM>( *i ) );
-    }
+        if( aNode->isRoot() )
+            return;
 
-    releaseChildren();
-    releaseGarbage();
-}
+        for( ITEM* item : aNode->m_override )
+            Remove( item );
+
+        for( auto i : *aNode->m_index )
+        {
+            i->SetRank( -1 );
+            i->Unmark();
+            Add( std::unique_ptr<ITEM>( i ) );
+        }
+
+        releaseChildren();
+        releaseGarbage();
+    }
 
 
 void NODE::KillChildren()

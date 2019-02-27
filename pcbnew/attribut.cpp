@@ -32,7 +32,7 @@
 #include <fctsys.h>
 #include <class_drawpanel.h>
 #include <gr_basic.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <msgpanel.h>
 
 #include <pcbnew.h>
@@ -59,7 +59,7 @@ void PCB_EDIT_FRAME::Attribut_Segment( TRACK* track, wxDC* DC, bool Flag_On )
     m_canvas->CrossHairOn( DC );    // Display cursor shape
 
     MSG_PANEL_ITEMS items;
-    track->GetMsgPanelInfo( items );
+    track->GetMsgPanelInfo( m_UserUnits, items );
     SetMsgPanel( items );
 }
 
@@ -70,11 +70,11 @@ void PCB_EDIT_FRAME::Attribut_Track( TRACK* track, wxDC* DC, bool Flag_On )
     TRACK* Track;
     int    nb_segm;
 
-    if( (track == NULL ) || (track->Type() == PCB_ZONE_T) )
+    if( (track == NULL ) || (track->Type() == PCB_SEGZONE_T) )
         return;
 
     m_canvas->CrossHairOff( DC );   // Erase cursor shape
-    Track = GetBoard()->MarkTrace( track, &nb_segm, NULL, NULL, true );
+    Track = GetBoard()->MarkTrace( GetBoard()->m_Track, track, &nb_segm, NULL, NULL, true );
     DrawTraces( m_canvas, DC, Track, nb_segm, GR_OR | GR_HIGHLIGHT );
 
     for( ; (Track != NULL) && (nb_segm > 0); nb_segm-- )

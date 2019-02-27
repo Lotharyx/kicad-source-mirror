@@ -105,7 +105,7 @@ void PCB_EDIT_FRAME::OnPlaceOrRouteFootprints( wxCommandEvent& event )
     }
 
     // Erase ratsnest if needed
-    if( GetBoard()->IsElementVisible(RATSNEST_VISIBLE) )
+    if( GetBoard()->IsElementVisible( LAYER_RATSNEST ) )
         DrawGeneralRatsnest( &dc );
 
     GetBoard()->m_Status_Pcb |= DO_NOT_SHOW_GENERAL_RASTNEST;
@@ -179,30 +179,3 @@ void PCB_EDIT_FRAME::OnPlaceOrRouteFootprints( wxCommandEvent& event )
     GetBoard()->m_Status_Pcb &= ~DO_NOT_SHOW_GENERAL_RASTNEST;
     Compile_Ratsnest( &dc, true );
 }
-
-
-/* Set or reset (true or false) Lock attribute of aModule or all modules if aModule == NULL
- */
-void PCB_EDIT_FRAME::LockModule( MODULE* aModule, bool aLocked )
-{
-    if( aModule )
-    {
-        aModule->SetLocked( aLocked );
-        SetMsgPanel( aModule );
-        OnModify();
-    }
-    else
-    {
-        aModule = GetBoard()->m_Modules;
-
-        for( ; aModule != NULL; aModule = aModule->Next() )
-        {
-            if( WildCompareString( ModulesMaskSelection, aModule->GetReference() ) )
-            {
-                aModule->SetLocked( aLocked );
-                OnModify();
-            }
-        }
-    }
-}
-

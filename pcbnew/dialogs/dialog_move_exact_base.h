@@ -1,30 +1,31 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version Jun 17 2015)
+// C++ code generated with wxFormBuilder (version Nov 10 2018)
 // http://www.wxformbuilder.org/
 //
-// PLEASE DO "NOT" EDIT THIS FILE!
+// PLEASE DO *NOT* EDIT THIS FILE!
 ///////////////////////////////////////////////////////////////////////////
 
-#ifndef __DIALOG_MOVE_EXACT_BASE_H__
-#define __DIALOG_MOVE_EXACT_BASE_H__
+#pragma once
 
 #include <wx/artprov.h>
 #include <wx/xrc/xmlres.h>
 #include <wx/intl.h>
-class DIALOG_SHIM;
-
 #include "dialog_shim.h"
 #include <wx/string.h>
-#include <wx/checkbox.h>
+#include <wx/stattext.h>
 #include <wx/gdicmn.h>
 #include <wx/font.h>
 #include <wx/colour.h>
 #include <wx/settings.h>
-#include <wx/stattext.h>
 #include <wx/textctrl.h>
+#include <wx/bitmap.h>
+#include <wx/image.h>
+#include <wx/icon.h>
 #include <wx/button.h>
+#include <wx/choice.h>
 #include <wx/sizer.h>
 #include <wx/statline.h>
+#include <wx/checkbox.h>
 #include <wx/dialog.h>
 
 ///////////////////////////////////////////////////////////////////////////
@@ -36,9 +37,9 @@ class DIALOG_SHIM;
 class DIALOG_MOVE_EXACT_BASE : public DIALOG_SHIM
 {
 	private:
-	
+
 	protected:
-		wxCheckBox* m_polarCoords;
+		wxBoxSizer* bMainSizer;
 		wxStaticText* m_xLabel;
 		wxTextCtrl* m_xEntry;
 		wxStaticText* m_xUnit;
@@ -51,24 +52,23 @@ class DIALOG_MOVE_EXACT_BASE : public DIALOG_SHIM
 		wxTextCtrl* m_rotEntry;
 		wxStaticText* m_rotUnit;
 		wxButton* m_clearRot;
+		wxChoice* m_anchorOptions;
 		wxStaticLine* m_staticline1;
+		wxCheckBox* m_polarCoords;
 		wxStdDialogButtonSizer* m_stdButtons;
 		wxButton* m_stdButtonsOK;
 		wxButton* m_stdButtonsCancel;
-		
+
 		// Virtual event handlers, overide them in your derived class
-		virtual void OnClose( wxCloseEvent& event ) { event.Skip(); }
-		virtual void OnPolarChanged( wxCommandEvent& event ) { event.Skip(); }
 		virtual void OnTextFocusLost( wxFocusEvent& event ) { event.Skip(); }
 		virtual void OnClear( wxCommandEvent& event ) { event.Skip(); }
-		virtual void OnOkClick( wxCommandEvent& event ) { event.Skip(); }
-		
-	
+		virtual void OnPolarChanged( wxCommandEvent& event ) { event.Skip(); }
+
+
 	public:
-		
-		DIALOG_MOVE_EXACT_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Move Item"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( -1,-1 ), long style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER ); 
+
+		DIALOG_MOVE_EXACT_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Move Item"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( -1,-1 ), long style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER );
 		~DIALOG_MOVE_EXACT_BASE();
-	
+
 };
 
-#endif //__DIALOG_MOVE_EXACT_BASE_H__

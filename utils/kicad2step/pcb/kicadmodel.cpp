@@ -28,7 +28,10 @@
 #include "kicadmodel.h"
 
 
-KICADMODEL::KICADMODEL() : m_scale( 1.0, 1.0, 1.0 )
+KICADMODEL::KICADMODEL() :
+    m_scale( 1.0, 1.0, 1.0 ),
+    m_offset( 0.0, 0.0, 0.0 ),
+    m_rotation( 0.0, 0.0, 0.0 )
 {
     return;
 }
@@ -77,12 +80,37 @@ bool KICADMODEL::Read( SEXPR::SEXPR* aEntry )
         std::string name = child->GetChild( 0 )->GetSymbol();
         bool ret = true;
 
+        /*
+         * Version 4.x and prior used 'at' parameter,
+         * which was specified in inches.
+         */
         if( name == "at" )
+        {
             ret = Get3DCoordinate( child->GetChild( 1 ), m_offset );
+
+            if( ret )
+            {
+                m_offset.x *= 25.4f;
+                m_offset.y *= 25.4f;
+                m_offset.z *= 25.4f;
+            }
+        }
+        /*
+         * From 5.x onwards, 3D model is provided in 'offset',
+         * which is in millimetres
+         */
+        else if( name == "offset" )
+        {
+            ret = Get3DCoordinate( child->GetChild( 1 ), m_offset );
+        }
         else if( name == "scale" )
+        {
             ret = Get3DCoordinate( child->GetChild( 1 ), m_scale );
+        }
         else if( name == "rotate" )
+        {
             ret = GetXYZRotation( child->GetChild( 1 ), m_rotation );
+        }
 
         if( !ret )
             return false;

@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2011-2016 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2017 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2011 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -71,9 +71,9 @@
  *      corresponding references and sheet path
  *
  * The class SCH_SHEET_PATH handles paths used to access a sheet.  The class
- * SCH_SHEET_LIST allows to handle the full (or partial) list of sheets and
- * their paths in a complex hierarchy.  The class EDA_ScreenList allow to
- * handle the list of SCH_SCREEN. It is useful to clear or save data,
+ * SCH_SHEET_LIST allows one to handle the full (or partial) list of sheets and
+ * their paths in a complex hierarchy.  The class EDA_ScreenList allows one
+ * to handle the list of SCH_SCREEN. It is useful to clear or save data,
  * but is not suitable to handle the full complex hierarchy possibilities
  * (usable in flat and simple hierarchies).
  */
@@ -85,7 +85,7 @@ class SCH_SCREEN;
 class SCH_MARKER;
 class SCH_ITEM;
 class SCH_REFERENCE_LIST;
-class PART_LIBS;
+
 
 #define SHEET_NOT_FOUND          -1
 
@@ -111,8 +111,6 @@ typedef std::map<wxString, SCH_REFERENCE_LIST> SCH_MULTI_UNIT_REFERENCE_MAP;
  */
 class SCH_SHEET_PATH : public SCH_SHEETS
 {
-#define MAX_SHEET_DEPTH 32         /// Maximum number of levels for a sheet path.
-
     int m_pageNumber;              /// Page numbers are maintained by the sheet load order.
 
 public:
@@ -204,36 +202,28 @@ public:
     void UpdateAllScreenReferences();
 
     /**
-     * Function AnnotatePowerSymbols
-     * annotates the power symbols only starting at \a aReference in the sheet path.
-     * @param aLibs the library list to use
-     * @param aReference A pointer to the number for the reference designator of the
-     *                   first power symbol to be annotated.  If the pointer is NULL
-     *                   the annotation starts at 1.  The number is incremented for
-     *                   each power symbol annotated.
-     */
-    void AnnotatePowerSymbols( PART_LIBS* aLibs, int* aReference );
-
-    /**
      * Function GetComponents
      * adds a SCH_REFERENCE() object to \a aReferences for each component in the sheet.
-     * @param aLibs the library list to use
+     *
      * @param aReferences List of references to populate.
      * @param aIncludePowerSymbols : false to only get normal components.
+     * @param aForceIncludeOrphanComponents : true to include components having no symbol found in lib.
+     * ( orphan components)
+     * The normal option is false, and set to true only to build the full list of components.
      */
-    void GetComponents( PART_LIBS* aLibs, SCH_REFERENCE_LIST& aReferences,
-                        bool aIncludePowerSymbols = true  );
+    void GetComponents( SCH_REFERENCE_LIST& aReferences, bool aIncludePowerSymbols = true,
+                        bool aForceIncludeOrphanComponents = false );
 
     /**
      * Function GetMultiUnitComponents
      * adds a SCH_REFERENCE_LIST object to \a aRefList for each same-reference set of
      * multi-unit parts in the sheet. The map key for each element will be the
      * reference designator.
-     * @param aLibs the library list to use
+     *
      * @param aRefList Map of reference designators to reference lists
      * @param aIncludePowerSymbols : false to only get normal components.
      */
-    void GetMultiUnitComponents( PART_LIBS* aLibs, SCH_MULTI_UNIT_REFERENCE_MAP &aRefList,
+    void GetMultiUnitComponents( SCH_MULTI_UNIT_REFERENCE_MAP &aRefList,
                                  bool aIncludePowerSymbols = true );
 
     /**
@@ -244,7 +234,7 @@ public:
      * @param aReference The reference designator of the component.
      * @param aFootPrint The value to set the footprint field.
      * @param aSetVisible The value to set the field visibility flag.
-     * @return True if \a aReference was found otherwise false.
+     * @return true if \a aReference was found otherwise false.
      */
     bool SetComponentFootprint( const wxString& aReference, const wxString& aFootPrint,
                                 bool aSetVisible );
@@ -359,52 +349,51 @@ public:
      * @return The sheet that matches \a aPath or NULL if no sheet matching
      *         \a aPath is found.
      */
-    SCH_SHEET_PATH* GetSheetByPath( const wxString aPath, bool aHumanReadable = true );
+    SCH_SHEET_PATH* GetSheetByPath( const wxString& aPath, bool aHumanReadable = true );
 
     /**
      * Function IsModified
      * checks the entire hierarchy for any modifications.
-     * @returns True if the hierarchy is modified otherwise false.
-     */
-    bool IsModified();
-
-    /**
-     * Function IsAutoSaveRequired
-     * checks the entire hierarchy for any modifications that require auto save.
      * @return True if the hierarchy is modified otherwise false.
      */
-    bool IsAutoSaveRequired();
+    bool IsModified();
 
     void ClearModifyStatus();
 
     /**
      * Function AnnotatePowerSymbols
-     * clear and annotates the entire hierarchy of the sheet path list.
-     * @param aLib the library list to use
+     * Silently annotates the not yet annotated power symbols of the entire hierarchy
+     * of the sheet path list.
+     * It is called before creating a netlist, to annotate power symbols, without prompting
+     * the user about not annotated or duplicate for these symbols, if only these symbols
+     * need annotation ( a very frequent case ).
      */
-    void AnnotatePowerSymbols( PART_LIBS* aLib );
+    void AnnotatePowerSymbols();
 
     /**
      * Function GetComponents
      * adds a SCH_REFERENCE() object to \a aReferences for each component in the list
      * of sheets.
-     * @param aLibs the library list to use
+     *
      * @param aReferences List of references to populate.
      * @param aIncludePowerSymbols Set to false to only get normal components.
+     * @param aForceIncludeOrphanComponents : true to include components having no symbol found in lib.
+     * ( orphan components)
+     * The normal option is false, and set to true only to build the full list of components.
      */
-    void GetComponents( PART_LIBS* aLibs, SCH_REFERENCE_LIST& aReferences,
-                        bool aIncludePowerSymbols = true  );
+    void GetComponents( SCH_REFERENCE_LIST& aReferences, bool aIncludePowerSymbols = true,
+                        bool aForceIncludeOrphanComponents = false );
 
     /**
      * Function GetMultiUnitComponents
      * adds a SCH_REFERENCE_LIST object to \a aRefList for each same-reference set of
      * multi-unit parts in the list of sheets. The map key for each element will be the
      * reference designator.
-     * @param aLibs the library list to use
+     *
      * @param aRefList Map of reference designators to reference lists
      * @param aIncludePowerSymbols Set to false to only get normal components.
      */
-    void GetMultiUnitComponents( PART_LIBS* aLibs, SCH_MULTI_UNIT_REFERENCE_MAP &aRefList,
+    void GetMultiUnitComponents( SCH_MULTI_UNIT_REFERENCE_MAP &aRefList,
                                  bool aIncludePowerSymbols = true );
 
     /**

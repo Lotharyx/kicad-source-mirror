@@ -2,6 +2,8 @@
  * This program source code file is part of KICAD, a free EDA CAD application.
  *
  * Copyright (C) 2013 CERN
+ * Copyright (C) 2018 KiCad Developers, see AUTHORS.txt for contributors.
+ *
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
@@ -33,11 +35,15 @@
 #include <pcb_painter.h>
 #include <layers_id_colors_and_visibility.h>
 
+#include <memory>
+#include <utility>
+
+#include <view/view.h>
 
 namespace KIGFX {
 
-RATSNEST_VIEWITEM::RATSNEST_VIEWITEM( RN_DATA* aData ) :
-        EDA_ITEM( NOT_USED ), m_data( aData )
+RATSNEST_VIEWITEM::RATSNEST_VIEWITEM(  std::shared_ptr<CONNECTIVITY_DATA> aData ) :
+        EDA_ITEM( NOT_USED ), m_data( std::move(aData) )
 {
 }
 
@@ -52,61 +58,96 @@ const BOX2I RATSNEST_VIEWITEM::ViewBBox() const
 }
 
 
-void RATSNEST_VIEWITEM::ViewDraw( int aLayer, GAL* aGal ) const
+void RATSNEST_VIEWITEM::ViewDraw( int aLayer, KIGFX::VIEW* aView ) const
 {
-    aGal->SetIsStroke( true );
-    aGal->SetIsFill( false );
-    aGal->SetLineWidth( 1.0 );
-    RENDER_SETTINGS* rs = m_view->GetPainter()->GetSettings();
-    COLOR4D color = rs->GetColor( NULL, ITEM_GAL_LAYER( RATSNEST_VISIBLE ) );
+    std::unique_lock<std::mutex> lock( m_data->GetLock(), std::try_to_lock );
+
+    if( !lock )
+        return;
+
+    constexpr int CROSS_SIZE = 200000;
+
+    auto gal = aView->GetGAL();
+	gal->SetIsStroke( true );
+    gal->SetIsFill( false );
+    gal->SetLineWidth( 1.0 );
+    auto rs = aView->GetPainter()->GetSettings();
+    auto color = rs->GetColor( NULL, LAYER_RATSNEST );
+
     int highlightedNet = rs->GetHighlightNetCode();
 
-    // Dynamic ratsnest (for e.g. dragged items)
-    for( int i = 1; i < m_data->GetNetCount(); ++i )
+    gal->SetStrokeColor( color.Brightened(0.5) );
+
+    // Draw the "dynamic" ratsnest (i.e. for objects that may be currently being moved)
+    for( const auto& l : m_data->GetDynamicRatsnest() )
     {
-        RN_NET& net = m_data->GetNet( i );
-
-        if( !net.IsVisible() )
-            continue;
-
-        // Set brighter color for the temporary ratsnest
-        aGal->SetStrokeColor( color.Brightened( 0.8 ) );
-
-        // Draw the "dynamic" ratsnest (i.e. for objects that may be currently being moved)
-        for( const RN_NODE_PTR& node : net.GetSimpleNodes() )
+        if ( l.a == l.b )
         {
-            // Skipping nodes with higher reference count avoids displaying redundant lines
-            if( node->GetRefCount() > 1 )
-                continue;
-
-            RN_NODE_PTR dest = net.GetClosestNode( node, LINE_TARGET() );
-
-            if( dest )
-            {
-                VECTOR2D origin( node->GetX(), node->GetY() );
-                VECTOR2D end( dest->GetX(), dest->GetY() );
-
-                aGal->DrawLine( origin, end );
-            }
+            gal->DrawLine( VECTOR2I( l.a.x - CROSS_SIZE, l.a.y - CROSS_SIZE ),
+                           VECTOR2I( l.b.x + CROSS_SIZE, l.b.y + CROSS_SIZE ) );
+            gal->DrawLine( VECTOR2I( l.a.x - CROSS_SIZE, l.a.y + CROSS_SIZE ),
+                           VECTOR2I( l.b.x + CROSS_SIZE, l.b.y - CROSS_SIZE ) );
         }
+        else
+        {
+            gal->DrawLine( l.a, l.b );
+        }
+    }
+
+    for( int i = 1 /* skip "No Net" at [0] */; i < m_data->GetNetCount(); ++i )
+    {
+        RN_NET* net = m_data->GetRatsnestForNet( i );
+
+        if( !net )
+            continue;
 
         // Draw the "static" ratsnest
         if( i != highlightedNet )
-            aGal->SetStrokeColor( color );  // using the default ratsnest color for not highlighted
+            gal->SetStrokeColor( color );  // using the default ratsnest color for not highlighted
+        else
+            gal->SetStrokeColor( color.Brightened(0.8) );
 
-        const std::vector<RN_EDGE_MST_PTR>* edges = net.GetUnconnected();
-
-        if( edges == NULL )
-            continue;
-
-        for( const RN_EDGE_MST_PTR& edge : *edges )
+        for( const auto& edge : net->GetUnconnected() )
         {
-            const RN_NODE_PTR& sourceNode = edge->GetSourceNode();
-            const RN_NODE_PTR& targetNode = edge->GetTargetNode();
-            VECTOR2D source( sourceNode->GetX(), sourceNode->GetY() );
-            VECTOR2D target( targetNode->GetX(), targetNode->GetY() );
+            //if ( !edge.IsVisible() )
+            //    continue;
 
-            aGal->DrawLine( source, target );
+            const auto& sourceNode = edge.GetSourceNode();
+            const auto& targetNode = edge.GetTargetNode();
+            const VECTOR2I source( sourceNode->Pos() );
+            const VECTOR2I target( targetNode->Pos() );
+
+            if( !sourceNode->Valid() || !targetNode->Valid() )
+                continue;
+
+            bool enable =  !sourceNode->GetNoLine() && !targetNode->GetNoLine();
+            bool show;
+
+            // If the ratsnest layer is currently enabled, the local ratsnest
+            // should be easy to turn off, so either element can disable it
+            // If the layer is off, the local ratsnest should be easy to turn on
+            // so either element can enable it.
+            if( sourceNode->Parent()->GetBoard()->IsElementVisible( LAYER_RATSNEST ) )
+                show = sourceNode->Parent()->GetLocalRatsnestVisible() &&
+                       targetNode->Parent()->GetLocalRatsnestVisible();
+            else
+                show = sourceNode->Parent()->GetLocalRatsnestVisible() ||
+                       targetNode->Parent()->GetLocalRatsnestVisible();
+
+            if ( enable && show )
+            {
+                if ( source == target )
+                {
+                    gal->DrawLine( VECTOR2I( source.x - CROSS_SIZE, source.y - CROSS_SIZE ),
+                                   VECTOR2I( source.x + CROSS_SIZE, source.y + CROSS_SIZE ) );
+                    gal->DrawLine( VECTOR2I( source.x - CROSS_SIZE, source.y + CROSS_SIZE ),
+                                   VECTOR2I( source.x + CROSS_SIZE, source.y - CROSS_SIZE ) );
+                }
+                else
+                {
+                    gal->DrawLine( source, target );
+                }
+            }
         }
     }
 }
@@ -115,7 +156,7 @@ void RATSNEST_VIEWITEM::ViewDraw( int aLayer, GAL* aGal ) const
 void RATSNEST_VIEWITEM::ViewGetLayers( int aLayers[], int& aCount ) const
 {
     aCount = 1;
-    aLayers[0] = ITEM_GAL_LAYER( RATSNEST_VISIBLE );
+    aLayers[0] = LAYER_RATSNEST;
 }
 
 }

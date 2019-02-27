@@ -27,8 +27,8 @@
 
 #include <gerbview.h>
 #include <gerbview_frame.h>
-#include <class_gerber_file_image.h>
-#include <class_gerber_file_image_list.h>
+#include <gerber_file_image.h>
+#include <gerber_file_image_list.h>
 #include <dialog_helpers.h>
 
 /* Process the command triggered by the left button of the mouse
@@ -36,13 +36,15 @@
  */
 void GERBVIEW_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
 {
+    SetToolID( ID_NO_TOOL_SELECTED, m_canvas->GetDefaultCursor(), wxEmptyString );
+
     GERBER_DRAW_ITEM* DrawStruct = Locate( aPosition, CURSEUR_OFF_GRILLE );
 
     GetScreen()->SetCurItem( DrawStruct );
 
     if( DrawStruct == NULL )
     {
-        GERBER_FILE_IMAGE* gerber = GetGbrImage( getActiveLayer() );
+        GERBER_FILE_IMAGE* gerber = GetGbrImage( GetActiveLayer() );
 
         if( gerber )
             gerber->DisplayImageInfo( this );

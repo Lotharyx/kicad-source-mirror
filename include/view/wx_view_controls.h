@@ -32,14 +32,18 @@
 #define __WX_VIEW_CONTROLS_H
 
 #include <wx/wx.h>
-#include <wx/event.h>
 
 #include <view/view_controls.h>
+
+#include <memory>
 
 class EDA_DRAW_PANEL_GAL;
 
 namespace KIGFX
 {
+
+class ZOOM_CONTROLLER;
+
 /**
  * Class WX_VIEW_CONTROLS
  * is a specific implementation of class VIEW_CONTROLS for wxWidgets library.
@@ -48,8 +52,7 @@ class WX_VIEW_CONTROLS : public VIEW_CONTROLS, public wxEvtHandler
 {
 public:
     WX_VIEW_CONTROLS( VIEW* aView, wxScrolledCanvas* aParentPanel );
-    ~WX_VIEW_CONTROLS()
-    {}
+    virtual ~WX_VIEW_CONTROLS();
 
     /// Handler functions
     void onWheel( wxMouseEvent& aEvent );
@@ -71,35 +74,33 @@ public:
      */
     void SetGrabMouse( bool aEnabled ) override;
 
-    /**
-     * Function SetAutoPan()
-     * Enables/disables autopanning (panning when mouse cursor reaches the panel border).
-     *
-     * @param aEnabled says whether the option should enabled or disabled.
-     */
-    void SetAutoPan( bool aEnabled ) override
-    {
-        m_autoPanEnabled = aEnabled;
-
-        if( m_state == AUTO_PANNING )
-            m_state = IDLE;
-    }
-
     /// @copydoc VIEW_CONTROLS::GetMousePosition()
-    VECTOR2I GetMousePosition() const override;
+    VECTOR2D GetMousePosition( bool aWorldCoordinates = true ) const override;
+
+    using VIEW_CONTROLS::GetCursorPosition;
 
     /// @copydoc VIEW_CONTROLS::GetCursorPosition()
-    VECTOR2D GetCursorPosition() const override;
+    VECTOR2D GetCursorPosition( bool aSnappingEnabled ) const override;
+
+    /// @copydoc VIEW_CONTROLS::GetRawCursorPosition()
+    VECTOR2D GetRawCursorPosition( bool aSnappingEnabled = true ) const override;
+
+    void SetCursorPosition( const VECTOR2D& aPosition, bool warpView, bool aTriggeredByArrows ) override;
+
+    /// @copydoc VIEW_CONTROLS::SetCrossHairCursorPosition()
+    void SetCrossHairCursorPosition( const VECTOR2D& aPosition, bool aWarpView ) override;
 
     /// @copydoc VIEW_CONTROLS::CursorWarp()
     void WarpCursor( const VECTOR2D& aPosition, bool aWorldCoordinates = false,
-            bool aWarpView = false ) const override;
+            bool aWarpView = false ) override;
 
     /// @copydoc VIEW_CONTROLS::CenterOnCursor()
     void CenterOnCursor() const override;
 
     /// Adjusts the scrollbars position to match the current viewport.
     void UpdateScrollbars();
+
+    void ForceCursorPosition( bool aEnabled, const VECTOR2D& aPosition = VECTOR2D( 0, 0 ) ) override;
 
     /// Event that forces mouse move event in the dispatcher (eg. used in autopanning, when mouse
     /// cursor does not move in screen coordinates, but does in world coordinates)
@@ -124,6 +125,18 @@ private:
      */
     bool handleAutoPanning( const wxMouseEvent& aEvent );
 
+    /**
+     * Sends an event to refresh mouse position. It is mostly used for notifying the tools
+     * that the cursor position in the world coordinates has changed, whereas the screen coordinates
+     * remained the same (e.g. frame edge autopanning).
+     */
+    void refreshMouse();
+
+    /**
+     * Gets the cursor position in the screen coordinates.
+     */
+    wxPoint getMouseScreenPosition() const;
+
     /// Current state of VIEW_CONTROLS
     STATE       m_state;
 
@@ -139,14 +152,26 @@ private:
     /// Current direction of panning (only autopanning mode)
     VECTOR2D    m_panDirection;
 
-    /// Used for determining time intervals between scroll & zoom events
-    wxLongLong  m_timeStamp;
-
     /// Timer repsonsible for handling autopanning
     wxTimer     m_panTimer;
 
     /// Ratio used for scaling world coordinates to scrollbar position.
     VECTOR2D    m_scrollScale;
+
+    /// Current scrollbar position
+    VECTOR2I    m_scrollPos;
+
+    /// Last event timestamp to remove duplicates
+    long int    m_lastTimestamp;
+
+    /// Current cursor position (world coordinates)
+    VECTOR2D    m_cursorPos;
+
+    /// Flag deciding whether the cursor position should be calculated using the mouse position
+    bool        m_updateCursor;
+
+    /// a ZOOM_CONTROLLER that determines zoom steps. This is platform-specific.
+    std::unique_ptr<ZOOM_CONTROLLER> m_zoomController;
 };
 } // namespace KIGFX
 

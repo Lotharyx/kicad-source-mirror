@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2015 Cirilo Bernardo <cirilo.bernardo@gmail.com>
+ * Copyright (C) 2015-2017 Cirilo Bernardo <cirilo.bernardo@gmail.com>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,6 +28,7 @@
 #include <wx/log.h>
 #include "plugins/3dapi/ifsg_api.h"
 #include "plugins/3dapi/sg_version.h"
+#include "streamwrapper.h"
 #include "3d_cache/sg/sg_node.h"
 #include "3d_cache/sg/scenegraph.h"
 #include "3d_cache/sg/sg_appearance.h"
@@ -77,24 +78,6 @@ static void formatMaterial( SMATERIAL& mat, SGAPPEARANCE const* app )
 }
 
 
-class VRML_LOCALE
-{
-private:
-    std::string lname;
-
-public:
-    VRML_LOCALE() : lname( setlocale( LC_NUMERIC, NULL ) )
-    {
-        setlocale( LC_NUMERIC, "C" );   // switch the numerics locale to "C"
-    }
-
-    ~VRML_LOCALE()
-    {
-        setlocale( LC_NUMERIC, lname.c_str() ); // revert to the previous locale
-    }
-};
-
-
 bool S3D::WriteVRML( const char* filename, bool overwrite, SGNODE* aTopNode,
     bool reuse, bool renameNodes )
 {
@@ -141,21 +124,18 @@ bool S3D::WriteVRML( const char* filename, bool overwrite, SGNODE* aTopNode,
         return false;
     }
 
-    VRML_LOCALE vrmlLocale;
-    std::ofstream op;
-    op.open( filename, std::ios_base::out | std::ios_base::trunc
-                                 | std::ios_base::binary );
+    OPEN_OSTREAM( op, filename );
 
-    if( !op.is_open() )
+    if( op.fail() )
     {
-        std::ostringstream ostr;
-        ostr << __FILE__ << ": " << __FUNCTION__ << ": " << __LINE__ << "\n";
-        wxString errmsg = _( "failed to open file" );
-        ostr << " * [INFO] " << errmsg.ToUTF8() << " '" << filename << "'";
-        wxLogTrace( MASK_3D_SG, "%s\n", ostr.str().c_str() );
+        wxString errmsg;
+        errmsg << __FILE__ << ": " << __FUNCTION__ << ": " << __LINE__ << "\n";
+        errmsg << " * [INFO] " << "failed to open file" << " '" << filename << "'";
+        wxLogTrace( MASK_3D_SG, errmsg );
         return false;
     }
 
+    op.imbue( std::locale( "C" ) );
     op << "#VRML V2.0 utf8\n";
 
     if( renameNodes )
@@ -168,19 +148,16 @@ bool S3D::WriteVRML( const char* filename, bool overwrite, SGNODE* aTopNode,
 
     if( !op.fail() )
     {
-        op.close();
+        CLOSE_STREAM( op );
         return true;
     }
 
-    op.close();
+    CLOSE_STREAM( op );
 
-    do {
-        std::ostringstream ostr;
-        ostr << __FILE__ << ": " << __FUNCTION__ << ": " << __LINE__ << "\n";
-        wxString errmsg = _( "problems encountered writing file" );
-        ostr << " * [INFO] " << errmsg.ToUTF8() << " '" << filename << "'";
-        wxLogTrace( MASK_3D_SG, "%s\n", ostr.str().c_str() );
-    } while( 0 );
+    wxString errmsg;
+    errmsg << __FILE__ << ": " << __FUNCTION__ << ": " << __LINE__ << "\n";
+    errmsg << " * [INFO] " << "problems encountered writing file" << " '" << filename << "'";
+    wxLogTrace( MASK_3D_SG, errmsg );
 
     return false;
 }
@@ -279,12 +256,11 @@ bool S3D::WriteCache( const char* aFileName, bool overwrite, SGNODE* aNode,
     {
         if( !overwrite )
         {
-            std::ostringstream ostr;
-            ostr << __FILE__ << ": " << __FUNCTION__ << ": " << __LINE__ << "\n";
-            wxString errmsg = _( "file exists; not overwriting" );
-            ostr << " * [INFO] " << errmsg.ToUTF8() << " '";
-            ostr << aFileName << "'";
-            wxLogTrace( MASK_3D_SG, "%s\n", ostr.str().c_str() );
+            wxString errmsg;
+            errmsg << __FILE__ << ": " << __FUNCTION__ << ": " << __LINE__ << "\n";
+            errmsg << " * [INFO] " << "file exists; not overwriting" << " '";
+            errmsg << aFileName << "'";
+            wxLogTrace( MASK_3D_SG, errmsg );
 
             return false;
         }
@@ -292,27 +268,23 @@ bool S3D::WriteCache( const char* aFileName, bool overwrite, SGNODE* aNode,
         // make sure we make no attempt to write a directory
         if( !wxFileName::FileExists( aFileName ) )
         {
-            std::ostringstream ostr;
-            ostr << __FILE__ << ": " << __FUNCTION__ << ": " << __LINE__ << "\n";
-            wxString errmsg = _( "specified path is a directory" );
-            ostr << " * [INFO] " << errmsg.ToUTF8() << " '";
-            ostr << aFileName << "'";
-            wxLogTrace( MASK_3D_SG, "%s\n", ostr.str().c_str() );
+            wxString errmsg;
+            errmsg << __FILE__ << ": " << __FUNCTION__ << ": " << __LINE__ << "\n";
+            errmsg << " * [INFO] " << "specified path is a directory" << " '";
+            errmsg << aFileName << "'";
+            wxLogTrace( MASK_3D_SG, errmsg );
             return false;
         }
     }
 
-    std::ofstream output;
-    output.open( aFileName, std::ios_base::out | std::ios_base::trunc
-                                | std::ios_base::binary );
+    OPEN_OSTREAM( output, aFileName );
 
-    if( !output.is_open() )
+    if( output.fail() )
     {
-        std::ostringstream ostr;
-        ostr << __FILE__ << ": " << __FUNCTION__ << ": " << __LINE__ << "\n";
-        wxString errmsg = _( "failed to open file" );
-        ostr << " * [INFO] " << errmsg.ToUTF8() << " '" << aFileName << "'";
-        wxLogTrace( MASK_3D_SG, "%s\n", ostr.str().c_str() );
+        wxString errmsg;
+        errmsg << __FILE__ << ": " << __FUNCTION__ << ": " << __LINE__ << "\n";
+        errmsg << " * [INFO] " << "failed to open file" << " '" << aFileName << "'";
+        wxLogTrace( MASK_3D_SG, errmsg );
         return false;
     }
 
@@ -324,7 +296,7 @@ bool S3D::WriteCache( const char* aFileName, bool overwrite, SGNODE* aNode,
         output << "(INTERNAL:0.0.0.0)";
 
     bool rval = aNode->WriteCache( output, NULL );
-    output.close();
+    CLOSE_STREAM( output );
 
     if( !rval )
     {
@@ -382,10 +354,9 @@ SGNODE* S3D::ReadCache( const char* aFileName, void* aPluginMgr,
         return NULL;
     }
 
-    std::ifstream file;
-    file.open( aFileName, std::ios_base::in | std::ios_base::binary );
+    OPEN_ISTREAM( file, aFileName );
 
-    if( !file.is_open() )
+    if( file.fail() )
     {
         delete np;
         std::ostringstream ostr;
@@ -417,7 +388,7 @@ SGNODE* S3D::ReadCache( const char* aFileName, void* aPluginMgr,
             } while( 0 );
             #endif
 
-            file.close();
+            CLOSE_STREAM( file );
             return NULL;
         }
 
@@ -431,7 +402,7 @@ SGNODE* S3D::ReadCache( const char* aFileName, void* aPluginMgr,
 
         if( name.compare( SG_VERSION_TAG ) )
         {
-            file.close();
+            CLOSE_STREAM( file );
             return NULL;
         }
 
@@ -457,7 +428,7 @@ SGNODE* S3D::ReadCache( const char* aFileName, void* aPluginMgr,
             } while( 0 );
             #endif
 
-            file.close();
+            CLOSE_STREAM( file );
             return NULL;
         }
 
@@ -472,14 +443,14 @@ SGNODE* S3D::ReadCache( const char* aFileName, void* aPluginMgr,
         // check the plugin tag
         if( NULL != aTagCheck && NULL != aPluginMgr && !aTagCheck( name.c_str(), aPluginMgr ) )
         {
-            file.close();
+            CLOSE_STREAM( file );
             return NULL;
         }
 
     } while( 0 );
 
     bool rval = np->ReadCache( file, NULL );
-    file.close();
+    CLOSE_STREAM( file );
 
     if( !rval )
     {

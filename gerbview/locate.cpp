@@ -32,8 +32,8 @@
 
 #include <gerbview.h>
 #include <gerbview_frame.h>
-#include <class_gerber_file_image.h>
-#include <class_gerber_file_image_list.h>
+#include <gerber_file_image.h>
+#include <gerber_file_image_list.h>
 
 
 /* locate a gerber item and return a pointer to it.
@@ -44,63 +44,64 @@ GERBER_DRAW_ITEM* GERBVIEW_FRAME::Locate( const wxPoint& aPosition, int aTypeloc
 {
     m_messagePanel->EraseMsgBox();
     wxPoint ref = aPosition;
-    bool found = false;
 
     if( aTypeloc == CURSEUR_ON_GRILLE )
         ref = GetNearestGridPosition( ref );
 
-    int layer = getActiveLayer();
+    int layer = GetActiveLayer();
     GERBER_FILE_IMAGE* gerber = GetGbrImage( layer );
 
-    GERBER_DRAW_ITEM* gerb_item = NULL;
+    GERBER_DRAW_ITEM* gerb_item = nullptr;
 
     // Search first on active layer
     // A not used graphic layer can be selected. So gerber can be NULL
-    if( gerber && IsLayerVisible( layer ) )
+    if( gerber && gerber->m_IsVisible )
     {
-        for( gerb_item = gerber->GetItemsList(); gerb_item; gerb_item = gerb_item->Next() )
+        for( auto item = gerber->GetItemsList(); item; item = item->Next() )
         {
-            if( gerb_item->HitTest( ref ) )
+            if( item->HitTest( ref ) )
             {
-                found = true;
+                gerb_item = item;
                 break;
             }
         }
     }
 
-    if( !found ) // Search on all layers
+    if( gerb_item == nullptr ) // Search on all layers
     {
         for( layer = 0; layer < (int)ImagesMaxCount(); ++layer )
         {
             gerber = GetGbrImage( layer );
 
-            if( gerber == NULL )    // Graphic layer not yet used
+            if( gerber == nullptr )    // Graphic layer not yet used
                 continue;
 
-            if( !IsLayerVisible( layer ) )
+            if( !gerber->m_IsVisible )
                 continue;
 
-            for( gerb_item = gerber->GetItemsList(); gerb_item; gerb_item = gerb_item->Next() )
+            if( layer == GetActiveLayer() )
+                continue;
+
+            for( auto item = gerber->GetItemsList(); item; item = item->Next() )
             {
-                if( gerb_item->HitTest( ref ) )
+                if( item->HitTest( ref ) )
                 {
-                    found = true;
+                    gerb_item = item;
                     break;
                 }
             }
 
-            if( found )
+            if( gerb_item )
                 break;
         }
     }
 
-    if( found && gerb_item )
+    if( gerb_item )
     {
         MSG_PANEL_ITEMS items;
-        gerb_item->GetMsgPanelInfo( items );
+        gerb_item->GetMsgPanelInfo( m_UserUnits, items );
         SetMsgPanel( items );
-        return gerb_item;
     }
 
-    return NULL;
+    return gerb_item;
 }

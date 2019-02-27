@@ -31,6 +31,20 @@
 static const char bad_position[] = "* corrupt module in PCB file; invalid position";
 
 
+std::ostream& operator<<( std::ostream& aStream, const DOUBLET& aDoublet )
+{
+    aStream << aDoublet.x << "," << aDoublet.y;
+    return aStream;
+}
+
+
+std::ostream& operator<<( std::ostream& aStream, const TRIPLET& aTriplet )
+{
+    aStream << aTriplet.x << "," << aTriplet.y << "," << aTriplet.z;
+    return aStream;
+}
+
+
 bool Get2DPositionAndRotation( SEXPR::SEXPR* data, DOUBLET& aPosition, double& aRotation )
 {
     // form: (at X Y {rot})
@@ -39,7 +53,7 @@ bool Get2DPositionAndRotation( SEXPR::SEXPR* data, DOUBLET& aPosition, double& a
     if( nchild < 3 )
     {
         std::ostringstream ostr;
-        ostr << bad_position;
+        ostr << bad_position << " (line " << data->GetLineNumber() << ")";
         wxLogMessage( "%s\n", ostr.str().c_str() );
         return false;
     }
@@ -47,7 +61,8 @@ bool Get2DPositionAndRotation( SEXPR::SEXPR* data, DOUBLET& aPosition, double& a
     if( data->GetChild( 0 )->GetSymbol() != "at" )
     {
         std::ostringstream ostr;
-        ostr << "* SEXPR item is not a position string";
+        ostr << "* SEXPR item is not a position string (line ";
+        ostr << data->GetLineNumber() << ")";
         wxLogMessage( "%s\n", ostr.str().c_str() );
         return false;
     }
@@ -62,7 +77,7 @@ bool Get2DPositionAndRotation( SEXPR::SEXPR* data, DOUBLET& aPosition, double& a
     else
     {
         std::ostringstream ostr;
-        ostr << bad_position;
+        ostr << bad_position << " (line " << child->GetLineNumber() << ")";
         wxLogMessage( "%s\n", ostr.str().c_str() );
         return false;
     }
@@ -77,7 +92,7 @@ bool Get2DPositionAndRotation( SEXPR::SEXPR* data, DOUBLET& aPosition, double& a
     else
     {
         std::ostringstream ostr;
-        ostr << bad_position;
+        ostr << bad_position << " (line " << child->GetLineNumber() << ")";
         wxLogMessage( "%s\n", ostr.str().c_str() );
         return false;
     }
@@ -98,7 +113,7 @@ bool Get2DPositionAndRotation( SEXPR::SEXPR* data, DOUBLET& aPosition, double& a
     else
     {
         std::ostringstream ostr;
-        ostr << bad_position;
+        ostr << bad_position << " (line " << child->GetLineNumber() << ")";
         wxLogMessage( "%s\n", ostr.str().c_str() );
         return false;
     }
@@ -123,7 +138,7 @@ bool Get2DCoordinate( SEXPR::SEXPR* data, DOUBLET& aCoordinate )
     if( nchild < 3 )
     {
         std::ostringstream ostr;
-        ostr << bad_position;
+        ostr << bad_position << " (line " << data->GetLineNumber() << ")";
         wxLogMessage( "%s\n", ostr.str().c_str() );
         return false;
     }
@@ -138,7 +153,7 @@ bool Get2DCoordinate( SEXPR::SEXPR* data, DOUBLET& aCoordinate )
     else
     {
         std::ostringstream ostr;
-        ostr << bad_position;
+        ostr << bad_position << " (line " << child->GetLineNumber() << ")";
         wxLogMessage( "%s\n", ostr.str().c_str() );
         return false;
     }
@@ -153,7 +168,7 @@ bool Get2DCoordinate( SEXPR::SEXPR* data, DOUBLET& aCoordinate )
     else
     {
         std::ostringstream ostr;
-        ostr << bad_position;
+        ostr << bad_position << " (line " << child->GetLineNumber() << ")";
         wxLogMessage( "%s\n", ostr.str().c_str() );
         return false;
     }
@@ -173,7 +188,7 @@ bool Get3DCoordinate( SEXPR::SEXPR* data, TRIPLET& aCoordinate )
     if( nchild < 4 )
     {
         std::ostringstream ostr;
-        ostr << bad_position;
+        ostr << bad_position << " (line " << data->GetLineNumber() << ")";
         wxLogMessage( "%s\n", ostr.str().c_str() );
         return false;
     }
@@ -192,7 +207,7 @@ bool Get3DCoordinate( SEXPR::SEXPR* data, TRIPLET& aCoordinate )
         else
         {
             std::ostringstream ostr;
-            ostr << bad_position;
+            ostr << bad_position << " (line " << child->GetLineNumber() << ")";
             wxLogMessage( "%s\n", ostr.str().c_str() );
             return false;
         }
@@ -213,7 +228,7 @@ bool GetXYZRotation( SEXPR::SEXPR* data, TRIPLET& aRotation )
     if( !Get3DCoordinate( data, aRotation ) )
     {
         std::ostringstream ostr;
-        ostr << bad_rotation;
+        ostr << bad_rotation << " (line " << data->GetLineNumber() << ")";
         wxLogMessage( "%s\n", ostr.str().c_str() );
         return false;
     }

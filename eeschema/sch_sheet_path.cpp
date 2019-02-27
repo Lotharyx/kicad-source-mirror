@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2011-2016 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2017 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2011 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -30,9 +30,8 @@
 
 #include <fctsys.h>
 
-#include <general.h>
 #include <dlist.h>
-#include <class_sch_screen.h>
+#include <sch_screen.h>
 #include <sch_item_struct.h>
 
 #include <sch_reference_list.h>
@@ -181,45 +180,9 @@ void SCH_SHEET_PATH::UpdateAllScreenReferences()
 }
 
 
-void SCH_SHEET_PATH::AnnotatePowerSymbols( PART_LIBS* aLibs, int* aReference )
-{
-    int ref = 1;
 
-    if( aReference )
-        ref = *aReference;
-
-    for( EDA_ITEM* item = LastDrawList();  item;  item = item->Next() )
-    {
-        if( item->Type() != SCH_COMPONENT_T )
-            continue;
-
-        SCH_COMPONENT*  component = (SCH_COMPONENT*) item;
-        LIB_PART*       part = aLibs->FindLibPart( component->GetPartName() );
-
-        if( !part || !part->IsPower() )
-            continue;
-
-        wxString refstr = component->GetPrefix();
-
-        //str will be "C?" or so after the ClearAnnotation call.
-        while( refstr.Last() == '?' )
-            refstr.RemoveLast();
-
-        if( !refstr.StartsWith( wxT( "#" ) ) )
-            refstr.insert( refstr.begin(), wxChar( '#' ) );
-
-        refstr << wxT( "0" ) << ref;
-        component->SetRef( this, refstr );
-        ref++;
-    }
-
-    if( aReference )
-        *aReference = ref;
-}
-
-
-void SCH_SHEET_PATH::GetComponents( PART_LIBS* aLibs, SCH_REFERENCE_LIST& aReferences,
-                                    bool aIncludePowerSymbols )
+void SCH_SHEET_PATH::GetComponents( SCH_REFERENCE_LIST& aReferences, bool aIncludePowerSymbols,
+                                    bool aForceIncludeOrphanComponents )
 {
     for( SCH_ITEM* item = LastDrawList(); item; item = item->Next() )
     {
@@ -232,22 +195,21 @@ void SCH_SHEET_PATH::GetComponents( PART_LIBS* aLibs, SCH_REFERENCE_LIST& aRefer
             if( !aIncludePowerSymbols && component->GetRef( this )[0] == wxT( '#' ) )
                 continue;
 
-            LIB_PART* part = aLibs->FindLibPart( component->GetPartName() );
+            LIB_PART* part = component->GetPartRef().lock().get();
 
-            if( part )
+            if( part || aForceIncludeOrphanComponents )
             {
-                SCH_REFERENCE reference( component, part, *this );
+                SCH_REFERENCE schReference( component, part, *this );
 
-                reference.SetSheetNumber( m_pageNumber );
-                aReferences.AddItem( reference );
+                schReference.SetSheetNumber( m_pageNumber );
+                aReferences.AddItem( schReference );
             }
         }
     }
 }
 
 
-void SCH_SHEET_PATH::GetMultiUnitComponents( PART_LIBS* aLibs,
-                                             SCH_MULTI_UNIT_REFERENCE_MAP& aRefList,
+void SCH_SHEET_PATH::GetMultiUnitComponents( SCH_MULTI_UNIT_REFERENCE_MAP& aRefList,
                                              bool aIncludePowerSymbols )
 {
 
@@ -263,19 +225,19 @@ void SCH_SHEET_PATH::GetMultiUnitComponents( PART_LIBS* aLibs,
         if( !aIncludePowerSymbols && component->GetRef( this )[0] == wxT( '#' ) )
             continue;
 
-        LIB_PART* part = aLibs->FindLibPart( component->GetPartName() );
+        LIB_PART* part = component->GetPartRef().lock().get();
 
         if( part && part->GetUnitCount() > 1 )
         {
-            SCH_REFERENCE reference = SCH_REFERENCE( component, part, *this );
-            reference.SetSheetNumber( m_pageNumber );
-            wxString reference_str = reference.GetRef();
+            SCH_REFERENCE schReference = SCH_REFERENCE( component, part, *this );
+            schReference.SetSheetNumber( m_pageNumber );
+            wxString reference_str = schReference.GetRef();
 
             // Never lock unassigned references
             if( reference_str[reference_str.Len() - 1] == '?' )
                 continue;
 
-            aRefList[reference_str].AddItem( reference );
+            aRefList[reference_str].AddItem( schReference );
         }
     }
 }
@@ -473,7 +435,7 @@ SCH_SHEET_LIST::SCH_SHEET_LIST( SCH_SHEET* aSheet )
 }
 
 
-SCH_SHEET_PATH* SCH_SHEET_LIST::GetSheetByPath( const wxString aPath, bool aHumanReadable )
+SCH_SHEET_PATH* SCH_SHEET_LIST::GetSheetByPath( const wxString& aPath, bool aHumanReadable )
 {
     wxString sheetPath;
 
@@ -538,18 +500,6 @@ bool SCH_SHEET_LIST::IsModified()
 }
 
 
-bool SCH_SHEET_LIST::IsAutoSaveRequired()
-{
-    for( SCH_SHEET_PATHS_ITER it = begin(); it != end(); ++it )
-    {
-        if( (*it).LastScreen() && (*it).LastScreen()->IsSave() )
-            return true;
-    }
-
-    return false;
-}
-
-
 void SCH_SHEET_LIST::ClearModifyStatus()
 {
     for( SCH_SHEET_PATHS_ITER it = begin(); it != end(); ++it )
@@ -560,30 +510,98 @@ void SCH_SHEET_LIST::ClearModifyStatus()
 }
 
 
-void SCH_SHEET_LIST::AnnotatePowerSymbols( PART_LIBS* aLibs )
+void SCH_SHEET_LIST::AnnotatePowerSymbols()
 {
-    int ref = 1;
+    // List of reference for power symbols
+    SCH_REFERENCE_LIST references;
 
+    // Map of locked components (not used, but needed by Annotate()
+    SCH_MULTI_UNIT_REFERENCE_MAP lockedComponents;
+
+    // Build the list of power components:
     for( SCH_SHEET_PATHS_ITER it = begin(); it != end(); ++it )
-        (*it).AnnotatePowerSymbols( aLibs, &ref );
+    {
+        SCH_SHEET_PATH& spath = *it;
+
+        for( EDA_ITEM* item = spath.LastDrawList(); item; item = item->Next() )
+        {
+            if( item->Type() != SCH_COMPONENT_T )
+                continue;
+
+            SCH_COMPONENT*  component = (SCH_COMPONENT*) item;
+            LIB_PART* part = component->GetPartRef().lock().get();
+
+            if( !part || !part->IsPower() )
+                continue;
+
+            if( part )
+            {
+                SCH_REFERENCE schReference( component, part, spath );
+                references.AddItem( schReference );
+            }
+        }
+    }
+
+    // Find duplicate, and silently clear annotation of duplicate
+    std::map<wxString, int> ref_list;   // stores the existing references
+
+    for( unsigned ii = 0; ii< references.GetCount(); ++ii )
+    {
+        wxString curr_ref = references[ii].GetRef();
+
+        if( ref_list.find( curr_ref ) == ref_list.end() )
+        {
+            ref_list[curr_ref] = ii;
+            continue;
+        }
+
+        // Possible duplicate, if the ref ends by a number:
+        if( curr_ref.Last() < '0' && curr_ref.Last() > '9' )
+            continue;   // not annotated
+
+        // Duplicate: clear annotation by removing the number ending the ref
+        while( curr_ref.Last() >= '0' && curr_ref.Last() <= '9' )
+            curr_ref.RemoveLast();
+
+        references[ii].SetRef( curr_ref );
+    }
+
+
+    // Break full components reference in name (prefix) and number:
+    // example: IC1 become IC, and 1
+    references.SplitReferences();
+
+    // Ensure all power symbols have the reference starting by '#'
+    // (No sure this is really useful)
+    for( unsigned ii = 0; ii< references.GetCount(); ++ii )
+    {
+        if( references[ii].GetRef()[0] != '#' )
+        {
+            wxString new_ref = "#" + references[ii].GetRef();
+            references[ii].SetRef( new_ref );
+        }
+    }
+
+    // Recalculate and update reference numbers in schematic
+    references.Annotate( false, 0, 100, lockedComponents );
+    references.UpdateAnnotation();
 }
 
 
-void SCH_SHEET_LIST::GetComponents( PART_LIBS* aLibs, SCH_REFERENCE_LIST& aReferences,
-                                    bool aIncludePowerSymbols )
+void SCH_SHEET_LIST::GetComponents( SCH_REFERENCE_LIST& aReferences, bool aIncludePowerSymbols,
+                                    bool aForceIncludeOrphanComponents )
 {
     for( SCH_SHEET_PATHS_ITER it = begin(); it != end(); ++it )
-        (*it).GetComponents( aLibs, aReferences, aIncludePowerSymbols );
+        (*it).GetComponents( aReferences, aIncludePowerSymbols, aForceIncludeOrphanComponents );
 }
 
-void SCH_SHEET_LIST::GetMultiUnitComponents( PART_LIBS* aLibs,
-                                             SCH_MULTI_UNIT_REFERENCE_MAP &aRefList,
+void SCH_SHEET_LIST::GetMultiUnitComponents( SCH_MULTI_UNIT_REFERENCE_MAP &aRefList,
                                              bool aIncludePowerSymbols )
 {
     for( SCH_SHEET_PATHS_ITER it = begin(); it != end(); ++it )
     {
         SCH_MULTI_UNIT_REFERENCE_MAP tempMap;
-        (*it).GetMultiUnitComponents( aLibs, tempMap );
+        (*it).GetMultiUnitComponents( tempMap );
 
         for( SCH_MULTI_UNIT_REFERENCE_MAP::value_type& pair : tempMap )
         {

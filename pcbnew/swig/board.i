@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2012 NBEE Embedded Systems, Miguel Angel Ajo <miguelangel@nbee.es>
  * Copyright (C) 2016 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 1992-2012 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -48,6 +48,7 @@ HANDLE_EXCEPTIONS(BOARD::TracksInNetBetweenPoints)
 %include board_item_container.i
 %include board_connected_item.i
 %include board_design_settings.i
+%include connectivity.i
 %include pad.i
 %include track.i
 %include zone.i
@@ -56,20 +57,27 @@ HANDLE_EXCEPTIONS(BOARD::TracksInNetBetweenPoints)
 %include dimension.i
 %include drawsegment.i
 %include marker_pcb.i
-%include mire.i
+%include pcb_target.i
 %include text_mod.i
 %include edge_mod.i
 %include netinfo.i
 %include netclass.i
+%include pcb_plot_params.i
 
+%ignore operator++(SCH_LAYER_ID&);
+
+%ignore operator++(GAL_LAYER_ID&);
+
+%ignore operator+(const GAL_LAYER_ID&, int);
 
 %include layers_id_colors_and_visibility.h
+
 // Extend LSET by 2 methods to add or remove layers from the layer list
 // Mainly used to add or remove layers of a pad layer list
 %extend LSET
 {
-    LSET addLayer( LAYER_ID aLayer)    { return self->set(aLayer); }
-    LSET removeLayer( LAYER_ID aLayer) { return self->reset(aLayer); }
+    LSET addLayer( PCB_LAYER_ID aLayer)    { return self->set(aLayer); }
+    LSET removeLayer( PCB_LAYER_ID aLayer) { return self->reset(aLayer); }
     LSET addLayerSet( LSET aLayerSet)    { return *self |= aLayerSet; }
     LSET removeLayerSet( LSET aLayerSet) { return *self &= ~aLayerSet; }
 
@@ -95,7 +103,6 @@ HANDLE_EXCEPTIONS(BOARD::TracksInNetBetweenPoints)
 
 // std::vector templates
 %template(VIA_DIMENSION_Vector) std::vector<VIA_DIMENSION>;
-%template(RATSNEST_Vector)      std::vector<RATSNEST_ITEM>;
 %include class_board.h
 %{
 #include <class_board.h>
@@ -110,12 +117,11 @@ HANDLE_EXCEPTIONS(BOARD::TracksInNetBetweenPoints)
     %{
 
     def GetModules(self):             return self.m_Modules
-    def GetDrawings(self):            return self.m_Drawings
+    def GetDrawings(self):            return self.DrawingsList()
     def GetTracks(self):              return self.m_Track
-    def GetFullRatsnest(self):        return self.m_FullRatsnest
 
     def Save(self,filename):
-        return SaveBoard(filename,self,IO_MGR.KICAD)
+        return SaveBoard(filename,self)
 
     def GetNetClasses(self):
         return self.GetDesignSettings().m_NetClasses

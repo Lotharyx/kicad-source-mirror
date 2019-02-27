@@ -1,7 +1,7 @@
 /*
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
- * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2013-2017 CERN
  * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
@@ -24,11 +24,11 @@
 
 #include <math/vector2d.h>
 
+#include <geometry/direction45.h>
 #include <geometry/seg.h>
 #include <geometry/shape.h>
 #include <geometry/shape_line_chain.h>
 
-#include "direction.h"
 #include "pns_item.h"
 #include "pns_via.h"
 
@@ -99,7 +99,7 @@ public:
     /// @copydoc ITEM::Clone()
     virtual LINE* Clone() const override;
 
-    const LINE& operator=( const LINE& aOther );
+    LINE& operator=( const LINE& aOther );
 
     ///> Assigns a shape to the line (a polyline/line chain)
     void SetShape( const SHAPE_LINE_CHAIN& aLine )
@@ -236,7 +236,7 @@ public:
             SHAPE_LINE_CHAIN& aPost,
             bool aCw ) const;
 
-    void Walkaround( const SHAPE_LINE_CHAIN& aObstacle,
+    bool Walkaround( const SHAPE_LINE_CHAIN& aObstacle,
             SHAPE_LINE_CHAIN& aPath,
             bool aCw ) const;
 
@@ -253,11 +253,11 @@ public:
     const VIA& Via() const { return m_via; }
 
     virtual void Mark( int aMarker ) override;
-    virtual void Unmark ();
+    virtual void Unmark( int aMarker = -1 ) override;
     virtual int Marker() const override;
 
-    void DragSegment( const VECTOR2I& aP, int aIndex, int aSnappingThreshold = 0 );
-    void DragCorner( const VECTOR2I& aP, int aIndex, int aSnappingThreshold = 0 );
+    void DragSegment( const VECTOR2I& aP, int aIndex, int aSnappingThreshold = 0, bool aFreeAngle = false );
+    void DragCorner( const VECTOR2I& aP, int aIndex, int aSnappingThreshold = 0, bool aFreeAngle = false );
 
     void SetRank( int aRank ) override;
     int Rank() const override;
@@ -268,6 +268,12 @@ public:
     OPT_BOX2I ChangedArea( const LINE* aOther ) const;
 
 private:
+
+    void dragSegment45( const VECTOR2I& aP, int aIndex, int aSnappingThreshold );
+    void dragCorner45( const VECTOR2I& aP, int aIndex, int aSnappingThreshold  );
+    void dragSegmentFree( const VECTOR2I& aP, int aIndex, int aSnappingThreshold );
+    void dragCornerFree( const VECTOR2I& aP, int aIndex, int aSnappingThreshold  );
+
     VECTOR2I snapToNeighbourSegments( const SHAPE_LINE_CHAIN& aPath, const VECTOR2I &aP,
                                       int aIndex, int aThreshold) const;
 

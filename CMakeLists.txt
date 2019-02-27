@@ -1,7 +1,7 @@
 #
 #  This program source code file is part of KICAD, a free EDA CAD application.
 #
-#  Copyright (C) 2007-2016 Kicad Developers, see AUTHORS.txt for contributors.
+#  Copyright (C) 2007-2018 Kicad Developers, see AUTHORS.txt for contributors.
 #
 #  This program is free software; you can redistribute it and/or
 #  modify it under the terms of the GNU General Public License
@@ -21,6 +21,15 @@
 #  51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #
 
+cmake_minimum_required( VERSION 2.8.12 FATAL_ERROR )
+# because of http://public.kitware.com/Bug/view.php?id=10395
+
+# See https://gitlab.kitware.com/cmake/cmake/issues/15943
+# Remove as soon as 3.1 is minimum required version
+if(POLICY CMP0025)
+  cmake_policy(SET CMP0025 NEW) # CMake 3.0
+endif()
+
 # Default to CMAKE_BUILD_TYPE = Release unless overridden on command line
 # http://www.cmake.org/pipermail/cmake/2008-September/023808.html
 if( DEFINED CMAKE_BUILD_TYPE )
@@ -31,11 +40,17 @@ endif()
 
 project( kicad )
 
-cmake_minimum_required( VERSION 2.8.12 FATAL_ERROR )
-# because of http://public.kitware.com/Bug/view.php?id=10395
+include( GNUInstallDirs )
 
 # Path to local CMake modules.
 set( CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/CMakeModules )
+
+# On Windows, binaries created by link option -g3 are very large (more than 1Gb for pcbnew,
+# and more than 3Gb for the full kicad suite)
+# This option create binaries using link option -g1 that create much smaller files, but
+# there are less info in debug (but the file names and line numbers are available)
+option( BUILD_SMALL_DEBUG_FILES "In debug build: create smaller binaries." OFF )
+
 
 #
 # KiCad build options should be added below.
@@ -49,37 +64,49 @@ option( USE_WX_GRAPHICS_CONTEXT
     "Use wxGraphicsContext for rendering (default OFF).  Warning, this is experimental" )
 
 option( USE_WX_OVERLAY
-    "Use wxOverlay: Always ON for MAC (default OFF).  Warning, this is experimental" )
+    "Use wxOverlay: Always ON for MAC and GTK3 (default OFF)." )
 
 option( KICAD_SCRIPTING
-    "Build the Python scripting support inside KiCad binaries (default OFF)."
-    )
+    "Build the Python scripting support inside KiCad binaries (default ON)."
+    ON )
 
 option( KICAD_SCRIPTING_MODULES
     "Build native portion of the pcbnew Python module: _pcbnew.{pyd,so} for OS command line use of Python."
-    )
+    ON )
+
+option( KICAD_SCRIPTING_PYTHON3
+    "Build for Python 3 instead of 2 (default OFF)."
+    OFF )
 
 option( KICAD_SCRIPTING_WXPYTHON
-    "Build wxPython implementation for wx interface building in Python and py.shell (default OFF)."
-    )
+    "Build wxPython implementation for wx interface building in Python and py.shell (default ON)."
+    ON )
 
-option( KICAD_USE_SCH_IO_MANAGER
-    "Build Eeschema with the I/O manager for handling schematic and symbol library I/O. (default OFF)"
-    )
+option( KICAD_SCRIPTING_WXPYTHON_PHOENIX
+    "Use new wxPython binding (default OFF)."
+    OFF )
+
+option( KICAD_SCRIPTING_ACTION_MENU
+    "Build a tools menu with registered python plugins: actions plugins (default ON)."
+    ON )
 
 option( KICAD_USE_OCE
-    "Build tools and plugins related to OpenCascade Community Edition (default OFF)"
-    )
+    "Build tools and plugins related to OpenCascade Community Edition (default ON)"
+    ON )
+
+option( KICAD_USE_OCC
+    "Build tools and plugins related to OpenCascade Technology (overrides KICAD_USE_OCE, default OFF)"
+    OFF )
 
 option( KICAD_INSTALL_DEMOS
-    "Install kicad demos and examples (default ON)"
+    "Install KiCad demos and examples (default ON)"
     ON )
 
 # when option KICAD_SCRIPTING OR KICAD_SCRIPTING_MODULES is enabled:
 # PYTHON_EXECUTABLE can be defined when invoking cmake
 # ( use -DPYTHON_EXECUTABLE=<python path>/python.exe or python2 )
 # when not defined by user, the default is python.exe under Windows and python2 for others
-# python binary file should be is exec path.
+# python binary file should be in exec path.
 
 # KICAD_SCRIPTING_MODULES requires KICAD_SCRIPTING enable it here if KICAD_SCRIPTING_MODULES is ON
 if ( KICAD_SCRIPTING_MODULES AND NOT KICAD_SCRIPTING )
@@ -87,15 +114,17 @@ if ( KICAD_SCRIPTING_MODULES AND NOT KICAD_SCRIPTING )
     set ( KICAD_SCRIPTING ON )
 endif()
 
-option( BUILD_GITHUB_PLUGIN "Build the GITHUB_PLUGIN for pcbnew." ON )
-
 option( BUILD_MYODBC_PLUGIN "Build the MYODBC_PLUGIN for pcbnew." ON )
 
-option( KICAD_SPICE "Build Kicad with internal Spice simulator." OFF )
+# same with KICAD_SCRIPTING_ACTION_MENUS
+if ( KICAD_SCRIPTING_ACTION_MENU AND NOT KICAD_SCRIPTING )
+    message(STATUS "Changing KICAD_SCRIPTING to ON as needed by KICAD_SCRIPTING_ACTION_MENU")
+    set ( KICAD_SCRIPTING ON )
+endif()
 
-# This can be set to a custom name to brag about a particular branch in the "About" dialog:
-set( KICAD_REPO_NAME "unknown" CACHE STRING "Name of the tree from which this build came." )
+option( BUILD_GITHUB_PLUGIN "Build the GITHUB_PLUGIN for pcbnew." ON )
 
+option( KICAD_SPICE "Build KiCad with internal Spice simulator." ON )
 
 # Global setting: exports are explicit
 set( CMAKE_CXX_VISIBILITY_PRESET "hidden" )
@@ -155,7 +184,7 @@ if( NOT DEFAULT_INSTALL_PATH )
          "Location of KiCad data files." )
 endif()
 
-message( STATUS "Kicad install dir: <${DEFAULT_INSTALL_PATH}>" )
+message( STATUS "KiCad install dir: <${DEFAULT_INSTALL_PATH}>" )
 
 # Generate build system specific header file.
 include( PerformFeatureChecks )
@@ -186,12 +215,76 @@ if( CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang" )
 
     CHECK_CXX_COMPILER_FLAG("-Wsuggest-override" COMPILER_SUPPORTS_WSUGGEST_OVERRIDE)
 
-    # Swig generated files do not use override specifier and create a lot of warnings
-    # So do not use -Wsuggest-override with KICAD_SCRIPTING ON, untill a best way is found
-    if(COMPILER_SUPPORTS_WSUGGEST_OVERRIDE AND NOT KICAD_SCRIPTING)
+    if(COMPILER_SUPPORTS_WSUGGEST_OVERRIDE)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wsuggest-override")
     endif()
+
+    CHECK_CXX_COMPILER_FLAG("-Wvla" COMPILER_SUPPORTS_WVLA)
+
+    if(COMPILER_SUPPORTS_WVLA)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=vla")
+    endif()
+
 endif()
+
+
+# Warn about shadowed variables (-Wshadow option), if supported
+# Unfortunately, the swig autogenerated files have a lot of shadowed variables
+# and -Wno-shadow does not exist.
+# Adding -Wshadow can be made only for .cpp files
+# and will be added later in CMakeLists.txt
+if( CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang" )
+    include(CheckCXXCompilerFlag)
+
+    CHECK_CXX_COMPILER_FLAG("-Wshadow" COMPILER_SUPPORTS_WSHADOW)
+
+    if( COMPILER_SUPPORTS_WSHADOW )
+        set(WSHADOW_FLAGS "-Wshadow")
+    endif()
+endif()
+
+if( WIN32 )
+    # define UNICODE and_UNICODE definition on Windows. KiCad uses unicode.
+    # Both definitions are required
+    add_definitions(-DUNICODE -D_UNICODE)
+endif()
+
+
+#================================================
+# Provide access to CCACHE
+#================================================
+if (USE_CCACHE)
+  find_program(CCACHE_FOUND ccache)
+  if(CCACHE_FOUND)
+    get_property(RULE_LAUNCH_COMPILE GLOBAL PROPERTY RULE_LAUNCH_COMPILE)
+    set(RULE_LAUNCH_COMPILE "${RULE_LAUNCH_COMPILE} ${CCACHE_FOUND}")
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ${RULE_LAUNCH_COMPILE})
+
+    get_property(RULE_LAUNCH_LINK GLOBAL PROPERTY RULE_LAUNCH_LINK)
+    set(RULE_LAUNCH_LINK "${RULE_LAUNCH_LINK} ${CCACHE_FOUND}")
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ${RULE_LAUNCH_LINK})
+
+    message(STATUS "Used ${CCACHE_FOUND} for compilation.")
+  else(CCACHE_FOUND)
+    message(STATUS "CCache was requested but not found.")
+  endif(CCACHE_FOUND)
+endif(USE_CCACHE)
+
+
+#================================================
+# Provide access to CCACHE
+#================================================
+if (USE_DISTCC)
+  find_program(DISTCC_FOUND distcc)
+  if(DISTCC_FOUND)
+    get_property(RULE_LAUNCH_COMPILE GLOBAL PROPERTY RULE_LAUNCH_COMPILE)
+    set(RULE_LAUNCH_COMPILE "${RULE_LAUNCH_COMPILE} ${DISTCC_FOUND}")
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ${RULE_LAUNCH_COMPILE})
+    message(STATUS "Using ${DISTCC_FOUND} for distributed build.")
+  else(DISTCC_FOUND)
+    message(INFO "Distcc was requested but not found.")
+  endif(DISTCC_FOUND)
+endif(USE_DISTCC)
 
 
 #================================================
@@ -208,6 +301,10 @@ if( CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang" )
         set( TO_LINKER -XLinker )
     else()
         set( TO_LINKER -Wl )
+        # Set 32-bit flag for GCC to prevent excess precision
+        if( CMAKE_SIZEOF_VOID_P EQUAL 4 )
+            set( CMAKE_CXX_FLAGS "-ffloat-store ${CMAKE_CXX_FLAGS}" )
+        endif()
     endif()
 
     # Establish -Wall early, so specialized relaxations of this may come
@@ -215,21 +312,21 @@ if( CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang" )
     set( CMAKE_C_FLAGS   "-Wall ${CMAKE_C_FLAGS}" )
     set( CMAKE_CXX_FLAGS "-Wall ${CMAKE_CXX_FLAGS}" )
 
-    set( CMAKE_C_FLAGS_DEBUG   "-g3 -ggdb3 -DDEBUG" )
-    set( CMAKE_CXX_FLAGS_DEBUG "-g3 -ggdb3 -DDEBUG -Wno-deprecated-declarations" )
-
-    set( CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE} -DNDEBUG" )
-    set( CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -DNDEBUG" )
+    # Link flags in Debug: -g1 and -ggdb1 or -g1 and -ggdb3 can be used.
+    # Level 1 produces minimal information, enough for making basic backtraces.
+    # This includes descriptions of functions and external variables, and line number tables,
+    # but no information about local variables.
+    # Level 3 includes full information, but binaries are much larger.
+    if( BUILD_SMALL_DEBUG_FILES )
+        set( CMAKE_C_FLAGS_DEBUG   "-g1 -ggdb1 -DDEBUG" )
+        set( CMAKE_CXX_FLAGS_DEBUG "-g1 -ggdb1 -DDEBUG -Wno-deprecated-declarations" )
+    else()
+        set( CMAKE_C_FLAGS_DEBUG   "-g3 -ggdb3 -DDEBUG" )
+        set( CMAKE_CXX_FLAGS_DEBUG "-g3 -ggdb3 -DDEBUG -Wno-deprecated-declarations" )
+    endif()
 
     if( MINGW )
         set( CMAKE_EXE_LINKER_FLAGS_RELEASE "-s" )
-
-        # _UNICODE definition seems needed under mingw/gcc 4.8
-        # (Kicad uses unicode, and on Windows, wxWidgets >= 2.9.4 is mandatory
-        # and uses unicode)
-        if( GCC_VERSION VERSION_EQUAL 4.8.0 OR GCC_VERSION VERSION_GREATER 4.8.0 )
-            add_definitions(-D_UNICODE)
-        endif()
 
         # Since version 2.8.5, Cmake uses a response file (.rsp) to
         # pass the list of include paths to gcc
@@ -297,32 +394,42 @@ if( KICAD_SCRIPTING_MODULES )
     add_definitions( -DKICAD_SCRIPTING_MODULES )
 endif()
 
+if( KICAD_SCRIPTING_PYTHON3 )
+    add_definitions( -DKICAD_SCRIPTING_PYTHON3 )
+endif()
+
 if( KICAD_SCRIPTING_WXPYTHON )
     add_definitions( -DKICAD_SCRIPTING_WXPYTHON )
+endif()
+
+if( KICAD_SCRIPTING_WXPYTHON_PHOENIX )
+    add_definitions( -DKICAD_SCRIPTING_WXPYTHON_PHOENIX )
+endif()
+
+if( KICAD_SCRIPTING_ACTION_MENU )
+    add_definitions( -DKICAD_SCRIPTING_ACTION_MENU )
 endif()
 
 if( KICAD_SPICE )
     add_definitions( -DKICAD_SPICE )
 endif()
 
-if( KICAD_USE_SCH_IO_MANAGER )
-    add_definitions( -DKICAD_USE_SCH_IO_MANAGER )
-endif()
-
 if( KICAD_USE_OCE )
     add_definitions( -DKICAD_USE_OCE )
 endif()
 
-if( USE_WX_GRAPHICS_CONTEXT OR APPLE )
-    add_definitions( -DUSE_WX_GRAPHICS_CONTEXT )
+if( KICAD_USE_OCC )
+    add_definitions( -DKICAD_USE_OCC )
+    remove_definitions( -DKICAD_USE_OCE )
+    unset( KICAD_USE_OCE )
 endif()
 
+if( KICAD_USE_CUSTOM_PADS )
+    add_definitions( -DKICAD_USE_CUSTOM_PADS )
+endif()
 
-# By default images in menu items are enabled on all platforms except OSX.
-if( NOT APPLE )
-    set( USE_IMAGES_IN_MENUS ON CACHE BOOL "Enable images in menus" )
-else()
-    set( USE_IMAGES_IN_MENUS OFF CACHE BOOL "Enable images in menus" )
+if( USE_WX_GRAPHICS_CONTEXT OR APPLE )
+    add_definitions( -DUSE_WX_GRAPHICS_CONTEXT )
 endif()
 
 
@@ -352,6 +459,9 @@ if( NOT APPLE )
     set( KICAD_BIN bin
         CACHE PATH "Location of KiCad binaries." )
 
+    set( KICAD_DATA ${CMAKE_INSTALL_DATADIR}/kicad
+        CACHE PATH "Location of KiCad data files." )
+
     if( WIN32 )
         set( KICAD_PLUGINS ${KICAD_BIN}/scripting/plugins
             CACHE PATH "Location of KiCad plugins." )
@@ -362,19 +472,17 @@ if( NOT APPLE )
         set( KICAD_USER_PLUGIN ${KICAD_BIN}/plugins
             CACHE PATH "Location of KiCad user-loaded plugins" )
     else()
-        set( KICAD_PLUGINS lib/kicad/plugins
+        set( KICAD_PLUGINS ${KICAD_DATA}/plugins
             CACHE PATH "Location of KiCad plugins." )
 
-        set( KICAD_LIB lib
+        set( KICAD_LIB ${CMAKE_INSTALL_LIBDIR}
             CACHE PATH "Location of KiCad shared objects" )
 
-        set( KICAD_USER_PLUGIN lib/kicad/plugins
+        set( KICAD_USER_PLUGIN ${CMAKE_INSTALL_LIBDIR}/kicad/plugins
             CACHE PATH "Location of KiCad user-loaded plugins" )
     endif()
 
-    set( KICAD_DATA share/kicad
-        CACHE PATH "Location of KiCad data files." )
-    set( KICAD_DOCS share/doc/kicad
+    set( KICAD_DOCS ${CMAKE_INSTALL_DATADIR}/doc/kicad
         CACHE PATH "Location of KiCad documentation files." )
     set( KICAD_DEMOS ${KICAD_DATA}/demos
         CACHE PATH "Location of KiCad demo files." )
@@ -468,56 +576,10 @@ include( ExternalProject )
 include( CheckFindPackageResult )
 
 #
-# Find OpenMP support, optional
-#
-
-find_package( OpenMP )
-
-if( OPENMP_FOUND )
-    set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}" )
-    set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}" )
-    add_definitions( -DUSE_OPENMP )
-
-    # MinGW does not include the OpenMP link library and FindOpenMP.cmake does not
-    # set it either.  Not sure this is the most elegant solution but it works.
-    if( MINGW )
-        set( OPENMP_LIBRARIES gomp )
-    endif()
-endif()
-
-#
-# Find wxWidgets library, required
-#
-
-# Here you can define what libraries of wxWidgets you need for your
-# application. You can figure out what libraries you need here;
-# http://www.wxwidgets.org/manuals/2.8/wx_librarieslist.html
-
-# Turn on wxWidgets compatibility mode for some classes
-add_definitions( -DWX_COMPATIBILITY )
-
-# See line 41 of CMakeModules/FindwxWidgets.cmake
-set( wxWidgets_CONFIG_OPTIONS ${wxWidgets_CONFIG_OPTIONS} --static=no )
-
-find_package( wxWidgets 3.0.0 COMPONENTS gl aui adv html core net base xml stc REQUIRED )
-
-# Include wxWidgets macros.
-include( ${wxWidgets_USE_FILE} )
-
-#
 # Find OpenGL library, required
 #
+set( OpenGL_GL_PREFERENCE "LEGACY" )     # CMake 3.11+ setting; see 'cmake --help-policy CMP0072'
 find_package( OpenGL REQUIRED )
-
-# Dick 5-Feb-2014:
-# Marco: We cannot use both ExternalProject_Add() add and find_package()
-# in the same CMake tree and have them both reference the same package:
-# http://stackoverflow.com/questions/6351609/cmake-linking-to-library-downloaded-from-externalproject-add
-# https://www.mail-archive.com/cmake@cmake.org/msg47501.html
-
-# Handle target used to specify if a target needs wx-widgets or other libraries
-# Always defined, empty if no libraries are to be built
-add_custom_target( lib-dependencies )
 
 #
 # Find GLEW library, required
@@ -531,6 +593,12 @@ endif()
 # Find GLM library, required
 #
 find_package( GLM 0.9.5.1 REQUIRED )
+if( GLM_VERSION MATCHES "0.9.9.3" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    MESSAGE( FATAL_ERROR "\nGLM version ${GLM_VERSION} is incompatible with KiCad using GCC.\n"
+                         "Please downgrade to GLM version 0.9.9.2 or older or use clang instead" )
+endif()
+
+add_definitions( -DGLM_FORCE_CTOR_INIT )
 
 #
 # Find CURL library, required for github plugin
@@ -542,22 +610,26 @@ endif()
 #
 # Find Cairo library, required
 #
-find_package( Cairo 1.8.8 REQUIRED )
+find_package( Cairo 1.12 REQUIRED )
+find_package( Pixman 0.30 REQUIRED )
 
 #
-# Find Boost library, required.
-#
-# Note: Prior to Boost 1.59, the Boost context library is not built when compiling on windows
-#       with GCC.  You must patch the Boost sources.
-find_package( Boost 1.54.0 REQUIRED COMPONENTS context system thread )
+# Find Boost headers, required.
+find_package( Boost 1.54.0 REQUIRED )
 
 # Include MinGW resource compiler.
 include( MinGWResourceCompiler )
 
-# Find GDI+ on windows if wxGraphicsContext is available.
-if( MINGW AND USE_WX_GRAPHICS_CONTEXT )
-    find_package( GdiPlus )
-    check_find_package_result( GDI_PLUS_FOUND "GDI+" )
+# Find GDI+ on windows if wxGraphicsContext is available, and only link gdiplus library
+# if wxGraphicsContext not used, because the cairo printing system uses this library
+if( WIN32 )
+    if( USE_WX_GRAPHICS_CONTEXT )
+        find_package( GdiPlus )
+        check_find_package_result( GDI_PLUS_FOUND "GDI+" )
+    else()
+        # if WX_GRAPHICS_CONTEXT is not used we just need the gdiplus library for cairo printing
+        set( GDI_PLUS_LIBRARIES gdiplus )
+    endif()
 endif()
 
 # Find ngspice library, required for integrated circuit simulator
@@ -567,9 +639,24 @@ endif()
 
 # Find OpenCascade Community Edition, required for STEP plugin and tools
 if( KICAD_USE_OCE )
-    set( LIBS_OCE TKBinXCAF TKPCAF TKSTEP TKXDESTEP TKIGES TKXDEIGES )
+    set( OCC_LIBRARIES TKBinXCAF TKPCAF TKSTEP TKXDESTEP TKIGES TKXDEIGES )
 
-    find_package( OCE 0.16 REQUIRED ${LIBS_OCE} )
+    find_package( OCE 0.16 REQUIRED ${OCC_LIBRARIES} )
+
+elseif( KICAD_USE_OCC )
+    find_package(OpenCASCADE)
+    if( NOT OCC_FOUND )
+        MESSAGE( FATAL_ERROR "================================================================\n"
+                             " KICAD_USE_OCC=True but OpenCASCADE was no found!\n"
+                             "================================================================\n")
+    endif()
+    if( OCC_VERSION_STRING VERSION_LESS 6.8.0 )
+        MESSAGE( FATAL_ERROR "================================================================\n"
+                             "OpenCASCADE version ${OCC_VERSION_STRING} was found.\n"
+                             "  KiCad requires a minimum version of 6.8.0\n"
+                             "================================================================\n")
+    endif()
+    include_directories( SYSTEM ${OCC_INCLUDE_DIR} )
 endif()
 
 # Assist with header file searching optimization:
@@ -599,22 +686,27 @@ if( KICAD_SCRIPTING OR KICAD_SCRIPTING_MODULES )
     find_package( SWIG 3.0 REQUIRED )
     include( ${SWIG_USE_FILE} )
 
-    # force a python version < 3.0
-    set( PythonInterp_FIND_VERSION 2.6 )
-    set( PythonLibs_FIND_VERSION 2.6 )
+    if( KICAD_SCRIPTING_PYTHON3 )
+        set( PythonInterp_FIND_VERSION 3.3 )
+        set( PythonLibs_FIND_VERSION 3.3 )
+    else()
+        # force a python version < 3.0
+        set( PythonInterp_FIND_VERSION 2.6 )
+        set( PythonLibs_FIND_VERSION 2.6 )
+    endif()
 
     find_package( PythonInterp )
 
     check_find_package_result( PYTHONINTERP_FOUND "Python Interpreter" )
 
-    if( NOT PYTHON_VERSION_MAJOR EQUAL 2 )
+    if( NOT KICAD_SCRIPTING_PYTHON3 AND NOT PYTHON_VERSION_MAJOR EQUAL 2 )
         message( FATAL_ERROR "Python 2.x is required." )
     endif()
 
     # Get the correct Python site package install path from the Python interpreter found by
     # FindPythonInterp unless the user specifically defined a custom path.
     if( NOT PYTHON_SITE_PACKAGE_PATH )
-        execute_process( COMMAND ${PYTHON_EXECUTABLE} -c "import distutils.sysconfig;print\"%s\"%distutils.sysconfig.get_python_lib(plat_specific=0, standard_lib=0, prefix='')"
+        execute_process( COMMAND ${PYTHON_EXECUTABLE} -c "import distutils.sysconfig;print(\"%s\"%distutils.sysconfig.get_python_lib(plat_specific=0, standard_lib=0, prefix=''))"
             OUTPUT_VARIABLE PYTHON_SITE_PACKAGE_PATH
             OUTPUT_STRIP_TRAILING_WHITESPACE
             )
@@ -639,61 +731,86 @@ if( KICAD_SCRIPTING OR KICAD_SCRIPTING_MODULES )
     mark_as_advanced( PYTHON_DEST )
     message( STATUS "Python module install path: ${PYTHON_DEST}" )
 
-    find_package( PythonLibs 2.6 )
-
-    if( KICAD_SCRIPTING_WXPYTHON )
-        # Check to see if the correct version of wxPython is installed based on the version of
-        # wxWidgets found.  At least the major an minor version should match.
-        set( _wxpy_version "${wxWidgets_VERSION_MAJOR}.${wxWidgets_VERSION_MINOR}" )
-        set( _py_cmd "import wxversion;print wxversion.checkInstalled('${_wxpy_version}')" )
-
-        # Add user specified Python site package path.
-        if( PYTHON_SITE_PACKAGE_PATH )
-            set( _py_cmd
-                "import sys;sys.path.insert(0, \"${PYTHON_SITE_PACKAGE_PATH}\");${_py_cmd}" )
-        endif()
-
-        execute_process( COMMAND ${PYTHON_EXECUTABLE} -c "${_py_cmd}"
-            RESULT_VARIABLE WXPYTHON_VERSION_RESULT
-            OUTPUT_VARIABLE WXPYTHON_VERSION_FOUND
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            )
-
-        # message( STATUS "WXPYTHON_VERSION_FOUND: ${WXPYTHON_VERSION_FOUND}" )
-        # message( STATUS "WXPYTHON_VERSION_RESULT: ${WXPYTHON_VERSION_RESULT}" )
-
-        # Check to see if any version of wxPython is installed on the system.
-        if( WXPYTHON_VERSION_RESULT GREATER 0 )
-            message( FATAL_ERROR "wxPython does not appear to be installed on the system." )
-        endif()
-
-        if( NOT WXPYTHON_VERSION_FOUND STREQUAL "True" )
-            message( FATAL_ERROR
-                "wxPython version ${_wxpy_version} does not appear to be installed on the system." )
-        endif()
-
-        set( WXPYTHON_VERSION ${_wxpy_version} CACHE STRING "wxPython version found." )
-        message( STATUS "wxPython version ${_wxpy_version} found." )
+    if( KICAD_SCRIPTING_PYTHON3 )
+        find_package( PythonLibs 3.3 REQUIRED )
+    else()
+        find_package( PythonLibs 2.6 REQUIRED )
     endif()
 
-    #message( STATUS "PYTHON_INCLUDE_DIRS:${PYTHON_INCLUDE_DIRS}" )
+    if( KICAD_SCRIPTING_WXPYTHON )
+        find_package( wxPython REQUIRED )
+        message( STATUS "Found ${WXPYTHON_FLAVOR} "
+            "${WXPYTHON_VERSION}/${WXPYTHON_TOOLKIT} "
+            "(wxWidgets ${WXPYTHON_WXVERSION})" )
+    endif()
 
     # Infrequently needed headers go at end of search paths, append to INC_AFTER which
     # although is used for all components, should be a harmless hit for something like eeschema
     # so long as unused search paths are at the end like this.
     set( INC_AFTER ${INC_AFTER} ${PYTHON_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/scripting )
-
-    #message( STATUS "/ INC_AFTER:${INC_AFTER}" )
-
 endif()
 
-if( EXISTS ${CMAKE_SOURCE_DIR}/include/config.h )
-    # This file may exist ( created by an alternate process to the svn test above),
-    # e.g. could be created by a checkout script that produces a source tar file.
-    # This directive means the about box will have the svn date & revision in it,
-    # but the hard coded release date ( program version) will be preserved.
-    add_definitions( -DHAVE_SVN_REVISION )
+#
+# Find wxWidgets library, required
+#
+
+# Turn on wxWidgets compatibility mode for some classes
+add_definitions( -DWX_COMPATIBILITY )
+
+if( KICAD_SCRIPTING_WXPYTHON )
+    # Check if '--toolkit=xxx' option has been passed
+    string( REGEX MATCH "--toolkit=([a-zA-Z0-9]+)"
+        WXWIDGETS_REQUESTED_TOOLKIT "${wxWidgets_CONFIG_OPTIONS}" )
+
+    if( WXWIDGETS_REQUESTED_TOOLKIT
+            AND NOT WXWIDGETS_REQUESTED_TOOLKIT STREQUAL "--toolkit=${WXPYTHON_TOOLKIT}" )
+        message( WARNING "wxWidgets and wxPython must be based on the same toolkit.\n"
+            "It will be fixed automatically if you skip the '--toolkit=xxx' "
+            "wxWidgets_CONFIG_OPTIONS parameter.")
+    else()
+        # Use the same toolkit as wxPython otherwise there will be a symbol conflict
+        set( wxWidgets_CONFIG_OPTIONS ${wxWidgets_CONFIG_OPTIONS} "--toolkit=${WXPYTHON_TOOLKIT}" )
+    endif()
+
+    # Require the same wxWidgets version as is used by wxPython
+    set( wxWidgets_REQ_VERSION ${WXPYTHON_WXVERSION} )
+else()
+    # Require wxWidgets 3.0.0 as the minimum when wxPython is disabled
+    set( wxWidgets_REQ_VERSION 3.0.0 )
 endif()
+
+# See line 49 of CMakeModules/FindwxWidgets.cmake
+set( wxWidgets_CONFIG_OPTIONS ${wxWidgets_CONFIG_OPTIONS} --static=no )
+
+find_package( wxWidgets ${wxWidgets_REQ_VERSION} COMPONENTS gl aui adv html core net base xml stc REQUIRED )
+
+# Include wxWidgets macros.
+include( ${wxWidgets_USE_FILE} )
+
+# Check for GTK3 libraries - These do not have XOR, so we need overlay (Page layout editor)
+if( wxWidgets_LIBRARIES MATCHES "gtk3" )
+    add_definitions( -DUSE_WX_OVERLAY )
+endif()
+
+if( KICAD_SCRIPTING_WXPYTHON AND NOT KICAD_SCRIPTING_WXPYTHON_PHOENIX )
+    # wxPython appears to be installed and valid so make sure the headers are available.
+    foreach( path ${wxWidgets_INCLUDE_DIRS} )
+        #message( STATUS "Searching for wx/wxPython/wxPython.h in ${path}" )
+
+        find_path( wxPYTHON_INCLUDE_DIRS wx/wxPython/wxPython.h
+            PATHS "${path}" )
+
+        if( wxPYTHON_INCLUDE_DIRS )
+            message( STATUS "Found wxPython.h in ${path}/wx/wxPython" )
+            break()
+        endif()
+    endforeach()
+
+    if( NOT wxPYTHON_INCLUDE_DIRS )
+        message( FATAL_ERROR "Cannot find wxPython.h" )
+    endif()
+endif()
+
 
 if( APPLE )
     # Remove app bundles in ${KICAD_BIN} before installing anything new.
@@ -733,6 +850,8 @@ if( DOXYGEN_FOUND )
         DEPENDS Doxyfile
         COMMENT "building developer's resource docs into directory Documentation/development/doxygen/html"
         )
+
+    add_subdirectory(Documentation/docset)
 else()
     message( STATUS "WARNING: Doxygen not found - doxygen-docs (Source Docs) target not created" )
 endif()
@@ -769,17 +888,14 @@ add_custom_target( uninstall
 # Installation
 #================================================
 
-install( FILES INSTALL.txt
-    DESTINATION ${KICAD_DOCS}
-    COMPONENT resources )
-
 ###
 # Install scripts
 ###
-if( UNIX )
+if( UNIX AND NOT APPLE )
     install( DIRECTORY scripts
         DESTINATION ${KICAD_DOCS}
         COMPONENT resources
+        PATTERN "*.bat" EXCLUDE
         )
 endif()
 
@@ -793,27 +909,35 @@ if( UNIX AND NOT APPLE )
     set( UNIX_MIME_FILES ${UNIX_MIME_DIR}/mime )
     set( UNIX_ICON_FILES ${UNIX_MIME_DIR}/icons )
     set( UNIX_APPLICATIONS_FILES ${UNIX_MIME_DIR}/applications )
+    set( UNIX_APPDATA_FILES resources/linux/appdata )
 
     # Install Mime directory
     install( DIRECTORY ${UNIX_ICON_FILES}
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/share
+        DESTINATION share
         COMPONENT resources
         )
 
     # Install Icons
     install( DIRECTORY ${UNIX_MIME_FILES}
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/share
+        DESTINATION share
         COMPONENT resources
         )
 
     # Install Applications directory (.desktop files)
     install( DIRECTORY ${UNIX_APPLICATIONS_FILES}
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/share
+        DESTINATION share
+        COMPONENT resources
+        )
+
+    # Install AppStream directory (app store entry)
+    install( DIRECTORY ${UNIX_APPDATA_FILES}
+        DESTINATION share
         COMPONENT resources
         )
 endif()
 
 #include( CTest )
+enable_testing()
 
 if( UNIX AND NOT APPLE )
 
@@ -843,7 +967,7 @@ add_subdirectory( 3d-viewer )
 add_subdirectory( cvpcb )
 add_subdirectory( eeschema )
 add_subdirectory( gerbview )
-add_subdirectory( lib_dxf )
+add_subdirectory( dxflib_qcad )
 add_subdirectory( pcbnew )
 add_subdirectory( polygon )
 add_subdirectory( pagelayout_editor )

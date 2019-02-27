@@ -30,9 +30,15 @@
 #include <iterator>
 
 #include <math/vector2d.h>
-#include <cassert>
 
-#include <boost/optional.hpp>
+#include <core/optional.h>
+
+#ifdef WX_COMPATIBILITY
+#include <wx/debug.h>
+#else
+#include <cassert>
+#endif
+
 
 class TOOL_ACTION;
 class TOOL_MANAGER;
@@ -100,11 +106,14 @@ enum TOOL_ACTIONS
     // This event is sent *after* undo/redo command is performed.
     TA_UNDO_REDO_POST       = 0x40000,
 
-    // Tool action (allows to control tools).
+    // Tool action (allows one to control tools).
     TA_ACTION               = 0x80000,
 
     // Tool activation event.
     TA_ACTIVATE             = 0x100000,
+
+    // Model has changed (partial update).
+    TA_MODEL_CHANGE         = 0x200000,
 
     TA_ANY = 0xffffffff
 };
@@ -233,26 +242,29 @@ public:
         return m_actions;
     }
 
+    ///> Returns if it this event has a valid position (true for mouse events)
+    bool HasPosition() const
+    {
+        return m_category == TC_MOUSE;
+    }
+
     ///> Returns information about difference between current mouse cursor position and the place
     ///> where dragging has started.
-    const VECTOR2D& Delta() const
+    const VECTOR2D Delta() const
     {
-        assert( m_category == TC_MOUSE );    // this should be used only with mouse events
-        return m_mouseDelta;
+        return returnCheckedPosition( m_mouseDelta );
     }
 
     ///> Returns mouse cursor position in world coordinates.
-    const VECTOR2D& Position() const
+    const VECTOR2D Position() const
     {
-        assert( m_category == TC_MOUSE );    // this should be used only with mouse events
-        return m_mousePos;
+        return returnCheckedPosition( m_mousePos );
     }
 
     ///> Returns the point where dragging has started.
-    const VECTOR2D& DragOrigin() const
+    const VECTOR2D DragOrigin() const
     {
-        assert( m_category == TC_MOUSE );    // this should be used only with mouse events
-        return m_mouseDragOrigin;
+        return returnCheckedPosition( m_mouseDragOrigin );
     }
 
     ///> Returns information about mouse buttons state.
@@ -302,6 +314,11 @@ public:
     bool IsUndoRedo() const
     {
         return m_actions & ( TA_UNDO_REDO_PRE | TA_UNDO_REDO_POST );
+    }
+
+    bool IsMenu() const
+    {
+        return m_actions & TA_CONTEXT_MENU;
     }
 
     ///> Returns information about key modifiers state (Ctrl, Alt, etc.)
@@ -384,12 +401,12 @@ public:
         m_param = (void*) aParam;
     }
 
-    boost::optional<int> GetCommandId() const
+    OPT<int> GetCommandId() const
     {
         return m_commandId;
     }
 
-    boost::optional<std::string> GetCommandStr() const
+    OPT<std::string> GetCommandStr() const
     {
         return m_commandStr;
     }
@@ -424,6 +441,27 @@ private:
         m_modifiers = aMods;
     }
 
+    /**
+     * Ensure that the event is a type that has a position before returning a
+     * position, otherwise return a mull-constructed position.
+     * Used to defend the position accessors from runtime access when the event
+     * does not have a valid position.
+     *
+     * @param aPos the position to return if the event is valid
+     * @return the checked position
+     */
+    VECTOR2D returnCheckedPosition( const VECTOR2D& aPos ) const
+    {
+    #ifdef WX_COMPATIBILITY
+        wxCHECK_MSG( HasPosition(), VECTOR2D(),
+            "Attempted to get position from non-position event" );
+    #else
+        assert( HasPosition() );
+    #endif
+
+        return aPos;
+    }
+
     TOOL_EVENT_CATEGORY m_category;
     TOOL_ACTIONS m_actions;
     TOOL_ACTION_SCOPE m_scope;
@@ -450,11 +488,11 @@ private:
     ///> Generic parameter used for passing non-standard data.
     void* m_param;
 
-    boost::optional<int> m_commandId;
-    boost::optional<std::string> m_commandStr;
+    OPT<int> m_commandId;
+    OPT<std::string> m_commandStr;
 };
 
-typedef boost::optional<TOOL_EVENT> OPT_TOOL_EVENT;
+typedef OPT<TOOL_EVENT> OPT_TOOL_EVENT;
 
 /**
  * Class TOOL_EVENT_LIST
@@ -487,13 +525,13 @@ public:
      */
     const std::string Format() const;
 
-    boost::optional<const TOOL_EVENT&> Matches( const TOOL_EVENT& aEvent ) const
+    OPT<const TOOL_EVENT&> Matches( const TOOL_EVENT& aEvent ) const
     {
         for( const_iterator i = m_events.begin(); i != m_events.end(); ++i )
             if( i->Matches( aEvent ) )
                 return *i;
 
-        return boost::optional<const TOOL_EVENT&>();
+        return OPT<const TOOL_EVENT&>();
     }
 
     /**

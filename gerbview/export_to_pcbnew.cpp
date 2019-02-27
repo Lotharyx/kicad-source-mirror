@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2007-2014 Jean-Pierre Charras  jp.charras at wanadoo.fr
- * Copyright (C) 1992-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -36,8 +36,8 @@
 #include <trigo.h>
 #include <gerbview.h>
 #include <gerbview_frame.h>
-#include <class_gerber_file_image.h>
-#include <class_gerber_file_image_list.h>
+#include <gerber_file_image.h>
+#include <gerber_file_image_list.h>
 #include <select_layers_to_pcb.h>
 #include <build_version.h>
 #include <wildcards_and_files_ext.h>
@@ -46,7 +46,6 @@
 // Imported function
 extern const wxString GetPCBDefaultLayerName( LAYER_NUM aLayerNumber );
 
-#define TO_PCB_UNIT( x ) ( x / IU_PER_MM)
 
 /* A helper class to export a Gerber set of files to Pcbnew
  */
@@ -72,7 +71,6 @@ public:
 
 private:
     /**
-     * Function export_non_copper_item
      * write a non copper line or arc to the board file.
      * @param aGbrItem = the Gerber item (line, arc) to export
      * @param aLayer = the technical layer to use
@@ -80,7 +78,13 @@ private:
     void    export_non_copper_item( GERBER_DRAW_ITEM* aGbrItem, LAYER_NUM aLayer );
 
     /**
-     * Function export_copper_item
+     * write a non copper polygon item to the board file.
+     * @param aGbrItem = the Gerber item (line, arc) to export
+     * @param aLayer = the technical layer to use
+     */
+    void    writePcbPolygonItem( GERBER_DRAW_ITEM* aGbrItem, LAYER_NUM aLayer );
+
+    /**
      * write a track or via) to the board file.
      * @param aGbrItem = the Gerber item (line, arc, flashed) to export
      * @param aLayer = the copper layer to use
@@ -132,6 +136,15 @@ private:
      * Write a very basic header to the board file
      */
     void    writePcbHeader( LAYER_NUM* aLayerLookUpTable );
+
+    /** In Pcbnew files units are mm for coordinates.
+     * So MapToPcbUnits converts internal gerbview to mm any pcbnew value
+     * @param aValue is a coordinate value to convert in mm
+     */
+    double MapToPcbUnits( int aValue )
+    {
+        return aValue / IU_PER_MM;
+    }
 };
 
 
@@ -157,6 +170,7 @@ void GERBVIEW_FRAME::ExportDataInPcbnewFormat( wxCommandEvent& event )
     int layercount = 0;
 
     GERBER_FILE_IMAGE_LIST* images = GetGerberLayout()->GetImagesList();
+
     // Count the Gerber layers which are actually currently used
     for( LAYER_NUM ii = 0; ii < (LAYER_NUM)images->ImagesMaxCount(); ++ii )
     {
@@ -174,8 +188,8 @@ void GERBVIEW_FRAME::ExportDataInPcbnewFormat( wxCommandEvent& event )
     wxString        fileName;
     wxString        path = m_mruPath;
 
-    wxFileDialog    filedlg( this, _( "Board file name:" ),
-                             path, fileName, PcbFileWildcard,
+    wxFileDialog    filedlg( this, _( "Board File Name" ),
+                             path, fileName, PcbFileWildcard(),
                              wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     if( filedlg.ShowModal() == wxID_CANCEL )
@@ -210,7 +224,7 @@ bool GBR_TO_PCB_EXPORTER::ExportPcb( LAYER_NUM* aLayerLookUpTable, int aCopperLa
     if( m_fp == NULL )
     {
         wxString msg;
-        msg.Printf( _( "Cannot create file '%s'" ), GetChars( m_pcb_file_name ) );
+        msg.Printf( _( "Cannot create file \"%s\"" ), GetChars( m_pcb_file_name ) );
         DisplayError( m_gerbview_frame, msg );
         return false;
     }
@@ -280,6 +294,12 @@ void GBR_TO_PCB_EXPORTER::export_non_copper_item( GERBER_DRAW_ITEM* aGbrItem, LA
     wxPoint seg_start   = aGbrItem->m_Start;
     wxPoint seg_end     = aGbrItem->m_End;
 
+    if( aGbrItem->m_Shape == GBR_POLYGON )
+    {
+        writePcbPolygonItem( aGbrItem, aLayer );
+        return;
+    }
+
     if( aGbrItem->m_Shape == GBR_ARC )
     {
         double  a = atan2( (double) ( aGbrItem->m_Start.y - aGbrItem->m_ArcCentre.y),
@@ -318,6 +338,12 @@ void GBR_TO_PCB_EXPORTER::export_copper_item( GERBER_DRAW_ITEM* aGbrItem, LAYER_
         export_segarc_copper_item( aGbrItem, aLayer );
         break;
 
+    case GBR_POLYGON:
+        // Currently: Pcbnew does not really handle polygons on copper layers (no DRC test).
+        // However, we can export them if the purpose of this export is to help recreate a board
+        writePcbPolygonItem( aGbrItem, aLayer );
+        break;
+
     default:
         export_segline_copper_item( aGbrItem, aLayer );
         break;
@@ -344,11 +370,11 @@ void GBR_TO_PCB_EXPORTER::writeCopperLineItem( wxPoint& aStart, wxPoint& aEnd,
                                                int aWidth, LAYER_NUM aLayer )
 {
   fprintf( m_fp, "(segment (start %s %s) (end %s %s) (width %s) (layer %s) (net 0))\n",
-                  Double2Str( TO_PCB_UNIT(aStart.x) ).c_str(),
-                  Double2Str( TO_PCB_UNIT(aStart.y) ).c_str(),
-                  Double2Str( TO_PCB_UNIT(aEnd.x) ).c_str(),
-                  Double2Str( TO_PCB_UNIT(aEnd.y) ).c_str(),
-                  Double2Str( TO_PCB_UNIT( aWidth ) ).c_str(),
+                  Double2Str( MapToPcbUnits(aStart.x) ).c_str(),
+                  Double2Str( MapToPcbUnits(aStart.y) ).c_str(),
+                  Double2Str( MapToPcbUnits(aEnd.x) ).c_str(),
+                  Double2Str( MapToPcbUnits(aEnd.y) ).c_str(),
+                  Double2Str( MapToPcbUnits( aWidth ) ).c_str(),
                   TO_UTF8( GetPCBDefaultLayerName( aLayer ) ) );
 }
 
@@ -429,9 +455,9 @@ void GBR_TO_PCB_EXPORTER::export_flashed_copper_item( GERBER_DRAW_ITEM* aGbrItem
 
     // Layers are Front to Back
     fprintf( m_fp, " (via (at %s %s) (size %s)",
-                  Double2Str( TO_PCB_UNIT(via_pos.x) ).c_str(),
-                  Double2Str( TO_PCB_UNIT(via_pos.y) ).c_str(),
-                  Double2Str( TO_PCB_UNIT( width ) ).c_str() );
+                  Double2Str( MapToPcbUnits(via_pos.x) ).c_str(),
+                  Double2Str( MapToPcbUnits(via_pos.y) ).c_str(),
+                  Double2Str( MapToPcbUnits( width ) ).c_str() );
 
     fprintf( m_fp, " (layers %s %s))\n",
                   TO_UTF8( GetPCBDefaultLayerName( F_Cu ) ),
@@ -456,8 +482,11 @@ void GBR_TO_PCB_EXPORTER::writePcbHeader( LAYER_NUM* aLayerLookUpTable )
         fprintf( m_fp, "    (%d %s signal)\n", id, TO_UTF8( GetPCBDefaultLayerName( id ) ) );
     }
 
-    for( int ii = B_Adhes; ii < LAYER_ID_COUNT; ii++ )
+    for( int ii = B_Adhes; ii < PCB_LAYER_ID_COUNT; ii++ )
     {
+        if( GetPCBDefaultLayerName( ii ).IsEmpty() )    // Layer not available for export
+            continue;
+
         fprintf( m_fp, "    (%d %s user)\n", ii, TO_UTF8( GetPCBDefaultLayerName( ii ) ) );
     }
 
@@ -471,35 +500,73 @@ void GBR_TO_PCB_EXPORTER::writePcbLineItem( bool aIsArc, wxPoint& aStart, wxPoin
     if( aIsArc && ( aAngle == 360.0 ||  aAngle == 0 ) )
     {
         fprintf( m_fp, "(gr_circle (center %s %s) (end %s %s)(layer %s) (width %s))\n",
-                 Double2Str( TO_PCB_UNIT(aStart.x) ).c_str(),
-                 Double2Str( TO_PCB_UNIT(aStart.y) ).c_str(),
-                 Double2Str( TO_PCB_UNIT(aEnd.x) ).c_str(),
-                 Double2Str( TO_PCB_UNIT(aEnd.y) ).c_str(),
+                 Double2Str( MapToPcbUnits(aStart.x) ).c_str(),
+                 Double2Str( MapToPcbUnits(aStart.y) ).c_str(),
+                 Double2Str( MapToPcbUnits(aEnd.x) ).c_str(),
+                 Double2Str( MapToPcbUnits(aEnd.y) ).c_str(),
                  TO_UTF8( GetPCBDefaultLayerName( aLayer ) ),
-                 Double2Str( TO_PCB_UNIT( aWidth ) ).c_str()
+                 Double2Str( MapToPcbUnits( aWidth ) ).c_str()
                  );
     }
     else if( aIsArc )
     {
         fprintf( m_fp, "(gr_arc (start %s %s) (end %s %s) (angle %s)(layer %s) (width %s))\n",
-                 Double2Str( TO_PCB_UNIT(aStart.x) ).c_str(),
-                 Double2Str( TO_PCB_UNIT(aStart.y) ).c_str(),
-                 Double2Str( TO_PCB_UNIT(aEnd.x) ).c_str(),
-                 Double2Str( TO_PCB_UNIT(aEnd.y) ).c_str(),
+                 Double2Str( MapToPcbUnits(aStart.x) ).c_str(),
+                 Double2Str( MapToPcbUnits(aStart.y) ).c_str(),
+                 Double2Str( MapToPcbUnits(aEnd.x) ).c_str(),
+                 Double2Str( MapToPcbUnits(aEnd.y) ).c_str(),
                  Double2Str( aAngle ).c_str(),
                  TO_UTF8( GetPCBDefaultLayerName( aLayer ) ),
-                 Double2Str( TO_PCB_UNIT( aWidth ) ).c_str()
+                 Double2Str( MapToPcbUnits( aWidth ) ).c_str()
                  );
     }
     else
     {
         fprintf( m_fp, "(gr_line (start %s %s) (end %s %s)(layer %s) (width %s))\n",
-                 Double2Str( TO_PCB_UNIT(aStart.x) ).c_str(),
-                 Double2Str( TO_PCB_UNIT(aStart.y) ).c_str(),
-                 Double2Str( TO_PCB_UNIT(aEnd.x) ).c_str(),
-                 Double2Str( TO_PCB_UNIT(aEnd.y) ).c_str(),
+                 Double2Str( MapToPcbUnits(aStart.x) ).c_str(),
+                 Double2Str( MapToPcbUnits(aStart.y) ).c_str(),
+                 Double2Str( MapToPcbUnits(aEnd.x) ).c_str(),
+                 Double2Str( MapToPcbUnits(aEnd.y) ).c_str(),
                  TO_UTF8( GetPCBDefaultLayerName( aLayer ) ),
-                 Double2Str( TO_PCB_UNIT( aWidth ) ).c_str()
+                 Double2Str( MapToPcbUnits( aWidth ) ).c_str()
                  );
     }
+}
+
+
+void GBR_TO_PCB_EXPORTER::writePcbPolygonItem( GERBER_DRAW_ITEM* aGbrItem, LAYER_NUM aLayer )
+{
+    fprintf( m_fp, "(gr_poly (pts " );
+
+    SHAPE_POLY_SET polys = aGbrItem->m_Polygon;
+    SHAPE_LINE_CHAIN& poly = polys.Outline( 0 );
+
+    #define MAX_COORD_CNT 4
+    int jj = MAX_COORD_CNT;
+    int cnt_max = poly.PointCount() -1;
+
+    // Do not generate last corner, if it is the same point as the first point:
+    if( poly.Point( 0 ) == poly.Point( cnt_max ) )
+        cnt_max--;
+
+    for( int ii = 0; ii <= cnt_max; ii++ )
+    {
+        if( --jj == 0 )
+        {
+            jj = MAX_COORD_CNT;
+            fprintf( m_fp, "\n" );
+        }
+
+        fprintf( m_fp, " (xy %s %s)",
+                 Double2Str( MapToPcbUnits( poly.Point( ii ).x ) ).c_str(),
+                 Double2Str( MapToPcbUnits( -poly.Point( ii ).y ) ).c_str() );
+    }
+
+    fprintf( m_fp, ")" );
+
+    if( jj != MAX_COORD_CNT )
+        fprintf( m_fp, "\n" );
+
+    fprintf( m_fp, "(layer %s) (width 0) )\n",
+             TO_UTF8( GetPCBDefaultLayerName( aLayer ) ) );
 }

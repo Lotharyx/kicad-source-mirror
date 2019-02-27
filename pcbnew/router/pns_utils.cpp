@@ -98,10 +98,10 @@ static void MoveDiagonal( SEG& aDiagonal, const SHAPE_LINE_CHAIN& aVertices, int
 }
 
 
-const SHAPE_LINE_CHAIN ConvexHull( const SHAPE_CONVEX& convex, int aClearance )
+const SHAPE_LINE_CHAIN ConvexHull( const SHAPE_SIMPLE& aConvex, int aClearance )
 {
     // this defines the horizontal and vertical lines in the hull octagon
-    BOX2I box = convex.BBox( aClearance + HULL_MARGIN );
+    BOX2I box = aConvex.BBox( aClearance + HULL_MARGIN );
     box.Normalize();
 
     SEG topline = SEG( VECTOR2I( box.GetX(), box.GetY() + box.GetHeight() ),
@@ -112,7 +112,7 @@ const SHAPE_LINE_CHAIN ConvexHull( const SHAPE_CONVEX& convex, int aClearance )
              box.GetOrigin() );
     SEG leftline = SEG( box.GetOrigin(), VECTOR2I( box.GetX(), box.GetY() + box.GetHeight() ) );
 
-    const SHAPE_LINE_CHAIN& vertices = convex.Vertices();
+    const SHAPE_LINE_CHAIN& vertices = aConvex.Vertices();
 
     // top right diagonal
     VECTOR2I corner = box.GetOrigin() + box.GetSize();
@@ -141,14 +141,14 @@ const SHAPE_LINE_CHAIN ConvexHull( const SHAPE_CONVEX& convex, int aClearance )
     SHAPE_LINE_CHAIN octagon;
     octagon.SetClosed( true );
 
-    octagon.Append( leftline.IntersectLines( bottomleftline ).get() );
-    octagon.Append( bottomline.IntersectLines( bottomleftline ).get() );
-    octagon.Append( bottomline.IntersectLines( bottomrightline ).get() );
-    octagon.Append( rightline.IntersectLines( bottomrightline ).get() );
-    octagon.Append( rightline.IntersectLines( toprightline ).get() );
-    octagon.Append( topline.IntersectLines( toprightline ).get() );
-    octagon.Append( topline.IntersectLines( topleftline ).get() );
-    octagon.Append( leftline.IntersectLines( topleftline ).get() );
+    octagon.Append( *leftline.IntersectLines( bottomleftline ) );
+    octagon.Append( *bottomline.IntersectLines( bottomleftline ) );
+    octagon.Append( *bottomline.IntersectLines( bottomrightline ) );
+    octagon.Append( *rightline.IntersectLines( bottomrightline ) );
+    octagon.Append( *rightline.IntersectLines( toprightline ) );
+    octagon.Append( *topline.IntersectLines( toprightline ) );
+    octagon.Append( *topline.IntersectLines( topleftline ) );
+    octagon.Append( *leftline.IntersectLines( topleftline ) );
 
     return octagon;
 }

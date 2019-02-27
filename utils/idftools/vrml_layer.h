@@ -3,7 +3,7 @@
  *
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013  Cirilo Bernardo
+ * Copyright (C) 2013-2017  Cirilo Bernardo
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -49,7 +49,7 @@
 #  include <GL/glu.h>
 #endif
 
-#include <fstream>
+#include <iostream>
 #include <vector>
 #include <list>
 #include <utility>
@@ -313,6 +313,18 @@ public:
                  bool aHoleFlag = false, bool aPlatedHole = false );
 
     /**
+     * Function AddPolygon
+     * creates an arbitrary polygon and adds it to the list of contours
+     *
+     * @param aPolySet is the set of polygon points
+     * @param aCenterX is the X coordinate of the polygon's center
+     * @param aCenterY is the Y coordinate of the polygon's center
+     * @param aAngle is the rotation angle (degrees) of the pad
+     */
+    bool AddPolygon( const std::vector< wxRealPoint >& aPolySet,
+                                 double aCenterX, double aCenterY, double aAngle );
+
+    /**
      * Function Tesselate
      * creates a list of outline vertices as well as the
      * vertex sets required to render the surface.
@@ -336,7 +348,7 @@ public:
      *
      * @return bool: true if the operation succeeded
      */
-    bool WriteVertices( double aZcoord, std::ofstream& aOutFile, int aPrecision );
+    bool WriteVertices( double aZcoord, std::ostream& aOutFile, int aPrecision );
 
     /**
      * Function Write3DVertices
@@ -349,7 +361,7 @@ public:
      *
      * @return bool: true if the operation succeeded
      */
-    bool Write3DVertices( double aTopZ, double aBottomZ, std::ofstream& aOutFile, int aPrecision );
+    bool Write3DVertices( double aTopZ, double aBottomZ, std::ostream& aOutFile, int aPrecision );
 
     /**
      * Function WriteIndices
@@ -362,7 +374,7 @@ public:
      *
      * @return bool: true if the operation succeeded
      */
-    bool WriteIndices( bool aTopFlag, std::ofstream& aOutFile );
+    bool WriteIndices( bool aTopFlag, std::ostream& aOutFile );
 
     /**
      * Function Write3DIndices
@@ -375,7 +387,7 @@ public:
      *
      * @return bool: true if the operation succeeded
      */
-    bool Write3DIndices( std::ofstream& aOutFile, bool aIncludePlatedHoles = false );
+    bool Write3DIndices( std::ostream& aOutFile, bool aIncludePlatedHoles = false );
 
     /**
      * Function AddExtraVertex
@@ -436,7 +448,7 @@ public:
      *
      * @return int: the number of vertices exported
      */
-    int Import( int start, GLUtesselator* tess );
+    int Import( int start, GLUtesselator* aTesselator );
 
     /**
      * Function GetVertexByIndex

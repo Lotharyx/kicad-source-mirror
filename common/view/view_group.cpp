@@ -41,79 +41,148 @@
 using namespace KIGFX;
 
 VIEW_GROUP::VIEW_GROUP( VIEW* aView ) :
-    m_layer( ITEM_GAL_LAYER( GP_OVERLAY ) )
+    m_layer( LAYER_SELECT_OVERLAY )
 {
-    m_view = aView;
 }
 
 
 VIEW_GROUP::~VIEW_GROUP()
 {
+    // VIEW_ITEM destructor removes the object from its parent view
 }
 
 
 void VIEW_GROUP::Add( VIEW_ITEM* aItem )
 {
-    m_items.insert( aItem );
-    ViewUpdate();
+    m_groupItems.push_back( aItem );
 }
 
 
 void VIEW_GROUP::Remove( VIEW_ITEM* aItem )
 {
-    m_items.erase( aItem );
-    ViewUpdate();
+    for( auto iter = m_groupItems.begin(); iter != m_groupItems.end(); ++iter )
+    {
+        if( aItem == *iter )
+        {
+            m_groupItems.erase( iter );
+            break;
+        }
+    }
 }
 
 
 void VIEW_GROUP::Clear()
 {
-    m_items.clear();
-    ViewUpdate();
+    m_groupItems.clear();
 }
 
 
 unsigned int VIEW_GROUP::GetSize() const
 {
-    return m_items.size();
+    return m_groupItems.size();
+}
+
+
+VIEW_ITEM *VIEW_GROUP::GetItem( unsigned int idx ) const
+{
+    return m_groupItems[idx];
 }
 
 
 const BOX2I VIEW_GROUP::ViewBBox() const
 {
-    BOX2I maxBox;
+    BOX2I bb;
 
-    maxBox.SetMaximum();
-    return maxBox;
+    if( !m_groupItems.size() )
+    {
+        bb.SetMaximum();
+    }
+    else
+    {
+        bb = m_groupItems[0]->ViewBBox();
+
+        for( auto item : m_groupItems )
+            bb.Merge( item->ViewBBox() );
+    }
+
+    return bb;
 }
 
 
-void VIEW_GROUP::ViewDraw( int aLayer, GAL* aGal ) const
+void VIEW_GROUP::ViewDraw( int aLayer, VIEW* aView ) const
 {
-    PAINTER* painter = m_view->GetPainter();
+    KIGFX::GAL* gal = aView->GetGAL();
+    PAINTER*    painter = aView->GetPainter();
+    bool        isSelection = m_layer == LAYER_SELECT_OVERLAY;
+    const auto  drawList = updateDrawList();
 
-    // Draw all items immediately (without caching)
-    for( VIEW_ITEM* item : m_items )
+    std::unordered_map<int, std::vector<VIEW_ITEM*>> layer_item_map;
+
+    // Build a list of layers used by the items in the group
+    for( auto item : drawList )
     {
-        aGal->PushDepth();
+        int item_layers[VIEW::VIEW_MAX_LAYERS], item_layers_count;
+        item->ViewGetLayers( item_layers, item_layers_count );
 
-        int layers[VIEW::VIEW_MAX_LAYERS], layers_count;
-        item->ViewGetLayers( layers, layers_count );
-        m_view->SortLayers( layers, layers_count );
-
-        for( int i = 0; i < layers_count; i++ )
+        for( int i = 0; i < item_layers_count; i++ )
         {
-            if( m_view->IsCached( layers[i] ) && m_view->IsLayerVisible( layers[i] ) )
+            if( layer_item_map.count( item_layers[i] ) == 0 )
             {
-                aGal->AdvanceDepth();
+                layer_item_map.emplace( std::make_pair( item_layers[i],
+                                                        std::vector<VIEW_ITEM*>() ) );
+            }
 
-                if( !painter->Draw( item, layers[i] ) )
-                    item->ViewDraw( layers[i], aGal ); // Alternative drawing method
+            layer_item_map[ item_layers[i] ].push_back( item );
+        }
+    }
+
+    int layers[VIEW::VIEW_MAX_LAYERS] = { 0 };
+    int layers_count = 0;
+
+    for( const auto& entry : layer_item_map )
+    {
+        layers[ layers_count++ ] = entry.first;
+    }
+
+    aView->SortLayers( layers, layers_count );
+
+    // Now draw the layers in sorted order
+
+    gal->PushDepth();
+
+    for( int i = 0; i < layers_count; i++ )
+    {
+        int  layer = layers[i];
+        bool draw = aView->IsLayerVisible( layer );
+
+        if( isSelection )
+        {
+            switch( layer )
+            {
+            case LAYER_PADS_TH:
+            case LAYER_PADS_PLATEDHOLES:
+            case LAYER_PAD_FR:
+            case LAYER_PAD_BK:
+                draw = true;
+                break;
+            default:
+                break;
             }
         }
 
-        aGal->PopDepth();
+        if( draw )
+        {
+            gal->AdvanceDepth();
+
+            for( auto item : layer_item_map[ layers[i] ] )
+            {
+                if( !painter->Draw( item, layers[i] ) )
+                    item->ViewDraw( layers[i], aView ); // Alternative drawing method
+            }
+        }
     }
+
+    gal->PopDepth();
 }
 
 
@@ -127,39 +196,28 @@ void VIEW_GROUP::ViewGetLayers( int aLayers[], int& aCount ) const
 
 void VIEW_GROUP::FreeItems()
 {
-    for( VIEW_ITEM* item : m_items )
-    {
-        delete item;
-    }
+    for( unsigned int i = 0 ; i < GetSize(); i++ )
+        delete GetItem( i );
 
     Clear();
 }
 
 
-void VIEW_GROUP::ItemsSetVisibility( bool aVisible )
+const VIEW_GROUP::ITEMS VIEW_GROUP::updateDrawList() const
 {
-    std::set<VIEW_ITEM*>::const_iterator it, it_end;
+    return m_groupItems;
+}
 
-    for( it = m_items.begin(), it_end = m_items.end(); it != it_end; ++it )
-        (*it)->ViewSetVisible( aVisible );
+
+/*void VIEW_GROUP::ItemsSetVisibility( bool aVisible )
+{
+    for(unsigned int i = 0 ; i < GetSize(); i++)
+        GetItem(i)->ViewSetVisible( aVisible );
 }
 
 
 void VIEW_GROUP::ItemsViewUpdate( VIEW_ITEM::VIEW_UPDATE_FLAGS aFlags )
 {
-    std::set<VIEW_ITEM*>::const_iterator it, it_end;
-
-    for( it = m_items.begin(), it_end = m_items.end(); it != it_end; ++it )
-        (*it)->ViewUpdate( aFlags );
-}
-
-
-void VIEW_GROUP::updateBbox()
-{
-    // Save the used VIEW, as it used nulled during Remove()
-    VIEW* view = m_view;
-
-    // Reinsert the group, so the bounding box can be updated
-    view->Remove( this );
-    view->Add( this );
-}
+    for(unsigned int i = 0 ; i < GetSize(); i++)
+        GetItem(i)->ViewUpdate( aFlags );
+}*/

@@ -30,6 +30,9 @@
 
 #include "clayer_triangles.h"
 #include <wx/debug.h>   // For the wxASSERT
+#include <mutex>
+#include <thread>
+#include <atomic>
 
 
 CLAYER_TRIANGLE_CONTAINER::CLAYER_TRIANGLE_CONTAINER( unsigned int aNrReservedTriangles,
@@ -147,7 +150,7 @@ void CLAYER_TRIANGLES::AddToMiddleContourns( const std::vector< SFVEC2F > &aCont
                                              float zTop,
                                              bool aInvertFaceDirection )
 {
-    if( aContournPoints.size() > 4 )
+    if( aContournPoints.size() >= 4 )
     {
         // Calculate normals of each segment of the contourn
         std::vector< SFVEC2F > contournNormals;
@@ -161,7 +164,6 @@ void CLAYER_TRIANGLES::AddToMiddleContourns( const std::vector< SFVEC2F > &aCont
             {
                 const SFVEC2F &v0 = aContournPoints[i + 0];
                 const SFVEC2F &v1 = aContournPoints[i + 1];
-
                 const SFVEC2F n = glm::normalize( v1 - v0 );
 
                 contournNormals[i] = SFVEC2F( n.y,-n.x );
@@ -173,7 +175,6 @@ void CLAYER_TRIANGLES::AddToMiddleContourns( const std::vector< SFVEC2F > &aCont
             {
                 const SFVEC2F &v0 = aContournPoints[i + 0];
                 const SFVEC2F &v1 = aContournPoints[i + 1];
-
                 const SFVEC2F n = glm::normalize( v1 - v0 );
 
                 contournNormals[i] = SFVEC2F( -n.y, n.x );
@@ -219,8 +220,8 @@ void CLAYER_TRIANGLES::AddToMiddleContourns( const std::vector< SFVEC2F > &aCont
             const SFVEC2F &v0 = aContournPoints[i + 0];
             const SFVEC2F &v1 = aContournPoints[i + 1];
 
-            #pragma omp critical
             {
+                std::lock_guard<std::mutex> lock( m_middle_layer_lock );
                 m_layer_middle_contourns_quads->AddQuad( SFVEC3F( v0.x, v0.y, zTop ),
                                                          SFVEC3F( v1.x, v1.y, zTop ),
                                                          SFVEC3F( v1.x, v1.y, zBot ),
@@ -279,8 +280,6 @@ void CLAYER_TRIANGLES::AddToMiddleContourns( const SHAPE_POLY_SET &aPolySet,
                                              double aBiuTo3Du,
                                              bool aInvertFaceDirection )
 {
-    wxASSERT( aPolySet.OutlineCount() > 0 );
-
     if( aPolySet.OutlineCount() == 0 )
         return;
 
@@ -305,8 +304,7 @@ void CLAYER_TRIANGLES::AddToMiddleContourns( const SHAPE_POLY_SET &aPolySet,
     m_layer_middle_contourns_quads->Reserve_More( nrContournPointsToReserve * 2,
                                                   true );
 
-    #pragma omp parallel for
-    for( signed int i = 0; i < aPolySet.OutlineCount(); ++i )
+    for( int i = 0; i < aPolySet.OutlineCount(); i++ )
     {
         // Add outline
         const SHAPE_LINE_CHAIN& pathOutline = aPolySet.COutline( i );

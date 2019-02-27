@@ -224,12 +224,12 @@ void PCB_CALCULATOR_FRAME::OnDataFileSelection( wxCommandEvent& event )
     wxString fullfilename = GetDataFilename();
 
     wxString wildcard;
-    wildcard.Printf( _("PCB Calculator data  file (*.%s)|*.%s"),
+    wildcard.Printf( _("PCB Calculator data file (*.%s)|*.%s"),
                      GetChars( DataFileNameExt ),
                      GetChars( DataFileNameExt ) );
 
     wxFileDialog dlg( m_panelRegulators,
-                      _("Select a PCB Calculator data file"),
+                      _("Select PCB Calculator Data File"),
                       wxEmptyString, fullfilename,
                       wildcard, wxFD_OPEN );
 
@@ -260,7 +260,7 @@ void PCB_CALCULATOR_FRAME::OnDataFileSelection( wxCommandEvent& event )
     else
     {
         wxString msg;
-        msg.Printf( _("Unable to read data file <%s>"), GetChars( fullfilename ) );
+        msg.Printf( _("Unable to read data file \"%s\""), GetChars( fullfilename ) );
         wxMessageBox( msg );
     }
 }
@@ -395,13 +395,13 @@ void PCB_CALCULATOR_FRAME::RegulatorsSolve()
     // Some tests:
     if( vout < vref && id != 2)
     {
-        m_RegulMessage->SetLabel( _(" Vout must be greater than vref" ) );
+        m_RegulMessage->SetLabel( _("Vout must be greater than vref" ) );
         return;
     }
 
     if( vref == 0.0 )
     {
-        m_RegulMessage->SetLabel( _(" Vref set to 0 !" ) );
+        m_RegulMessage->SetLabel( _("Vref set to 0 !" ) );
         return;
     }
 

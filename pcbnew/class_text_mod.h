@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -74,15 +74,27 @@ public:
         return aItem && PCB_MODULE_TEXT_T == aItem->Type();
     }
 
-    virtual const wxPoint& GetPosition() const override
+    virtual const wxPoint GetPosition() const override
     {
-        return m_Pos;
+        return EDA_TEXT::GetTextPos();
     }
 
     virtual void SetPosition( const wxPoint& aPos ) override
     {
-        m_Pos = aPos;
+        EDA_TEXT::SetTextPos( aPos );
         SetLocalCoord();
+    }
+
+    void SetTextAngle( double aAngle );
+
+    bool IsKeepUpright()
+    {
+        return m_keepUpright;
+    }
+
+    void SetKeepUpright( bool aKeepUpright )
+    {
+        m_keepUpright = aKeepUpright;
     }
 
     /// Rotate text, in footprint editor
@@ -92,7 +104,9 @@ public:
     /// Flip entity during module flip
     void Flip( const wxPoint& aCentre ) override;
 
-    /// Mirror text position in footprint edition
+    bool IsParentFlipped() const;
+
+    /// Mirror text position in footprint editing
     /// the text itself is not mirrored, and the layer not modified,
     /// only position is mirrored.
     /// (use Flip to change layer to its paired and mirror the text in fp editor).
@@ -106,8 +120,28 @@ public:
     void SetType( TEXT_TYPE aType )     { m_Type = aType; }
     TEXT_TYPE GetType() const           { return m_Type; }
 
-    void SetVisible( bool isVisible )   { m_NoShow = !isVisible; }
-    bool IsVisible() const              { return !m_NoShow; }
+    /**
+     * Function SetEffects
+     * sets the text effects from another instance.
+     */
+    void SetEffects( const TEXTE_MODULE& aSrc )
+    {
+        EDA_TEXT::SetEffects( aSrc );
+        SetLocalCoord();
+        // SetType( aSrc.GetType() );
+    }
+
+    /**
+     * Function SwapEffects
+     * swaps the text effects of the two involved instances.
+     */
+    void SwapEffects( TEXTE_MODULE& aTradingPartner )
+    {
+        EDA_TEXT::SwapEffects( aTradingPartner );
+        SetLocalCoord();
+        aTradingPartner.SetLocalCoord();
+        // std::swap( m_Type, aTradingPartner.m_Type );
+    }
 
     // The Pos0 accessors are for module-relative coordinates
     void SetPos0( const wxPoint& aPos ) { m_Pos0 = aPos; SetDrawCoord(); }
@@ -160,31 +194,40 @@ public:
                         GR_DRAWMODE     aDrawMode,
                         const wxPoint&  aOffset = ZeroOffset );
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
-    bool HitTest( const wxPoint& aPosition ) const override;
+    virtual bool TextHitTest( const wxPoint& aPoint, int aAccuracy = 0 ) const override;
+
+    virtual bool TextHitTest( const EDA_RECT& aRect, bool aContains = false, int aAccuracy = 0 ) const override;
+
+    virtual bool HitTest( const wxPoint& aPosition ) const override
+    {
+        return TextHitTest( aPosition );
+    }
+
+    virtual bool HitTest( const EDA_RECT& aRect, bool aContained = false, int aAccuracy = 0 ) const override
+    {
+        return TextHitTest( aRect, aContained, aAccuracy );
+    }
 
     wxString GetClass() const override
     {
         return wxT( "MTEXT" );
     }
 
-    wxString GetSelectMenuText() const override;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    BITMAP_DEF GetMenuImage() const override { return  footprint_text_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
     EDA_ITEM* Clone() const override;
 
     virtual wxString GetShownText() const override;
 
-    /// @copydoc VIEW_ITEM::ViewBBox()
     virtual const BOX2I ViewBBox() const override;
 
-    /// @copydoc VIEW_ITEM::ViewGetLayers()
     virtual void ViewGetLayers( int aLayers[], int& aCount ) const override;
 
-    /// @copydoc VIEW_ITEM::ViewGetLOD()
-    virtual unsigned int ViewGetLOD( int aLayer ) const override;
+    virtual unsigned int ViewGetLOD( int aLayer, KIGFX::VIEW* aView ) const override;
 
 #if defined(DEBUG)
     virtual void Show( int nestLevel, std::ostream& os ) const override { ShowDummy( os ); }
@@ -196,10 +239,11 @@ private:
      */
 
     TEXT_TYPE m_Type;       ///< 0=ref, 1=val, etc.
-    bool      m_NoShow;     ///< true = invisible
 
-    wxPoint   m_Pos0;       ///< text coordinates relatives to the footprint anchor, orient 0.
-                            ///< text coordinate ref point is the text centre
+    wxPoint   m_Pos0;       ///< text coordinates relative to the footprint anchor, orient 0.
+                            ///< text coordinate ref point is the text center
+
+    bool      m_keepUpright;
 };
 
 #endif // TEXT_MODULE_H_

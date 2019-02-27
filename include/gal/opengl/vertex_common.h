@@ -30,48 +30,54 @@
 #ifndef VERTEX_COMMON_H_
 #define VERTEX_COMMON_H_
 
+#include <math/vector2d.h>
 #include <GL/glew.h>
 
 #include <cstddef>
 
 namespace KIGFX
 {
-// Possible types of shaders
+///> Possible types of shaders (keep consistent with the actual shader source in gl_builtin_shaders.cpp)
 enum SHADER_MODE
 {
     SHADER_NONE = 0,
-    SHADER_LINE,
-    SHADER_FILLED_CIRCLE,
-    SHADER_STROKED_CIRCLE,
-    SHADER_FONT
+    SHADER_FILLED_CIRCLE = 2,
+    SHADER_STROKED_CIRCLE = 3,
+    SHADER_FONT = 4,
+    SHADER_LINE_A = 5,
+    SHADER_LINE_B = 6,
+    SHADER_LINE_C = 7,
+    SHADER_LINE_D = 8,
+    SHADER_LINE_E = 9,
+    SHADER_LINE_F = 10
 };
 
-typedef struct
+///> Data structure for vertices {X,Y,Z,R,G,B,A,shader&param}
+struct VERTEX
 {
     GLfloat x, y, z;        // Coordinates
     GLubyte r, g, b, a;     // Color
     GLfloat shader[4];      // Shader type & params
-} VERTEX;
+};
 
-///< Data structure for vertices {X,Y,Z,R,G,B,A,shader&param} (@see VERTEX).
-const size_t VertexSize   = sizeof(VERTEX);
-const size_t VertexStride = VertexSize / sizeof(GLfloat);
+static constexpr size_t VERTEX_SIZE   = sizeof(VERTEX);
+static constexpr size_t VERTEX_STRIDE = VERTEX_SIZE / sizeof(GLfloat);
 
-const size_t CoordSize    = sizeof(VERTEX().x) + sizeof(VERTEX().y) + sizeof(VERTEX().z);
-const size_t CoordStride  = CoordSize / sizeof(GLfloat);
+static constexpr size_t COORD_OFFSET  = offsetof(VERTEX, x);
+static constexpr size_t COORD_SIZE    = sizeof(VERTEX::x) + sizeof(VERTEX::y) + sizeof(VERTEX::z);
+static constexpr size_t COORD_STRIDE  = COORD_SIZE / sizeof(GLfloat);
 
-// Offset of color data from the beginning of each vertex data
-const size_t ColorOffset  = offsetof(VERTEX, r);
-const size_t ColorSize    = sizeof(VERTEX().r) + sizeof(VERTEX().g) +
-                            sizeof(VERTEX().b) + sizeof(VERTEX().a);
-const size_t ColorStride  = ColorSize / sizeof(GLubyte);
+static constexpr size_t COLOR_OFFSET  = offsetof(VERTEX, r);
+static constexpr size_t COLOR_SIZE    = sizeof(VERTEX::r) + sizeof(VERTEX::g) + sizeof(VERTEX::b) + sizeof(VERTEX::a);
+static constexpr size_t COLOR_STRIDE  = COLOR_SIZE / sizeof(GLubyte);
 
 // Shader attributes
-const size_t ShaderOffset = offsetof(VERTEX, shader);
-const size_t ShaderSize   = sizeof(VERTEX().shader);
-const size_t ShaderStride = ShaderSize / sizeof(GLfloat);
+static constexpr size_t SHADER_OFFSET = offsetof(VERTEX, shader);
+static constexpr size_t SHADER_SIZE   = sizeof(VERTEX::shader);
+static constexpr size_t SHADER_STRIDE = SHADER_SIZE / sizeof(GLfloat);
 
-const size_t IndexSize    = sizeof(GLuint);
+static constexpr size_t INDEX_SIZE    = sizeof(GLuint);
+
 } // namespace KIGFX
 
 #endif /* VERTEX_COMMON_H_ */

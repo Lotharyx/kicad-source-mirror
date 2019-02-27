@@ -1,12 +1,17 @@
+# .cpp files are compiled with extra ${WSHADOW_FLAGS}
+if( COMPILER_SUPPORTS_WSHADOW )
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${WSHADOW_FLAGS}")
+endif()
+
 add_definitions( -DCVPCB )
 
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
+    ../include/legacy_wx
     ./dialogs
     ../3d-viewer
     ../pcbnew
     ../pcbnew/dialogs
-    ../polygon
     ../common
     ${GLM_INCLUDE_DIR}
     ${INC_AFTER}
@@ -20,29 +25,30 @@ set( CVPCB_DIALOGS
     dialogs/dialog_display_options_base.cpp
     dialogs/dialog_config_equfiles_base.cpp
     dialogs/dialog_config_equfiles.cpp
-    ../pcbnew/dialogs/dialog_fp_lib_table.cpp
-    ../pcbnew/dialogs/dialog_fp_lib_table_base.cpp
     ../pcbnew/dialogs/dialog_fp_plugin_options.cpp
     ../pcbnew/dialogs/dialog_fp_plugin_options_base.cpp
-    ../pcbnew/dialogs/wizard_add_fplib_base.cpp
-    ../pcbnew/dialogs/wizard_add_fplib.cpp
     )
 
 set( CVPCB_SRCS
     ../common/base_units.cpp
     ../pcbnew/board_items_to_polygon_shape_transform.cpp
-    ../pcbnew/class_drc_item.cpp
-    autosel.cpp
+    ../pcbnew/pcb_general_settings.cpp
+    ../pcbnew/drc_item.cpp
+    ../pcbnew/tools/grid_helper.cpp
+    auto_associate.cpp
     cfg.cpp
-    class_components_listbox.cpp
-    class_DisplayFootprintsFrame.cpp
-    class_footprints_listbox.cpp
-    class_library_listbox.cpp
+    components_listbox.cpp
+    display_footprints_frame.cpp
+    footprints_listbox.cpp
+    library_listbox.cpp
     cvpcb_mainframe.cpp
-    listboxes.cpp
+    listbox_base.cpp
     menubar.cpp
     readwrite_dlgs.cpp
-    tool_cvpcb.cpp
+    toolbars_cvpcb.cpp
+    tools/cvpcb_actions.cpp
+    tools/cvpcb_control.cpp
+    tools/cvpcb_selection_tool.cpp
     )
 
 
@@ -82,7 +88,6 @@ if( false ) # no CVPCB exe any more, only the *.kiface
         #singletop  # replaces common, giving us restrictive control and link warnings.
         # There's way too much crap coming in from common yet.
         common
-        bitmaps
         ${wxWidgets_LIBRARIES}
         )
     if( MAKE_LINK_MAPS )
@@ -136,16 +141,26 @@ set_target_properties( cvpcb_kiface PROPERTIES
     SUFFIX          ${KIFACE_SUFFIX}
     )
 target_link_libraries( cvpcb_kiface
-    3d-viewer
     pcbcommon
     pcad2kicadpcb
+    3d-viewer
     common
-    bitmaps
-    polygon
     gal
+    legacy_wx
+    pcbcommon
+    pcad2kicadpcb
+    3d-viewer
+    common
+    gal
+    legacy_wx
+    pcbcommon
+    pcad2kicadpcb
+    3d-viewer
+    common
+    gal
+    legacy_wx
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
-    ${OPENMP_LIBRARIES}         # used by 3d viewer
     )
 
 if( BUILD_GITHUB_PLUGIN )

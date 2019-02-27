@@ -1,7 +1,7 @@
 /*
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
- * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2013-2017 CERN
  * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
@@ -19,7 +19,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <boost/optional.hpp>
+#include <core/optional.h>
 
 #include "pns_node.h"
 #include "pns_line_placer.h"
@@ -31,8 +31,6 @@
 #include "pns_debug_decorator.h"
 
 #include <class_board_item.h>
-
-using boost::optional;
 
 namespace PNS {
 
@@ -245,6 +243,9 @@ bool LINE_PLACER::reduceTail( const VECTOR2I& aEnd )
         // the direction of the segment to be replaced
         SHAPE_LINE_CHAIN replacement = dir.BuildInitialTrace( s.A, aEnd );
 
+        if( replacement.SegmentCount() < 1 )
+            continue;
+
         LINE tmp( m_tail, replacement );
 
         if( m_currentNode->CheckColliding( &tmp, ITEM::ANY_T ) )
@@ -366,6 +367,7 @@ bool LINE_PLACER::rhWalkOnly( const VECTOR2I& aP, LINE& aNewHead )
     WALKAROUND walkaround( m_currentNode, Router() );
 
     walkaround.SetSolidsOnly( false );
+    walkaround.SetDebugDecorator( Dbg() );
     walkaround.SetIterationLimit( Settings().WalkaroundIterationLimit() );
 
     WALKAROUND::WALKAROUND_STATUS wf = walkaround.Route( initTrack, walkFull, false );
@@ -412,9 +414,141 @@ bool LINE_PLACER::rhWalkOnly( const VECTOR2I& aP, LINE& aNewHead )
 
 bool LINE_PLACER::rhMarkObstacles( const VECTOR2I& aP, LINE& aNewHead )
 {
-    buildInitialLine( aP, m_head );
+    LINE newHead( m_head ), bestHead( m_head );
+    bool hasBest = false;
+
+    buildInitialLine( aP, newHead );
+
+    NODE::OBSTACLES obstacles;
+
+    m_currentNode->QueryColliding( &newHead, obstacles );
+
+    for( auto& obs : obstacles )
+    {
+        int cl = m_currentNode->GetClearance( obs.m_item, &newHead );
+        auto hull = obs.m_item->Hull( cl, newHead.Width() );
+
+        auto nearest = hull.NearestPoint( aP );
+        Dbg()->AddLine( hull, 2, 10000 );
+
+        if( ( nearest - aP ).EuclideanNorm() < newHead.Width() + cl )
+        {
+            buildInitialLine( nearest, newHead );
+            if ( newHead.CLine().Length() > bestHead.CLine().Length() )
+            {
+                bestHead = newHead;
+                hasBest = true;
+            }
+        }
+    }
+
+    if( hasBest )
+        m_head = bestHead;
+    else
+        m_head = newHead;
+
     aNewHead = m_head;
+
     return static_cast<bool>( m_currentNode->CheckColliding( &m_head ) );
+}
+
+
+const LINE LINE_PLACER::reduceToNearestObstacle( const LINE& aOriginalLine )
+{
+    const auto& l0 = aOriginalLine.CLine();
+
+    if ( !l0.PointCount() )
+        return aOriginalLine;
+
+    int l = l0.Length();
+    int step = l / 2;
+    VECTOR2I target;
+
+    LINE l_test( aOriginalLine );
+
+    while( step > 0 )
+    {
+        target = l0.PointAlong( l );
+        SHAPE_LINE_CHAIN l_cur( l0 );
+
+        int index = l_cur.Split( target );
+
+        l_test.SetShape( l_cur.Slice( 0, index ) );
+
+        if ( m_currentNode->CheckColliding( &l_test ) )
+            l -= step;
+        else
+            l += step;
+
+        step /= 2;
+    }
+
+    l = l_test.CLine().Length();
+
+    while( m_currentNode->CheckColliding( &l_test ) && l > 0 )
+    {
+        l--;
+        target = l0.PointAlong( l );
+        SHAPE_LINE_CHAIN l_cur( l0 );
+
+        int index = l_cur.Split( target );
+
+        l_test.SetShape( l_cur.Slice( 0, index ) );
+    }
+
+    return l_test;
+}
+
+
+bool LINE_PLACER::rhStopAtNearestObstacle( const VECTOR2I& aP, LINE& aNewHead )
+{
+    LINE l0;
+    l0 = m_head;
+
+    buildInitialLine( aP, l0 );
+
+    LINE l_cur = reduceToNearestObstacle( l0 );
+
+    const auto l_shape = l_cur.CLine();
+
+    if( l_shape.SegmentCount() == 0 )
+    {
+        return false;
+    }
+
+    if( l_shape.SegmentCount() == 1 )
+    {
+        auto s = l_shape.CSegment( 0 );
+
+        VECTOR2I dL( DIRECTION_45( s ).Left().ToVector() );
+        VECTOR2I dR( DIRECTION_45( s ).Right().ToVector() );
+
+        SEG leadL( s.B, s.B + dL );
+        SEG leadR( s.B, s.B + dR );
+
+        SEG segL( s.B, leadL.LineProject( aP ) );
+        SEG segR( s.B, leadR.LineProject( aP ) );
+
+        LINE finishL( l0, SHAPE_LINE_CHAIN( segL.A, segL.B ) );
+        LINE finishR( l0, SHAPE_LINE_CHAIN( segR.A, segR.B ) );
+
+        LINE reducedL = reduceToNearestObstacle( finishL );
+        LINE reducedR = reduceToNearestObstacle( finishR );
+
+        int lL = reducedL.CLine().Length();
+        int lR = reducedR.CLine().Length();
+
+        if( lL > lR )
+            l_cur.Line().Append( reducedL.CLine() );
+        else
+            l_cur.Line().Append( reducedR.CLine() );
+
+        l_cur.Line().Simplify();
+    }
+
+    m_head = l_cur;
+    aNewHead = m_head;
+    return true;
 }
 
 
@@ -432,6 +566,7 @@ bool LINE_PLACER::rhShoveOnly( const VECTOR2I& aP, LINE& aNewHead )
 
     walkaround.SetSolidsOnly( true );
     walkaround.SetIterationLimit( 10 );
+    walkaround.SetDebugDecorator( Dbg() );
     WALKAROUND::WALKAROUND_STATUS stat_solids = walkaround.Route( initTrack, walkSolids );
 
     optimizer.SetEffortLevel( OPTIMIZER::MERGE_SEGMENTS );
@@ -528,16 +663,16 @@ bool LINE_PLACER::routeHead( const VECTOR2I& aP, LINE& aNewHead )
 
 bool LINE_PLACER::optimizeTailHeadTransition()
 {
-    LINE tmp = Trace();
+    LINE linetmp = Trace();
 
-    if( OPTIMIZER::Optimize( &tmp, OPTIMIZER::FANOUT_CLEANUP, m_currentNode ) )
+    if( OPTIMIZER::Optimize( &linetmp, OPTIMIZER::FANOUT_CLEANUP, m_currentNode ) )
     {
-        if( tmp.SegmentCount() < 1 )
+        if( linetmp.SegmentCount() < 1 )
             return false;
 
-        m_head = tmp;
-        m_p_start = tmp.CLine().CPoint( 0 );
-        m_direction = DIRECTION_45( tmp.CSegment( 0 ) );
+        m_head = linetmp;
+        m_p_start = linetmp.CLine().CPoint( 0 );
+        m_direction = DIRECTION_45( linetmp.CSegment( 0 ) );
         m_tail.Line().Clear();
 
         return true;
@@ -645,7 +780,15 @@ void LINE_PLACER::routeStep( const VECTOR2I& aP )
 bool LINE_PLACER::route( const VECTOR2I& aP )
 {
     routeStep( aP );
-    return CurrentEnd() == aP;
+
+    if (!m_head.PointCount() )
+    {
+        return false;
+    }
+    else
+    {
+        return m_head.CPoint(-1) == aP;
+    }
 }
 
 
@@ -683,18 +826,18 @@ NODE* LINE_PLACER::CurrentNode( bool aLoopsRemoved ) const
 }
 
 
-void LINE_PLACER::splitAdjacentSegments( NODE* aNode, ITEM* aSeg, const VECTOR2I& aP )
+bool LINE_PLACER::SplitAdjacentSegments( NODE* aNode, ITEM* aSeg, const VECTOR2I& aP )
 {
     if( !aSeg )
-        return;
+        return false;
 
     if( !aSeg->OfKind( ITEM::SEGMENT_T ) )
-        return;
+        return false;
 
     JOINT* jt = aNode->FindJoint( aP, aSeg );
 
     if( jt && jt->LinkCount() >= 1 )
-        return;
+        return false;
 
     SEGMENT* s_old = static_cast<SEGMENT*>( aSeg );
 
@@ -709,6 +852,8 @@ void LINE_PLACER::splitAdjacentSegments( NODE* aNode, ITEM* aSeg, const VECTOR2I
     aNode->Remove( s_old );
     aNode->Add( std::move( s_new[0] ), true );
     aNode->Add( std::move( s_new[1] ), true );
+
+    return true;
 }
 
 
@@ -737,19 +882,9 @@ bool LINE_PLACER::SetLayer( int aLayer )
 
 bool LINE_PLACER::Start( const VECTOR2I& aP, ITEM* aStartItem )
 {
-    VECTOR2I p( aP );
-
-    static int unknowNetIdx = 0;    // -10000;
-    int net = -1;
-
-    if( !aStartItem || aStartItem->Net() < 0 )
-        net = unknowNetIdx--;
-    else
-        net = aStartItem->Net();
-
-    m_currentStart = p;
-    m_currentEnd = p;
-    m_currentNet = net;
+    m_currentStart = VECTOR2I( aP );
+    m_currentEnd = VECTOR2I( aP );
+    m_currentNet = std::max( 0, aStartItem ? aStartItem->Net() : 0 );
     m_startItem = aStartItem;
     m_placingVia = false;
     m_chainedPlacement = false;
@@ -784,7 +919,7 @@ void LINE_PLACER::initPlacement()
     world->KillChildren();
     NODE* rootNode = world->Branch();
 
-    splitAdjacentSegments( rootNode, m_startItem, m_currentStart );
+    SplitAdjacentSegments( rootNode, m_startItem, m_currentStart );
 
     setWorld( rootNode );
 
@@ -819,7 +954,7 @@ bool LINE_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
         m_lastNode = NULL;
     }
 
-    route( p );
+    bool reachesEnd = route( p );
 
     current = Trace();
 
@@ -831,9 +966,9 @@ bool LINE_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
     NODE* latestNode = m_currentNode;
     m_lastNode = latestNode->Branch();
 
-    if( eiDepth >= 0 && aEndItem && latestNode->Depth() > eiDepth && current.SegmentCount() )
+    if( reachesEnd && eiDepth >= 0 && aEndItem && latestNode->Depth() > eiDepth && current.SegmentCount() )
     {
-        splitAdjacentSegments( m_lastNode, aEndItem, current.CPoint( -1 ) );
+        SplitAdjacentSegments( m_lastNode, aEndItem, current.CPoint( -1 ) );
 
         if( Settings().RemoveLoops() )
             removeLoops( m_lastNode, current );
@@ -844,17 +979,35 @@ bool LINE_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
 }
 
 
-bool LINE_PLACER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem )
+bool LINE_PLACER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem, bool aForceFinish )
 {
     bool realEnd = false;
     int lastV;
 
     LINE pl = Trace();
 
-    if( m_currentMode == RM_MarkObstacles &&
-        !Settings().CanViolateDRC() &&
-        m_world->CheckColliding( &pl ) )
+    if( m_currentMode == RM_MarkObstacles )
+    {
+        // Mark Obstacles is sort of a half-manual, half-automated mode in which the
+        // user has more responsibility and authority.
+
+        if( aEndItem )
+        {
+            // The user has indicated a connection should be made.  If either the
+            // trace or endItem is netless, then allow the connection by adopting the net of the other.
+            if( m_currentNet <= 0 )
+            {
+                m_currentNet = aEndItem->Net();
+                pl.SetNet( m_currentNet );
+            }
+            else if (aEndItem->Net() <= 0 )
+                aEndItem->SetNet( m_currentNet );
+        }
+
+        // Collisions still prevent fixing unless "Allow DRC violations" is checked
+        if( !Settings().CanViolateDRC() && m_world->CheckColliding( &pl ) )
             return false;
+    }
 
     const SHAPE_LINE_CHAIN& l = pl.CLine();
 
@@ -884,27 +1037,33 @@ bool LINE_PLACER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem )
     if( aEndItem && m_currentNet >= 0 && m_currentNet == aEndItem->Net() )
         realEnd = true;
 
+    if( aForceFinish )
+        realEnd = true;
+
     if( realEnd || m_placingVia )
         lastV = l.SegmentCount();
     else
         lastV = std::max( 1, l.SegmentCount() - 1 );
 
-    SEGMENT* lastSeg = NULL;
+    SEGMENT* lastSeg = nullptr;
 
     for( int i = 0; i < lastV; i++ )
     {
         const SEG& s = pl.CSegment( i );
-        std::unique_ptr< SEGMENT > seg( new SEGMENT( s, m_currentNet ) );
+        lastSeg = new SEGMENT( s, m_currentNet );
+        std::unique_ptr< SEGMENT > seg( lastSeg );
         seg->SetWidth( pl.Width() );
         seg->SetLayer( m_currentLayer );
-        lastSeg = seg.get();
-        m_lastNode->Add( std::move( seg ) );
+        if( ! m_lastNode->Add( std::move( seg ) ) )
+        {
+            lastSeg = nullptr;
+        }
     }
 
     if( pl.EndsWithVia() )
         m_lastNode->Add( Clone( pl.Via() ) );
 
-    if( realEnd )
+    if( realEnd && lastSeg )
         simplifyNewLine( m_lastNode, lastSeg );
 
     Router()->CommitRouting( m_lastNode );
@@ -1027,7 +1186,7 @@ void LINE_PLACER::SetOrthoMode( bool aOrthoMode )
 }
 
 
-bool LINE_PLACER::buildInitialLine( const VECTOR2I& aP, LINE& aHead )
+bool LINE_PLACER::buildInitialLine( const VECTOR2I& aP, LINE& aHead, bool aInvertPosture )
 {
     SHAPE_LINE_CHAIN l;
 
@@ -1043,7 +1202,10 @@ bool LINE_PLACER::buildInitialLine( const VECTOR2I& aP, LINE& aHead )
         }
         else
         {
-            l = m_direction.BuildInitialTrace( m_p_start, aP );
+            if ( aInvertPosture )
+                l = m_direction.Right().BuildInitialTrace( m_p_start, aP );
+            else
+                l = m_direction.BuildInitialTrace( m_p_start, aP );
         }
 
         if( l.SegmentCount() > 1 && m_orthoMode )

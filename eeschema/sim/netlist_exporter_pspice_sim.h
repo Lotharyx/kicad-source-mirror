@@ -2,6 +2,8 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2016 CERN
+ * Copyright (C) 2017 KiCad Developers, see AUTHORS.txt for contributors.
+ *
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
@@ -30,13 +32,12 @@
 
 #include "sim_types.h"
 
-/// Special netlist exporter flavor that allows to override simulation commands
+/// Special netlist exporter flavor that allows one to override simulation commands
 class NETLIST_EXPORTER_PSPICE_SIM : public NETLIST_EXPORTER_PSPICE
 {
 public:
-    NETLIST_EXPORTER_PSPICE_SIM( NETLIST_OBJECT_LIST* aMasterList, PART_LIBS* aLibs,
-            SEARCH_STACK* aPaths = NULL ) :
-        NETLIST_EXPORTER_PSPICE( aMasterList, aLibs, aPaths )
+    NETLIST_EXPORTER_PSPICE_SIM( NETLIST_OBJECT_LIST* aMasterList, PROJECT* aProject = nullptr ) :
+        NETLIST_EXPORTER_PSPICE( aMasterList, aProject )
     {
     }
 
@@ -51,13 +52,6 @@ public:
      */
     wxString GetSpiceVector( const wxString& aName, SIM_PLOT_TYPE aType,
             const wxString& aParam = wxEmptyString ) const;
-
-    /**
-     * @brief Returns name of Spice device corresponding to a schematic component.
-     * @param aComponent is the component reference.
-     * @return Spice device name or empty string if there is no such component in the netlist.
-     */
-    wxString GetSpiceDevice( const wxString& aComponent ) const;
 
     /**
      * @brief Returns a list of currents that can be probed in a Spice primitive.

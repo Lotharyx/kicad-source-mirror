@@ -37,7 +37,7 @@
 #include <design_tree_frame.h>
 #include <properties_frame.h>
 #include <dialog_helpers.h>
-#include <class_worksheet_dataitem.h>
+#include <worksheet_dataitem.h>
 
 /* Process the command triggered by the left button of the mouse when a tool
  * is already selected.
@@ -55,7 +55,7 @@ void PL_EDITOR_FRAME::OnLeftClick( wxDC* aDC, const wxPoint& aPosition )
     }
 
     item = m_treePagelayout->GetPageLayoutSelectedItem();
-    WORKSHEET_DATAITEM* newitem = Locate( aPosition );
+    WORKSHEET_DATAITEM* newitem = Locate( aDC, aPosition );
 
     if( newitem == NULL )
         return;

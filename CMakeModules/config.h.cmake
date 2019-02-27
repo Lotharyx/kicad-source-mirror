@@ -53,8 +53,6 @@
 // Warning!!!  Using wxGraphicContext for rendering is experimental.
 #cmakedefine USE_WX_GRAPHICS_CONTEXT    1
 
-#cmakedefine USE_IMAGES_IN_MENUS        1
-
 /// The legacy file format revision of the *.brd file created by this build
 #define LEGACY_BOARD_FILE_VERSION       2
 
@@ -72,18 +70,12 @@
 /// When defined, build the MYODBC_PLUGIN for pcbnew.
 #cmakedefine BUILD_MYODBC_PLUGIN
 
-/// When defined, use KIWAY and KIFACE DSOs
-#cmakedefine USE_KIWAY_DLLS
-
-/// When defined, Eeschema is built with I/O manager plugin.
-#cmakedefine USE_SCH_IO_MANAGER
-
 /// A file extension with a leading '.' is a suffix, and this one is used on
 /// top level program modules which implement the KIFACE.
 #define KIFACE_SUFFIX                   "@KIFACE_SUFFIX@"
 #define KIFACE_PREFIX                   "@KIFACE_PREFIX@"
 
-/// Name of repo from which this build came.
-#define KICAD_REPO_NAME                 "@KICAD_REPO_NAME@"
+/// Allows scripts install directory to be referenced by the program code.
+#define PYTHON_DEST                     "@PYTHON_DEST@"
 
 #endif  // CONFIG_H_

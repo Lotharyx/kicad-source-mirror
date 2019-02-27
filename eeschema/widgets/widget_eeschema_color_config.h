@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2007 G. Harland
- * Copyright (C) 1992-2016 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -27,6 +27,8 @@
 
 #include <wx/panel.h>
 #include <wx/sizer.h>
+#include <wx/colordlg.h>
+#include <wx/clrpicker.h>
 
 class wxBoxSizer;
 class wxStaticLine;
@@ -41,8 +43,9 @@ class WIDGET_EESCHEMA_COLOR_CONFIG : public wxPanel
 {
 private:
     EDA_DRAW_FRAME*         m_drawFrame;
-    wxRadioBox*             m_SelBgColor;
     wxBoxSizer*             m_mainBoxSizer;
+    wxSize                  m_butt_size_pix;
+    wxSize                  m_butt_border_pix;
 
     // Creates the controls and sizers
     void CreateControls();
@@ -56,14 +59,19 @@ public:
     WIDGET_EESCHEMA_COLOR_CONFIG( wxWindow* aParent, EDA_DRAW_FRAME* aDrawFrame );
 
     bool TransferDataFromControl();
+};
 
-    /**
-     * Method InstallOnPanel
-     * Install this WIDGET_EESCHEMA_COLOR_CONFIG onto an empty panel. This is useful
-     * when combining with wxFormBuilder, as an empty panel can be left as a
-     * placeholder in the layout.
-     */
-    void InstallOnPanel( wxPanel* aPanel );
+
+class PANEL_EESCHEMA_COLOR_CONFIG : public wxPanel
+{
+public:
+    PANEL_EESCHEMA_COLOR_CONFIG( EDA_DRAW_FRAME* aFrame, wxWindow* aParent );
+
+protected:
+    bool TransferDataToWindow() override;
+    bool TransferDataFromWindow() override;
+
+    WIDGET_EESCHEMA_COLOR_CONFIG* m_colorConfig;
 };
 
 #endif    // WIDGET_EESCHEMA_COLOR_CONFIG_H_

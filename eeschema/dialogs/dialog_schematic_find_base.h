@@ -1,8 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version Mar 28 2015)
+// C++ code generated with wxFormBuilder (version Dec 30 2017)
 // http://www.wxformbuilder.org/
 //
-// PLEASE DO "NOT" EDIT THIS FILE!
+// PLEASE DO *NOT* EDIT THIS FILE!
 ///////////////////////////////////////////////////////////////////////////
 
 #ifndef __DIALOG_SCHEMATIC_FIND_BASE_H__
@@ -11,8 +11,6 @@
 #include <wx/artprov.h>
 #include <wx/xrc/xmlres.h>
 #include <wx/intl.h>
-class DIALOG_SHIM;
-
 #include "dialog_shim.h"
 #include <wx/string.h>
 #include <wx/stattext.h>
@@ -25,6 +23,7 @@ class DIALOG_SHIM;
 #include <wx/sizer.h>
 #include <wx/checkbox.h>
 #include <wx/button.h>
+#include <wx/statline.h>
 #include <wx/dialog.h>
 
 ///////////////////////////////////////////////////////////////////////////
@@ -58,9 +57,12 @@ class DIALOG_SCH_FIND_BASE : public DIALOG_SHIM
 		wxButton* m_buttonReplace;
 		wxButton* m_buttonReplaceAll;
 		wxButton* m_buttonCancel;
+		wxStaticLine* m_staticline1;
+		wxStaticText* m_statusLine;
 		
 		// Virtual event handlers, overide them in your derived class
 		virtual void OnClose( wxCloseEvent& event ) { event.Skip(); }
+		virtual void OnTextEnter( wxCommandEvent& event ) { event.Skip(); }
 		virtual void OnUpdateDrcUI( wxUpdateUIEvent& event ) { event.Skip(); }
 		virtual void OnUpdateWholeWordUI( wxUpdateUIEvent& event ) { event.Skip(); }
 		virtual void OnUpdateWildcardUI( wxUpdateUIEvent& event ) { event.Skip(); }

@@ -175,8 +175,7 @@ void C3D_RENDER_OGL_LEGACY::render_3D_arrows()
 
 void C3D_RENDER_OGL_LEGACY::setupMaterials()
 {
-
-    memset( &m_materials, 0, sizeof( m_materials ) );
+    m_materials = {};
 
     if( m_settings.GetFlag( FL_USE_REALISTIC_MODE ) )
     {
@@ -302,7 +301,7 @@ void C3D_RENDER_OGL_LEGACY::setupMaterials()
 }
 
 
-void C3D_RENDER_OGL_LEGACY::set_layer_material( LAYER_ID aLayerID )
+void C3D_RENDER_OGL_LEGACY::set_layer_material( PCB_LAYER_ID aLayerID )
 {
     switch( aLayerID )
     {
@@ -360,7 +359,7 @@ void C3D_RENDER_OGL_LEGACY::set_layer_material( LAYER_ID aLayerID )
 }
 
 
-SFVEC3F C3D_RENDER_OGL_LEGACY::get_layer_color( LAYER_ID aLayerID )
+SFVEC3F C3D_RENDER_OGL_LEGACY::get_layer_color( PCB_LAYER_ID aLayerID )
 {
     SFVEC3F layerColor = m_settings.GetLayerColor( aLayerID );
 
@@ -473,6 +472,8 @@ bool C3D_RENDER_OGL_LEGACY::Redraw( bool aIsMoving,
 
     if( m_reloadRequested )
     {
+        wxBusyCursor dummy;
+
         if( aStatusTextReporter )
             aStatusTextReporter->Report( _( "Loading..." ) );
 
@@ -623,7 +624,7 @@ bool C3D_RENDER_OGL_LEGACY::Redraw( bool aIsMoving,
          ++ii )
     {
 
-        const LAYER_ID layer_id = (LAYER_ID)(ii->first);
+        const PCB_LAYER_ID layer_id = (PCB_LAYER_ID)(ii->first);
 
         // Mask kayers are not processed here because they are a special case
         if( (layer_id == B_Mask) || (layer_id == F_Mask) )
@@ -918,7 +919,7 @@ void C3D_RENDER_OGL_LEGACY::ogl_free_all_display_lists()
 }
 
 
-void C3D_RENDER_OGL_LEGACY::render_solder_mask_layer( LAYER_ID aLayerID,
+void C3D_RENDER_OGL_LEGACY::render_solder_mask_layer( PCB_LAYER_ID aLayerID,
                                                       float aZPosition,
                                                       bool aIsRenderingOnPreviewMode )
 {
@@ -1026,8 +1027,8 @@ void C3D_RENDER_OGL_LEGACY::render_3D_module( const MODULE* module,
                   modelunit_to_3d_units_factor );
 
         // Get the list of model files for this model
-        std::list<S3D_INFO>::const_iterator sM = module->Models().begin();
-        std::list<S3D_INFO>::const_iterator eM = module->Models().end();
+        auto sM = module->Models().begin();
+        auto eM = module->Models().end();
 
         while( sM != eM )
         {
@@ -1046,9 +1047,7 @@ void C3D_RENDER_OGL_LEGACY::render_3D_module( const MODULE* module,
                         {
                             glPushMatrix();
 
-                            glTranslatef( sM->m_Offset.x * 25.4f,
-                                          sM->m_Offset.y * 25.4f,
-                                          sM->m_Offset.z * 25.4f );
+                            glTranslatef( sM->m_Offset.x, sM->m_Offset.y, sM->m_Offset.z );
 
                             glRotatef( -sM->m_Rotation.z, 0.0f, 0.0f, 1.0f );
                             glRotatef( -sM->m_Rotation.y, 0.0f, 1.0f, 0.0f );

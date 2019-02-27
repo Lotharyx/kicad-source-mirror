@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2012 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2008-2012 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2012 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2018 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2008 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -25,79 +25,398 @@
 
 /**
  * @file wildcards_and_files_ext.cpp
+ * Definition of file extensions used in Kicad.
  */
 #include <wildcards_and_files_ext.h>
 
 /**
- * file extensions and wildcards used in kicad.
+ * Format wildcard extension to support case sensitive file dialogs.
+ *
+ * The file extension wildcards of the GTK+ file dialog are case sensitive so using all lower
+ * case characters means that only file extensions that are all lower case will show up in the
+ * file dialog.  The GTK+ file dialog does support regular expressions so the file extension
+ * is converted to a regular expression ( sch -> [sS][cC][hH] ) when wxWidgets is built against
+ * GTK+.  Please make sure you call this function when adding new file wildcards.
+ *
+ * @note When calling wxFileDialog with a default file defined, make sure you include the
+ *       file extension along with the file name.  Otherwise, on GTK+ builds, the file
+ *       dialog will append the wildcard regular expression as the file extension which is
+ *       surely not what you want.
+ *
+ * @param aWildcard is the extension part of the wild card.
+ *
+ * @return the build appropriate file dialog wildcard filter.
  */
+static wxString formatWildcardExt( const wxString& aWildcard )
+{
+    wxString wc;
+#if defined( __WXGTK__ )
 
-const wxString SchematicSymbolFileExtension( wxT( "sym" ) );
-const wxString SchematicLibraryFileExtension( wxT( "lib" ) );
-const wxString SchematicBackupFileExtension( wxT( "bak" ) );
+    for( auto ch : aWildcard )
+    {
+        if( wxIsalpha( ch ) )
+            wc += wxString::Format( "[%c%c]", wxTolower( ch ), wxToupper( ch ) );
+        else
+            wc += ch;
+    }
 
-const wxString VrmlFileExtension( wxT( "wrl" ) );
+    return wc;
+#else
+    wc = aWildcard;
 
-const wxString ProjectFileExtension( wxT( "pro" ) );
-const wxString SchematicFileExtension( wxT( "sch" ) );
-const wxString NetlistFileExtension( wxT( "net" ) );
-const wxString ComponentFileExtension( wxT( "cmp" ) );
-const wxString GerberFileExtension( wxT( ".((gbr|(gb|gt)[alops])|pho)" ) );
-const wxString HtmlFileExtension( wxT( "html" ) );
+    return wc;
+#endif
+}
 
-const wxString LegacyPcbFileExtension( wxT( "brd" ) );
-const wxString KiCadPcbFileExtension( wxT( "kicad_pcb" ) );
-const wxString PageLayoutDescrFileExtension( wxT( "kicad_wks" ) );
+wxString AddFileExtListToFilter( const std::vector<std::string>& aExts )
+{
+    if( aExts.size() == 0 )
+    {
+        // The "all files" wildcard is different on different systems
+        wxString filter;
+        filter << " (" << wxFileSelectorDefaultWildcardStr << ")|"
+               << wxFileSelectorDefaultWildcardStr;
+        return filter;
+    }
 
-const wxString PdfFileExtension( wxT( "pdf" ) );
-const wxString MacrosFileExtension( wxT( "mcr" ) );
-const wxString DrillFileExtension( wxT( "drl" ) );
-const wxString SVGFileExtension( wxT( "svg" ) );
-const wxString ReportFileExtension( wxT( "rpt" ) );
-const wxString FootprintPlaceFileExtension( wxT( "pos" ) );
-const wxString KiCadLib3DShapesPathExtension( wxT( "3dshapes" ) );  ///< 3D shapes default libpath
+    wxString files_filter = " (";
 
-const wxString KiCadFootprintLibPathExtension( wxT( "pretty" ) );   ///< KICAD PLUGIN libpath
-const wxString LegacyFootprintLibPathExtension( wxT( "mod" ) );
-const wxString EagleFootprintLibPathExtension( wxT( "lbr" ) );
+    // Add extensions to the info message:
+    for( const auto& ext : aExts )
+    {
+        files_filter << " *." << ext;
+    }
 
-const wxString KiCadFootprintFileExtension( wxT( "kicad_mod" ) );
-const wxString GedaPcbFootprintLibFileExtension( wxT( "fp" ) );
+    files_filter << ")|*.";
 
-// These strings are wildcards for file selection dialogs.
-// Because these are static, one should explicitly call wxGetTranslation
-// to display them as translated.
-const wxString SchematicSymbolFileWildcard( _( "KiCad drawing symbol file (*.sym)|*.sym" ) );
-const wxString SchematicLibraryFileWildcard( _( "KiCad component library file (*.lib)|*.lib" ) );
-const wxString ProjectFileWildcard( _( "KiCad project files (*.pro)|*.pro" ) );
-const wxString SchematicFileWildcard( _( "KiCad schematic files (*.sch)|*.sch" ) );
-const wxString NetlistFileWildcard( _( "KiCad netlist files (*.net)|*.net" ) );
-const wxString GerberFileWildcard( _( "Gerber files (*.pho)|*.pho" ) );
-const wxString LegacyPcbFileWildcard( _( "KiCad printed circuit board files (*.brd)|*.brd" ) );
-const wxString EaglePcbFileWildcard( _( "Eagle ver. 6.x XML PCB files (*.brd)|*.brd" ) );
-const wxString PCadPcbFileWildcard( _( "P-Cad 200x ASCII PCB files (*.pcb)|*.pcb" ) );
-const wxString PcbFileWildcard( _( "KiCad s-expr printed circuit board files (*.kicad_pcb)|*.kicad_pcb" ) );
-const wxString KiCadFootprintLibFileWildcard( _( "KiCad footprint s-expre file (*.kicad_mod)|*.kicad_mod" ) );
-const wxString KiCadFootprintLibPathWildcard( _( "KiCad footprint s-expre library path (*.pretty)|*.pretty" ) );
-const wxString LegacyFootprintLibPathWildcard( _( "Legacy footprint library file (*.mod)|*.mod" ) );
-const wxString EagleFootprintLibPathWildcard( _( "Eagle ver. 6.x XML library files (*.lbr)|*.lbr" ) );
-const wxString GedaPcbFootprintLibFileWildcard( _( "Geda PCB footprint library file (*.fp)|*.fp" ) );
-const wxString ComponentFileExtensionWildcard( _( "Component-footprint link file (*.cmp)|*cmp" ) );
-const wxString PageLayoutDescrFileWildcard( _( "Page layout descr file (*.kicad_wks)|*kicad_wks" ) );
-// generic:
-const wxString AllFilesWildcard( _( "All files (*)|*" ) );
+    // Add extensions to the filter list, using a formated string (GTK specific):
+    bool first = true;
+    for( const auto& ext : aExts )
+    {
+        if( !first )
+            files_filter << ";*.";
+
+        first = false;
+
+        files_filter << formatWildcardExt( ext );
+    }
+
+    return files_filter;
+}
+
+
+const std::string SchematicSymbolFileExtension( "sym" );
+const std::string SchematicLibraryFileExtension( "lib" );
+const std::string SchematicBackupFileExtension( "bak" );
+
+const std::string VrmlFileExtension( "wrl" );
+
+const std::string ProjectFileExtension( "pro" );
+const std::string SchematicFileExtension( "sch" );
+const std::string NetlistFileExtension( "net" );
+const std::string ComponentFileExtension( "cmp" );
+const std::string GerberFileExtension( "gbr" );
+const std::string GerberJobFileExtension( "gbrjob" );
+const std::string HtmlFileExtension( "html" );
+
+const std::string LegacyPcbFileExtension( "brd" );
+const std::string KiCadPcbFileExtension( "kicad_pcb" );
+const std::string PageLayoutDescrFileExtension( "kicad_wks" );
+
+const std::string PdfFileExtension( "pdf" );
+const std::string MacrosFileExtension( "mcr" );
+const std::string DrillFileExtension( "drl" );
+const std::string SVGFileExtension( "svg" );
+const std::string ReportFileExtension( "rpt" );
+const std::string FootprintPlaceFileExtension( "pos" );
+const std::string KiCadLib3DShapesPathExtension( "3dshapes" );  ///< 3D shapes default libpath
+
+const std::string KiCadFootprintLibPathExtension( "pretty" );   ///< KICAD PLUGIN libpath
+const std::string LegacyFootprintLibPathExtension( "mod" );
+const std::string EagleFootprintLibPathExtension( "lbr" );
+
+const std::string KiCadFootprintFileExtension( "kicad_mod" );
+const std::string GedaPcbFootprintLibFileExtension( "fp" );
+const std::string SpecctraDsnFileExtension( "dsn" );
+const std::string IpcD356FileExtension( "d356" );
+
+const std::string PngFileExtension( "png" );
+const std::string JpegFileExtension( "jpg" );
+
+
+wxString AllFilesWildcard()
+{
+    return _( "All files" ) + AddFileExtListToFilter( {} );
+}
+
+
+wxString SchematicSymbolFileWildcard()
+{
+    return _( "KiCad drawing symbol files" ) + AddFileExtListToFilter( { "sym" } );
+}
+
+
+wxString SchematicLibraryFileWildcard()
+{
+    return _( "KiCad symbol library files" ) + AddFileExtListToFilter( { "lib" } );
+}
+
+
+wxString ProjectFileWildcard()
+{
+    return _( "KiCad project files" ) + AddFileExtListToFilter( { "pro" } );
+}
+
+
+wxString SchematicFileWildcard()
+{
+    return _( "KiCad schematic files" ) + AddFileExtListToFilter( { "sch" } );
+}
+
+
+wxString EagleSchematicFileWildcard()
+{
+    return _( "Eagle XML schematic files" ) + AddFileExtListToFilter( { "sch" } );
+}
+
+
+wxString EagleFilesWildcard()
+{
+    return _( "Eagle XML files" ) + AddFileExtListToFilter( { "sch", "brd" } );
+}
+
+
+wxString NetlistFileWildcard()
+{
+    return _( "KiCad netlist files" ) + AddFileExtListToFilter( { "net" } );
+}
+
+
+wxString GerberFileWildcard()
+{
+    return _( "Gerber files" ) + AddFileExtListToFilter( { "pho" } );
+}
+
+
+wxString LegacyPcbFileWildcard()
+{
+    return _( "KiCad printed circuit board files" ) + AddFileExtListToFilter( { "brd" } );
+}
+
+
+wxString EaglePcbFileWildcard()
+{
+    return _( "Eagle ver. 6.x XML PCB files" ) + AddFileExtListToFilter( { "brd" } );
+}
+
+
+wxString PCadPcbFileWildcard()
+{
+    return _( "P-Cad 200x ASCII PCB files" ) + AddFileExtListToFilter( { "pcb" } );
+}
+
+
+wxString PcbFileWildcard()
+{
+    return _( "KiCad printed circuit board files" ) + AddFileExtListToFilter( { "kicad_pcb" } );
+}
+
+
+wxString KiCadFootprintLibFileWildcard()
+{
+    return _( "KiCad footprint files" ) + AddFileExtListToFilter( { "kicad_mod" } );
+}
+
+
+wxString KiCadFootprintLibPathWildcard()
+{
+    return _( "KiCad footprint library paths" ) + AddFileExtListToFilter( { "pretty" } );
+}
+
+
+wxString LegacyFootprintLibPathWildcard()
+{
+    return _( "Legacy footprint library files" ) + AddFileExtListToFilter( { "mod" } );
+}
+
+
+wxString EagleFootprintLibPathWildcard()
+{
+    return _( "Eagle ver. 6.x XML library files" ) + AddFileExtListToFilter( { "lbr" } );
+}
+
+
+wxString GedaPcbFootprintLibFileWildcard()
+{
+    return _( "Geda PCB footprint library files" ) + AddFileExtListToFilter( { "fp" } );
+}
+
+
+wxString PageLayoutDescrFileWildcard()
+{
+    return _( "Page layout design files" ) + AddFileExtListToFilter( { "kicad_wks" } );
+}
+
 
 // Wildcard for cvpcb component to footprint link file
-const wxString ComponentFileWildcard( _( "KiCad cmp/footprint link files (*.cmp)|*.cmp" ) );
+wxString ComponentFileWildcard()
+{
+    return _( "KiCad symbol footprint link files" ) + AddFileExtListToFilter( { "cmp" } );
+}
+
 
 // Wildcard for reports and fabrication documents
-const wxString DrillFileWildcard( _( "Drill files (*.drl)|*.drl;*.DRL" ) );
-const wxString SVGFileWildcard( _( "SVG files (*.svg)|*.svg;*.SVG" ) );
-const wxString HtmlFileWildcard( _( "HTML files (*.html)|*.htm;*.html" ) );
-const wxString PdfFileWildcard( _( "Portable document format files (*.pdf)|*.pdf" ) );
-const wxString PSFileWildcard( _( "PostScript files (.ps)|*.ps" ) );
-const wxString ReportFileWildcard = _( "Report files (*.rpt)|*.rpt" );
-const wxString FootprintPlaceFileWildcard = _( "Footprint place files (*.pos)|*.pos" );
-const wxString Shapes3DFileWildcard( _( "Vrml and x3d files (*.wrl *.x3d)|*.wrl;*.x3d" ) );
-const wxString IDF3DFileWildcard( _( "IDFv3 component files (*.idf)|*.idf" ) );
-const wxString TextWildcard( _( "Text files (*.txt)|*.txt" ) );
+wxString DrillFileWildcard()
+{
+    return _( "Drill files" ) + AddFileExtListToFilter( { "drl", "nc", "xnc" } );
+}
+
+
+wxString SVGFileWildcard()
+{
+    return _( "SVG files" ) + AddFileExtListToFilter( { "svg" } );
+}
+
+
+wxString HtmlFileWildcard()
+{
+    return _( "HTML files" ) + AddFileExtListToFilter( { "htm", "html" } );
+}
+
+
+wxString CsvFileWildcard()
+{
+    return _( "CSV Files" ) + AddFileExtListToFilter( { "csv" } );
+}
+
+
+wxString PdfFileWildcard()
+{
+    return _( "Portable document format files" ) + AddFileExtListToFilter( { "pdf" } );
+}
+
+
+wxString PSFileWildcard()
+{
+    return _( "PostScript files" ) + AddFileExtListToFilter( { "ps" } );
+}
+
+
+wxString ReportFileWildcard()
+{
+    return _( "Report files" ) + AddFileExtListToFilter( { "rpt" } );
+}
+
+
+wxString FootprintPlaceFileWildcard()
+{
+    return _( "Footprint place files" ) + AddFileExtListToFilter( { "pos" } );
+}
+
+
+wxString Shapes3DFileWildcard()
+{
+    return _( "VRML and X3D files" ) + AddFileExtListToFilter( { "wrl", "x3d" } );
+}
+
+
+wxString IDF3DFileWildcard()
+{
+    return _( "IDFv3 footprint files" ) + AddFileExtListToFilter( { "idf" } );
+}
+
+
+wxString TextFileWildcard()
+{
+    return _( "Text files" ) + AddFileExtListToFilter( { "txt" } );
+}
+
+
+wxString ModLegacyExportFileWildcard()
+{
+    return _( "Legacy footprint export files" ) + AddFileExtListToFilter( { "emp" } );
+}
+
+
+wxString ErcFileWildcard()
+{
+    return _( "Electronic rule check file" ) + AddFileExtListToFilter( { "erc" } );
+}
+
+
+wxString SpiceLibraryFileWildcard()
+{
+    return _( "Spice library file" ) + AddFileExtListToFilter( { "lib" } );
+}
+
+
+wxString SpiceNetlistFileWildcard()
+{
+    return _( "SPICE netlist file" ) + AddFileExtListToFilter( { "cir" } );
+}
+
+
+wxString CadstarNetlistFileWildcard()
+{
+    return _( "CadStar netlist file" ) + AddFileExtListToFilter( { "frp" } );
+}
+
+
+wxString EquFileWildcard()
+{
+    return _( "Symbol footprint association files" ) + AddFileExtListToFilter( { "equ" } );
+}
+
+
+wxString ZipFileWildcard()
+{
+    return _( "Zip file" ) + AddFileExtListToFilter( { "zip" } );
+}
+
+
+wxString GencadFileWildcard()
+{
+    return _( "GenCAD 1.4 board files" ) + AddFileExtListToFilter( { "cad" } );
+}
+
+
+wxString DxfFileWildcard()
+{
+    return _( "DXF Files" ) + AddFileExtListToFilter( { "dxf" } );
+}
+
+
+wxString GerberJobFileWildcard()
+{
+    return _( "Gerber job file" ) + AddFileExtListToFilter( { "gbrjob" } );
+}
+
+
+wxString SpecctraDsnFileWildcard()
+{
+    return _( "Specctra DSN file" ) + AddFileExtListToFilter( { "dsn" } );
+}
+
+
+wxString IpcD356FileWildcard()
+{
+    return _( "IPC-D-356 Test Files" ) + AddFileExtListToFilter( { "d356" } );
+}
+
+
+wxString WorkbookFileWildcard()
+{
+    return _( "Workbook file" ) + AddFileExtListToFilter( { "wbk" } );
+}
+
+
+wxString PngFileWildcard()
+{
+    return _( "PNG file" ) + AddFileExtListToFilter( { "png" } );
+}
+
+
+wxString JpegFileWildcard()
+{
+    return _( "Jpeg file" ) + AddFileExtListToFilter( { "jpg", "jpeg" } );
+}

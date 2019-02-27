@@ -5,7 +5,7 @@
  * This program source code file is part of KICAD, a free EDA CAD application.
  *
  * Copyright (C) 2011-2012 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2016 Kicad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2016-2017 Kicad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -27,7 +27,10 @@
 
 #include <richio.h>
 #include <map>
+#include <functional>
+#include <wx/time.h>
 
+#include <config.h>
 
 class BOARD;
 class PLUGIN;
@@ -51,12 +54,17 @@ public:
     enum PCB_FILE_T
     {
         LEGACY,         ///< Legacy Pcbnew file formats prior to s-expression.
-        KICAD,          ///< S-expression Pcbnew file format.
+        KICAD_SEXP,          ///< S-expression Pcbnew file format.
         EAGLE,
         PCAD,
         GEDA_PCB,       ///< Geda PCB file formats.
-        GITHUB,         ///< Read only http://github.com repo holding pretty footprints
+#if defined(BUILD_MYODBC_PLUGIN)
         MYODBC,
+#endif
+        //N.B. This needs to be commented out to ensure compile-type errors
+#if defined(BUILD_GITHUB_PLUGIN)
+        GITHUB,         ///< Read only http://github.com repo holding pretty footprints
+#endif
         // add your type here.
 
         // ALTIUM,
@@ -64,6 +72,78 @@ public:
 
         FILE_TYPE_NONE
     };
+
+    /**
+     * Class PLUGIN_REGISTRY
+     * Holds a list of available plugins, created using a singleton REGISTER_PLUGIN object.
+     * This way, plugins can be added link-time.
+     */
+    class PLUGIN_REGISTRY
+    {
+        public:
+            struct ENTRY
+            {
+                PCB_FILE_T m_type;
+                std::function<PLUGIN*(void)> m_createFunc;
+                wxString m_name;
+            };
+
+            static PLUGIN_REGISTRY *Instance()
+            {
+                static PLUGIN_REGISTRY *self = nullptr;
+
+                if( !self )
+                {
+                    self = new PLUGIN_REGISTRY;
+                }
+                return self;
+            }
+
+            void Register( PCB_FILE_T aType, const wxString& aName, std::function<PLUGIN*(void)> aCreateFunc )
+            {
+                ENTRY ent;
+                ent.m_type = aType;
+                ent.m_createFunc = aCreateFunc;
+                ent.m_name = aName;
+                m_plugins.push_back( ent );
+            }
+
+            PLUGIN* Create( PCB_FILE_T aFileType ) const
+            {
+                for( auto& ent : m_plugins )
+                {
+                    if ( ent.m_type == aFileType )
+                    {
+                        return ent.m_createFunc();
+                    }
+                }
+                return nullptr;
+            }
+
+            const std::vector<ENTRY>& AllPlugins() const
+            {
+                return m_plugins;
+            }
+
+        private:
+            std::vector<ENTRY> m_plugins;
+    };
+
+    /**
+     * Class REGISTER_PLUGIN
+     * Registers a plugin. Declare as a static variable in an anonymous namespace.
+     * @param aType: type of the plugin
+     * @param aName: name of the file format
+     * @param aCreateFunc: function that creates a new object for the plugin.
+     */
+    struct REGISTER_PLUGIN
+    {
+         REGISTER_PLUGIN( PCB_FILE_T aType, const wxString& aName, std::function<PLUGIN*(void)> aCreateFunc )
+         {
+             PLUGIN_REGISTRY::Instance()->Register( aType, aName, aCreateFunc );
+         }
+    };
+
 
     /**
      * Function PluginFind
@@ -263,8 +343,7 @@ public:
     //-----<Footprint Stuff>-----------------------------
 
     /**
-     * Function FootprintEnumerate
-     * returns a list of footprint names contained within the library at @a aLibraryPath.
+     * Return a list of footprint names contained within the library at @a aLibraryPath.
      *
      * @param aLibraryPath is a locator for the "library", usually a directory, file,
      *   or URL containing several footprints.
@@ -274,12 +353,40 @@ public:
      *  The caller continues to own this object (plugin may not delete it), and
      *  plugins should expect it to be optionally NULL.
      *
-     * @return wxArrayString - is the array of available footprint names inside
-     *   a library
+     * @param aFootprintNames is the array of available footprint names inside a library.
      *
      * @throw IO_ERROR if the library cannot be found, or footprint cannot be loaded.
      */
-    virtual wxArrayString FootprintEnumerate( const wxString& aLibraryPath,
+    virtual void FootprintEnumerate( wxArrayString& aFootprintNames, const wxString& aLibraryPath,
+                                     const PROPERTIES* aProperties = NULL );
+
+    /**
+     * Generate a timestamp representing all the files in the library (including the library
+     * directory).
+     * Timestamps should not be considered ordered; they either match or they don't.
+     */
+    virtual long long GetLibraryTimestamp( const wxString& aLibraryPath ) const = 0;
+
+    /**
+     * Function PrefetchLib
+     * If possible, prefetches the specified library (e.g. performing downloads). Does not parse.
+     * Threadsafe.
+     *
+     * This is a no-op for libraries that cannot be prefetched.
+     *
+     * Plugins that cannot prefetch need not override this; a default no-op is provided.
+     *
+     * @param aLibraryPath is a locator for the "library", usually a directory, file,
+     *   or URL containing several footprints.
+     *
+     * @param aProperties is an associative array that can be used to tell the
+     *  plugin anything needed about how to perform with respect to @a aLibraryPath.
+     *  The caller continues to own this object (plugin may not delete it), and
+     *  plugins should expect it to be optionally NULL.
+     *
+     * @throw IO_ERROR if there is an error prefetching the library.
+     */
+    virtual void PrefetchLib( const wxString& aLibraryPath,
             const PROPERTIES* aProperties = NULL );
 
     /**
@@ -305,6 +412,15 @@ public:
      */
     virtual MODULE* FootprintLoad( const wxString& aLibraryPath, const wxString& aFootprintName,
             const PROPERTIES* aProperties = NULL );
+
+    /**
+     * Function GetEnumeratedFootprint
+     * a version of FootprintLoad() for use after FootprintEnumerate() for more efficient
+     * cache management.
+     */
+    virtual const MODULE* GetEnumeratedFootprint( const wxString& aLibraryPath,
+                                                  const wxString& aFootprintName,
+                                                  const PROPERTIES* aProperties = NULL );
 
     /**
      * Function FootprintSave

@@ -19,7 +19,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <boost/optional.hpp>
+#include <core/optional.h>
 
 #include <base_units.h> // God forgive me doing this...
 
@@ -32,8 +32,6 @@
 #include "pns_utils.h"
 
 namespace PNS {
-
-using boost::optional;
 
 DP_MEANDER_PLACER::DP_MEANDER_PLACER( ROUTER* aRouter ) :
     MEANDER_PLACER_BASE( aRouter )
@@ -152,7 +150,7 @@ const SEG DP_MEANDER_PLACER::baselineSegment( const DIFF_PAIR::COUPLED_SEGMENTS&
 }
 
 
-static bool pairOrientation( const DIFF_PAIR::COUPLED_SEGMENTS& aPair )
+bool DP_MEANDER_PLACER::pairOrientation( const DIFF_PAIR::COUPLED_SEGMENTS& aPair )
 {
     VECTOR2I midp = ( aPair.coupledP.A + aPair.coupledN.A ) / 2;
 
@@ -199,7 +197,7 @@ bool DP_MEANDER_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
 
     int offset = ( tuned.Gap() + tuned.Width() ) / 2;
 
-    if( !pairOrientation( coupledSegments[0] ) )
+    if( pairOrientation( coupledSegments[0] ) )
         offset *= -1;
 
     m_result.SetBaselineOffset( offset );
@@ -302,7 +300,7 @@ bool DP_MEANDER_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
 }
 
 
-bool DP_MEANDER_PLACER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem )
+bool DP_MEANDER_PLACER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem, bool aForceFinish )
 {
     LINE lP( m_originPair.PLine(), m_finalShapeP );
     LINE lN( m_originPair.NLine(), m_finalShapeN );
@@ -360,7 +358,7 @@ int DP_MEANDER_PLACER::CurrentLayer() const
 }
 
 
-const wxString DP_MEANDER_PLACER::TuningInfo() const
+const wxString DP_MEANDER_PLACER::TuningInfo( EDA_UNITS_T aUnits ) const
 {
     wxString status;
 
@@ -379,11 +377,11 @@ const wxString DP_MEANDER_PLACER::TuningInfo() const
         return _( "?" );
     }
 
-    status += LengthDoubleToString( (double) m_lastLength, false );
+    status += ::MessageTextFromValue( aUnits, m_lastLength, false );
     status += "/";
-    status += LengthDoubleToString( (double) m_settings.m_targetLength, false );
+    status += ::MessageTextFromValue( aUnits, m_settings.m_targetLength, false );
     status += " (gap: ";
-    status += LengthDoubleToString( (double) m_originPair.Gap(), false );
+    status += ::MessageTextFromValue( aUnits, m_originPair.Gap(), false );
     status += ")";
 
     return status;

@@ -42,6 +42,8 @@ class SEARCH_STACK : public wxPathList, public PROJECT::_ELEM
 {
 public:
 
+    KICAD_T Type() override { return SEARCH_STACK_T; }
+
 #if defined(DEBUG)
     void Show( const wxString& aPrefix ) const;
 #endif
@@ -105,7 +107,7 @@ public:
      * @param aPathString is concatonated string with interposing ';' or ':' separators.
      * @return int - the count of paths found in aPathString
      */
-    static int Split( wxArrayString* aResult, const wxString aPathString );
+    static int Split( wxArrayString* aResult, const wxString& aPathString );
 
 #if 1   // this function is so poorly designed it deserves not to exist.
     /**

@@ -30,9 +30,22 @@
 #ifndef KICAD_STRING_H_
 #define KICAD_STRING_H_
 
+#include "config.h"
+
 #include <wx/string.h>
 #include <wx/filename.h>
 
+
+/**
+ * These Escape/Unescape routines use HTML-entity-reference-style encoding to handle
+ * characters which are:
+ *   (a) not legal in filenames
+ *   (b) used as control characters in LIB_IDs
+ *   (c) used to delineate hierarchical paths
+ */
+wxString EscapeString( const wxString& aSource );
+
+wxString UnescapeString( const wxString& aSource );
 
 /**
  * Function ReadDelimitedText
@@ -72,6 +85,11 @@ int ReadDelimitedText( wxString* aDest, const char* aSource );
 std::string EscapedUTF8( const wxString& aString );
 
 /**
+ * Return a new wxString escaped for embedding in HTML.
+ */
+wxString EscapedHTML( const wxString& aString );
+
+/**
  * Function GetLine
  * reads one line line from \a aFile.
  * @return A pointer the first useful line read by eliminating blank lines and comments.
@@ -92,7 +110,7 @@ char* StrPurge( char* text );
 wxString DateAndTime();
 
 /**
- * Function StrLenNumCmp
+ * Function StrNumCmp
  * is a routine compatible with qsort() to sort by alphabetical order.
  *
  * This function is equivalent to strncmp() or strncasecmp() if \a aIgnoreCase is true
@@ -121,14 +139,14 @@ bool WildCompareString( const wxString& pattern,
                         bool            case_sensitive = true );
 
 /**
- * Function RefDesStringCompare
- * acts just like the strcmp function but treats numbers within the string text
- * correctly for sorting.  eg. A10 > A2
+ * Function ValueStringCompare
+ * acts just like the strcmp function but handles numbers and modifiers within the
+ * string text correctly for sorting.  eg. 1mF > 55uF
  * return -1 if first string is less than the second
  * return 0 if the strings are equal
  * return 1 if the first string is greater than the second
  */
-int RefDesStringCompare( const wxString& lhs, const wxString& rhs );
+int ValueStringCompare( wxString strFWord, wxString strSWord );
 
 /**
  * Function SplitString
@@ -142,6 +160,13 @@ int SplitString( wxString  strToSplit,
                  wxString* strBeginning,
                  wxString* strDigits,
                  wxString* strEnd );
+
+/**
+ * Gets the trailing int, if any, from a string.
+ * @param  aStr the string to check
+ * @return      the trailing int or 0 if none found
+ */
+int GetTrailingInt( const wxString& aStr );
 
 /**
  * Function GetIllegalFileNameWxChars
@@ -165,10 +190,59 @@ wxString GetIllegalFileNameWxChars();
  * @return true if any characters have been replaced in \a aName.
  */
 bool ReplaceIllegalFileNameChars( std::string* aName, int aReplaceChar = 0 );
+bool ReplaceIllegalFileNameChars( wxString& aName, int aReplaceChar = 0 );
 
 #ifndef HAVE_STRTOKR
 // common/strtok_r.c optionally:
 extern "C" char* strtok_r( char* str, const char* delim, char** nextp );
 #endif
+
+/**
+ * A helper for sorting strings from the rear.  Useful for things like 3d model names
+ * where they tend to be largely repititous at the front.
+ */
+struct rsort_wxString
+{
+    bool operator() (const wxString& strA, const wxString& strB ) const
+    {
+        wxString::const_reverse_iterator sA = strA.rbegin();
+        wxString::const_reverse_iterator eA = strA.rend();
+
+        wxString::const_reverse_iterator sB = strB.rbegin();
+        wxString::const_reverse_iterator eB = strB.rend();
+
+        if( strA.empty() )
+        {
+            if( strB.empty() )
+                return false;
+
+            // note: this rule implies that a null string is first in the sort order
+            return true;
+        }
+
+        if( strB.empty() )
+            return false;
+
+        while( sA != eA && sB != eB )
+        {
+            if( (*sA) == (*sB) )
+            {
+                ++sA;
+                ++sB;
+                continue;
+            }
+
+            if( (*sA) < (*sB) )
+                return true;
+            else
+                return false;
+        }
+
+        if( sB == eB )
+            return false;
+
+        return true;
+    }
+};
 
 #endif  // KICAD_STRING_H_

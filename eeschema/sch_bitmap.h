@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2011 jean-pierre.charras
- * Copyright (C) 2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2011-2017 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -32,8 +32,12 @@
 
 
 #include <sch_item_struct.h>
-#include <class_bitmap_base.h>
+#include <bitmap_base.h>
 
+
+/**
+ * Object to handle a bitmap image that can be inserted in a schematic.
+ */
 
 class SCH_BITMAP : public SCH_ITEM
 {
@@ -66,7 +70,6 @@ public:
     }
 
     /**
-     * Function GetScalingFactor
      * @return the scaling factor from pixel size to actual draw size
      * this scaling factor  depend on m_pixelScaleFactor and m_Scale
      * m_pixelScaleFactor gives the scaling factor between a pixel size and
@@ -81,6 +84,17 @@ public:
         return m_image->GetScalingFactor();
     }
 
+    /**
+     * @return the m_Scale image "zoom" value
+     * m_Scale is an user dependant value, and is similar to a "zoom" value
+     *  m_Scale = 1.0 = original size of bitmap.
+     *  m_Scale < 1.0 = the bitmap is drawn smaller than its original size.
+     *  m_Scale > 1.0 = the bitmap is drawn bigger than its original size.
+     */
+    double GetImageScale() const
+    {
+        return m_image->GetScale();
+    }
 
     wxString GetClass() const override
     {
@@ -89,8 +103,7 @@ public:
 
 
     /**
-     * Function GetSize
-     * @returns the actual size (in user units, not in pixels) of the image
+     * @return the actual size (in user units, not in pixels) of the image
      */
     wxSize GetSize() const;
 
@@ -99,26 +112,32 @@ public:
     void SwapData( SCH_ITEM* aItem ) override;
 
     void Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-               GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR ) override;
+               GR_DRAWMODE aDrawMode, COLOR4D aColor = COLOR4D::UNSPECIFIED ) override;
 
-    /**
-     * Function ReadImageFile
+    /// @copydoc VIEW_ITEM::ViewGetLayers()
+    virtual void ViewGetLayers( int aLayers[], int& aCount ) const override;
+
+   /**
      * Reads and stores an image file. Init the bitmap used to draw this item
      * format.
+     *
      * @param aFullFilename The full filename of the image file to read.
      * @return bool - true if success reading else false.
      */
     bool ReadImageFile( const wxString& aFullFilename );
-
-    bool Save( FILE* aFile ) const override;
-
-    bool Load( LINE_READER& aLine, wxString& aErrorMsg ) override;
 
     void Move( const wxPoint& aMoveVector ) override
     {
         m_pos += aMoveVector;
     }
 
+    /**
+     * Virtual function IsMovableFromAnchorPoint
+     * Return true for items which are moved with the anchor point at mouse cursor
+     *  and false for items moved with no reference to anchor
+     * @return false for a bus entry
+     */
+    bool IsMovableFromAnchorPoint() override { return false; }
 
     void MirrorY( int aYaxis_position ) override;
 
@@ -128,9 +147,12 @@ public:
 
     bool IsSelectStateChanged( const wxRect& aRect ) override;
 
-    wxString GetSelectMenuText() const override { return wxString( _( "Image" ) ); }
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override
+    {
+        return wxString( _( "Image" ) );
+    }
 
-    BITMAP_DEF GetMenuImage() const override { return image_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
     wxPoint GetPosition() const override { return m_pos; }
 

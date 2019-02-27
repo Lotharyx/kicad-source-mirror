@@ -2,7 +2,7 @@
  * This program source code file is part of KICAD, a free EDA CAD application.
  *
  * Copyright (C) 1992-2010 jean-pierre.charras
- * Copyright (C) 1992-2015 Kicad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2019 Kicad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,17 +26,16 @@
 #include <macros.h>
 
 #include <pgm_base.h>
-#include <wxstruct.h>
 #include <confirm.h>
 #include <gestfich.h>
 #include <wildcards_and_files_ext.h>
 #include <bitmap_io.h>
-#include <colors_selection.h>
 #include <build_version.h>
 #include <menus_helpers.h>
 #include <kiway.h>
 #include <kiface_i.h>
 
+#include <wx/rawbmp.h>
 #include <potracelib.h>
 
 #include "bitmap2component.h"
@@ -76,11 +75,12 @@ private:
     wxBitmap        m_BN_Bitmap;
     wxSize          m_imageDPI;     // The initial image resolution. When unknown,
                                     // set to DEFAULT_DPI x DEFAULT_DPI per Inch
+    bool            m_Negative;
     wxString        m_BitmapFileName;
     wxString        m_ConvertedFileName;
     wxSize          m_frameSize;
     wxPoint         m_framePos;
-    wxConfigBase*   m_config;
+    std::unique_ptr<wxConfigBase> m_config;
 
 public:
     BM2CMP_FRAME( KIWAY* aKiway, wxWindow* aParent );
@@ -92,7 +92,9 @@ public:
 private:
 
     // Event handlers
-    void OnPaint( wxPaintEvent& event ) override;
+    void OnPaintInit( wxPaintEvent& event ) override;
+    void OnPaintGreyscale( wxPaintEvent& event ) override;
+    void OnPaintBW( wxPaintEvent& event ) override;
     void OnLoadFile( wxCommandEvent& event ) override;
     void OnExport( wxCommandEvent& event ) override;
 
@@ -119,14 +121,14 @@ private:
     void OnExportLogo();
 
     void Binarize( double aThreshold );     // aThreshold = 0.0 (black level) to 1.0 (white level)
-    void OnOptionsSelection( wxCommandEvent& event ) override;
+    void OnNegativeClicked( wxCommandEvent& event ) override;
     void OnThresholdChange( wxScrollEvent& event ) override;
     void OnResolutionChange( wxCommandEvent& event ) override;
 
     // called when texts controls which handle the image resolution
     // lose the focus, to ensure the right values are displayed
     // because the m_imageDPI are clipped to acceptable values, and
-    // the text displayed could be differ during text edition
+    // the text displayed could be differ during text editing
     // We are using ChangeValue here to avoid generating a wxEVT_TEXT event.
     void UpdateDPITextValueX( wxMouseEvent& event )
     {
@@ -162,8 +164,9 @@ BM2CMP_FRAME::BM2CMP_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     if( m_config->Read( KEYWORD_BINARY_THRESHOLD, &tmp ) )
         m_sliderThreshold->SetValue( tmp );
 
-    if( m_config->Read( KEYWORD_BW_NEGATIVE, &tmp ) )
-        m_rbOptions->SetSelection( tmp  ? 1 : 0 );
+    m_config->Read( KEYWORD_BW_NEGATIVE, &tmp, 0 );
+    m_Negative = tmp != 0;
+    m_checkNegative->SetValue( m_Negative );
 
     if( m_config->Read( KEYWORD_LAST_FORMAT, &tmp ) )
     {
@@ -219,11 +222,9 @@ BM2CMP_FRAME::~BM2CMP_FRAME()
     m_config->Write( KEYWORD_LAST_INPUT_FILE, m_BitmapFileName );
     m_config->Write( KEYWORD_LAST_OUTPUT_FILE, m_ConvertedFileName );
     m_config->Write( KEYWORD_BINARY_THRESHOLD, m_sliderThreshold->GetValue() );
-    m_config->Write( KEYWORD_BW_NEGATIVE, m_rbOptions->GetSelection() );
+    m_config->Write( KEYWORD_BW_NEGATIVE, m_checkNegative->IsChecked() ? 1 : 0 );
     m_config->Write( KEYWORD_LAST_FORMAT,  m_radioBoxFormat->GetSelection() );
     m_config->Write( KEYWORD_LAST_MODLAYER,  m_radio_PCBLayer->GetSelection() );
-
-    delete m_config;
 
     /* This needed for OSX: avoids further OnDraw processing after this
      * destructor and before the native window is destroyed
@@ -232,30 +233,59 @@ BM2CMP_FRAME::~BM2CMP_FRAME()
 }
 
 
-void BM2CMP_FRAME::OnPaint( wxPaintEvent& event )
+void BM2CMP_FRAME::OnPaintInit( wxPaintEvent& event )
 {
 #ifdef __WXMAC__
     // Otherwise fails due: using wxPaintDC without being in a native paint event
     wxClientDC pict_dc( m_InitialPicturePanel );
-    wxClientDC greyscale_dc( m_GreyscalePicturePanel );
-    wxClientDC nb_dc( m_BNPicturePanel );
 #else
     wxPaintDC pict_dc( m_InitialPicturePanel );
-    wxPaintDC greyscale_dc( m_GreyscalePicturePanel );
-    wxPaintDC nb_dc( m_BNPicturePanel );
 #endif
 
     m_InitialPicturePanel->PrepareDC( pict_dc );
-    m_GreyscalePicturePanel->PrepareDC( greyscale_dc );
-    m_BNPicturePanel->PrepareDC( nb_dc );
 
     // OSX crashes with empty bitmaps (on initial refreshes)
-    if( m_Pict_Bitmap.IsOk() && m_Greyscale_Bitmap.IsOk() && m_BN_Bitmap.IsOk() )
-    {
-        pict_dc.DrawBitmap( m_Pict_Bitmap, 0, 0, false );
-        greyscale_dc.DrawBitmap( m_Greyscale_Bitmap, 0, 0, false );
-        nb_dc.DrawBitmap( m_BN_Bitmap, 0, 0, false );
-    }
+    if( m_Pict_Bitmap.IsOk() )
+        pict_dc.DrawBitmap( m_Pict_Bitmap, 0, 0, !!m_Pict_Bitmap.GetMask() );
+
+    event.Skip();
+}
+
+
+void BM2CMP_FRAME::OnPaintGreyscale( wxPaintEvent& event )
+{
+#ifdef __WXMAC__
+    // Otherwise fails due: using wxPaintDC without being in a native paint event
+    wxClientDC greyscale_dc( m_GreyscalePicturePanel );
+#else
+    wxPaintDC greyscale_dc( m_GreyscalePicturePanel );
+#endif
+
+    m_GreyscalePicturePanel->PrepareDC( greyscale_dc );
+
+    // OSX crashes with empty bitmaps (on initial refreshes)
+    if( m_Greyscale_Bitmap.IsOk() )
+        greyscale_dc.DrawBitmap( m_Greyscale_Bitmap, 0, 0, !!m_Greyscale_Bitmap.GetMask() );
+
+    event.Skip();
+}
+
+
+void BM2CMP_FRAME::OnPaintBW( wxPaintEvent& event )
+{
+#ifdef __WXMAC__
+    // Otherwise fails due: using wxPaintDC without being in a native paint event
+    wxClientDC nb_dc( m_BNPicturePanel );
+#else
+    wxPaintDC nb_dc( m_BNPicturePanel );
+#endif
+
+    m_BNPicturePanel->PrepareDC( nb_dc );
+
+    if( m_BN_Bitmap.IsOk() )
+        nb_dc.DrawBitmap( m_BN_Bitmap, 0, 0, !!m_BN_Bitmap.GetMask() );
+
+    event.Skip();
 }
 
 
@@ -283,7 +313,6 @@ void BM2CMP_FRAME::OnLoadFile( wxCommandEvent& event )
 
     fn = fullFilename;
     m_mruPath = fn.GetPath();
-    m_buttonExport->Enable( true );
     SetStatusText( fullFilename );
     Refresh();
 }
@@ -291,8 +320,7 @@ void BM2CMP_FRAME::OnLoadFile( wxCommandEvent& event )
 
 bool BM2CMP_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, int aCtl )
 {
-    // Prj().MaybeLoadProjectSettings();
-
+    m_Pict_Image.Destroy();
     m_BitmapFileName = aFileSet[0];
 
     if( !m_Pict_Image.LoadFile( m_BitmapFileName ) )
@@ -339,14 +367,30 @@ bool BM2CMP_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, int 
     m_Greyscale_Image.Destroy();
     m_Greyscale_Image = m_Pict_Image.ConvertToGreyscale( );
 
-    if( m_rbOptions->GetSelection() > 0 )
+    if( m_Pict_Bitmap.GetMask() )
+    {
+        for( int x = 0; x < m_Pict_Bitmap.GetWidth(); x++ )
+        {
+            for( int y = 0; y < m_Pict_Bitmap.GetHeight(); y++ )
+            {
+                if( m_Pict_Image.GetRed( x, y ) == m_Pict_Image.GetMaskRed() &&
+                    m_Pict_Image.GetGreen( x, y ) == m_Pict_Image.GetMaskGreen() &&
+                    m_Pict_Image.GetBlue( x, y ) == m_Pict_Image.GetMaskBlue() )
+                {
+                    m_Greyscale_Image.SetRGB( x, y, 255, 255, 255 );
+                }
+            }
+        }
+    }
+
+    if( m_Negative )
         NegateGreyscaleImage( );
 
     m_Greyscale_Bitmap = wxBitmap( m_Greyscale_Image );
-
     m_NB_Image  = m_Greyscale_Image;
     Binarize( (double) m_sliderThreshold->GetValue()/m_sliderThreshold->GetMax() );
 
+    m_buttonExport->Enable( true );
     return true;
 }
 
@@ -393,26 +437,30 @@ void BM2CMP_FRAME::OnResolutionChange( wxCommandEvent& event )
 
 void BM2CMP_FRAME::Binarize( double aThreshold )
 {
-    unsigned int  pixin;
-    unsigned char pixout;
     int           h = m_Greyscale_Image.GetHeight();
     int           w = m_Greyscale_Image.GetWidth();
-    unsigned int  threshold = (int)(aThreshold * 256);
+    unsigned char threshold = aThreshold * 255;
+    unsigned char alpha_thresh = 0.7 * threshold;
 
     for( int y = 0; y < h; y++ )
         for( int x = 0; x < w; x++ )
         {
-            pixin   = m_Greyscale_Image.GetGreen( x, y );
+            unsigned char pixout;
+            auto pixin   = m_Greyscale_Image.GetGreen( x, y );
+            auto alpha   = m_Greyscale_Image.HasAlpha() ?
+                    m_Greyscale_Image.GetAlpha( x, y ) : wxALPHA_OPAQUE;
 
-            if( pixin < threshold )
+            if( pixin < threshold || alpha < alpha_thresh )
                 pixout = 0;
             else
                 pixout = 255;
 
             m_NB_Image.SetRGB( x, y, pixout, pixout, pixout );
+
         }
 
     m_BN_Bitmap = wxBitmap( m_NB_Image );
+
 }
 
 
@@ -432,12 +480,18 @@ void BM2CMP_FRAME::NegateGreyscaleImage( )
 }
 
 
-void BM2CMP_FRAME::OnOptionsSelection( wxCommandEvent& event )
+void BM2CMP_FRAME::OnNegativeClicked( wxCommandEvent&  )
 {
-    NegateGreyscaleImage();
-    m_Greyscale_Bitmap = wxBitmap( m_Greyscale_Image );
-    Binarize( (double)m_sliderThreshold->GetValue()/m_sliderThreshold->GetMax() );
-    Refresh();
+    if( m_checkNegative->GetValue() != m_Negative )
+    {
+        NegateGreyscaleImage();
+
+        m_Greyscale_Bitmap = wxBitmap( m_Greyscale_Image );
+        Binarize( (double)m_sliderThreshold->GetValue()/m_sliderThreshold->GetMax() );
+        m_Negative = m_checkNegative->GetValue();
+
+        Refresh();
+    }
 }
 
 
@@ -483,9 +537,8 @@ void BM2CMP_FRAME::OnExportLogo()
     if( path.IsEmpty() || !wxDirExists(path) )
         path = ::wxGetCwd();
 
-    wxFileDialog fileDlg( this, _( "Create a logo file" ),
-                          path, wxEmptyString,
-                          wxGetTranslation( PageLayoutDescrFileWildcard ),
+    wxFileDialog fileDlg( this, _( "Create Logo File" ), path, wxEmptyString,
+                          PageLayoutDescrFileWildcard(),
                           wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
     int          diag = fileDlg.ShowModal();
 
@@ -502,7 +555,7 @@ void BM2CMP_FRAME::OnExportLogo()
     if( outfile == NULL )
     {
         wxString msg;
-        msg.Printf( _( "File '%s' could not be created." ), GetChars( m_ConvertedFileName ) );
+        msg.Printf( _( "File \"%s\" could not be created." ), GetChars( m_ConvertedFileName ) );
         wxMessageBox( msg );
         return;
     }
@@ -520,9 +573,9 @@ void BM2CMP_FRAME::OnExportPostScript()
     if( path.IsEmpty() || !wxDirExists( path ) )
         path = ::wxGetCwd();
 
-    wxFileDialog fileDlg( this, _( "Create a Postscript file" ),
+    wxFileDialog fileDlg( this, _( "Create Postscript File" ),
                           path, wxEmptyString,
-                          wxGetTranslation( PSFileWildcard ),
+                          PSFileWildcard(),
                           wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     int          diag = fileDlg.ShowModal();
@@ -540,7 +593,7 @@ void BM2CMP_FRAME::OnExportPostScript()
     if( outfile == NULL )
     {
         wxString msg;
-        msg.Printf( _( "File '%s' could not be created." ), GetChars( m_ConvertedFileName ) );
+        msg.Printf( _( "File \"%s\" could not be created." ), GetChars( m_ConvertedFileName ) );
         wxMessageBox( msg );
         return;
     }
@@ -558,9 +611,9 @@ void BM2CMP_FRAME::OnExportEeschema()
     if( path.IsEmpty() || !wxDirExists(path) )
         path = ::wxGetCwd();
 
-    wxFileDialog fileDlg( this, _( "Create a component library file for Eeschema" ),
+    wxFileDialog fileDlg( this, _( "Create Symbol Library" ),
                           path, wxEmptyString,
-                          wxGetTranslation( SchematicLibraryFileWildcard ),
+                          SchematicLibraryFileWildcard(),
                           wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     int          diag = fileDlg.ShowModal();
@@ -577,7 +630,7 @@ void BM2CMP_FRAME::OnExportEeschema()
     if( outfile == NULL )
     {
         wxString msg;
-        msg.Printf( _( "File '%s' could not be created." ), GetChars( m_ConvertedFileName ) );
+        msg.Printf( _( "File \"%s\" could not be created." ), GetChars( m_ConvertedFileName ) );
         wxMessageBox( msg );
         return;
     }
@@ -595,9 +648,9 @@ void BM2CMP_FRAME::OnExportPcbnew()
     if( path.IsEmpty() || !wxDirExists( path ) )
         path = m_mruPath;
 
-    wxFileDialog fileDlg( this, _( "Create a footprint file for Pcbnew" ),
+    wxFileDialog fileDlg( this, _( "Create Footprint Library" ),
                           path, wxEmptyString,
-                          wxGetTranslation( KiCadFootprintLibFileWildcard ),
+                          KiCadFootprintLibFileWildcard(),
                           wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     int          diag = fileDlg.ShowModal();
@@ -614,7 +667,7 @@ void BM2CMP_FRAME::OnExportPcbnew()
     if( outfile == NULL )
     {
         wxString msg;
-        msg.Printf( _( "File '%s' could not be created." ), GetChars( m_ConvertedFileName ) );
+        msg.Printf( _( "File \"%s\" could not be created." ), GetChars( m_ConvertedFileName ) );
         wxMessageBox( msg );
         return;
     }
@@ -635,7 +688,7 @@ void BM2CMP_FRAME::ExportFile( FILE* aOutfile, OUTPUT_FMT_ID aFormat )
     if( !potrace_bitmap )
     {
         wxString msg;
-        msg.Printf( wxT( "Error allocating memory for potrace bitmap" ) );
+        msg.Printf( _( "Error allocating memory for potrace bitmap" ) );
         wxMessageBox( msg );
         return;
     }
@@ -645,8 +698,8 @@ void BM2CMP_FRAME::ExportFile( FILE* aOutfile, OUTPUT_FMT_ID aFormat )
     {
         for( int x = 0; x < w; x++ )
         {
-            unsigned char pix = m_NB_Image.GetGreen( x, y );
-            BM_PUT( potrace_bitmap, x, y, pix ? 1 : 0 );
+            auto pix = m_NB_Image.GetGreen( x, y );
+            BM_PUT( potrace_bitmap, x, y, pix ? 0 : 1 );
         }
     }
 

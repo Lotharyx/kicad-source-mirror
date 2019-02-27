@@ -6,7 +6,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -32,36 +32,32 @@
 #include <gerbview.h>
 #include <gerbview_frame.h>
 #include <trigo.h>
-#include <class_gerber_file_image.h>
-#include <class_X2_gerber_attributes.h>
+#include <gerber_file_image.h>
+#include <X2_gerber_attributes.h>
 
 #include <cmath>
 
-/* Gerber: NOTES about some important commands found in RS274D and RS274X (G codes):
+/* Gerber: NOTES about some important commands found in RS274D and RS274X (G codes).
+ * Some are now deprecated, but deprecated commands must be known by the Gerber reader
  * Gn =
- * G01 linear interpolation (right trace)
- * G02, G20, G21 Circular interpolation, meaning trig <0 (clockwise)
- * G03, G30, G31 Circular interpolation, meaning trigo> 0 (counterclockwise)
- * G04 = comment. Since Sept 2014, file attributes can be found here
+ * G01 linear interpolation (linear trace)
+ * G02, G20, G21 Circular interpolation, clockwise
+ * G03, G30, G31 Circular interpolation, counterclockwise
+ * G04 = comment. Since Sept 2014, file attributes and other X2 attributes can be found here
  *       if the line starts by G04 #@!
  * G06 parabolic interpolation
  * G07 Cubic Interpolation
  * G10 linear interpolation (scale x10)
  * G11 linear interpolation (0.1x range)
  * G12 linear interpolation (0.01x scale)
- * G36 Start polygon mode
+ * G36 Start polygon mode (called a region, because the "polygon" can include arcs)
  * G37 Stop polygon mode (and close it)
- * G54 Selection Tool
+ * G54 Selection Tool (outdated)
  * G60 linear interpolation (scale x100)
  * G70 Select Units = Inches
  * G71 Select Units = Millimeters
- * G74 disable 360 degrees circular interpolation  (return to 90 deg mode)
- *      and perhaps circular interpolation (return to linear interpolation )
- *      see rs274xrevd_e.pdf pages 47 and 48
- *      Unfortunately page 47 said G74 disable G02 or G03
- *      and page 48 said G01 must be used to disable G02 or G03.
- *      Currently GerbView disable G02 or G03 after a G74 command (tests using 2 gerber files).
- * G75 enable 360 degrees circular interpolation
+ * G74 enable 90 deg mode for arcs (CW or CCW)
+ * G75 enable 360 degrees for arcs (CW or CCW)
  * G90 mode absolute coordinates
  *
  * X, Y
@@ -100,7 +96,6 @@
  * @param aGbrItem The GBRITEM to fill in.
  * @param aAperture the associated type of aperture
  * @param Dcode_index The DCODE value, like D14
- * @param aLayer The layer index to set into the GBRITEM
  * @param aPos The center point of the flash
  * @param aSize The diameter of the round flash
  * @param aLayerNegative = true if the current layer is negative
@@ -141,6 +136,9 @@ void fillFlashedGBRITEM(  GERBER_DRAW_ITEM* aGbrItem,
 
     case APT_MACRO:
         aGbrItem->m_Shape = GBR_SPOT_MACRO;
+
+        // Cache the bounding box for aperture macros
+        aGbrItem->GetDcodeDescr()->GetMacro()->GetApertureMacroShape( aGbrItem, aPos );
         break;
     }
 }
@@ -152,7 +150,6 @@ void fillFlashedGBRITEM(  GERBER_DRAW_ITEM* aGbrItem,
  *
  * @param aGbrItem The GERBER_DRAW_ITEM to fill in.
  * @param Dcode_index The DCODE value, like D14
- * @param aLayer The layer index to set into the GBRITEM
  * @param aStart The starting point of the line
  * @param aEnd The ending point of the line
  * @param aPenSize The size of the flash. Note rectangular shapes are legal.
@@ -196,24 +193,22 @@ void fillLineGBRITEM(  GERBER_DRAW_ITEM* aGbrItem,
  * </ul><p>
  * @param aGbrItem is the GBRITEM to fill in.
  * @param Dcode_index is the DCODE value, like D14
- * @param aLayer is the layer index to set into the GBRITEM
  * @param aStart is the starting point
  * @param aEnd is the ending point
  * @param aRelCenter is the center coordinate relative to start point,
  *   given in ABSOLUTE VALUE and the sign of values x et y de rel_center
- *   must be calculated from the previously given constraint: arc only in the
- * same quadrant.
+ *   must be calculated from the previously given constraint: arc only in the same quadrant.
  * @param aClockwise true if arc must be created clockwise
  * @param aPenSize The size of the flash. Note rectangular shapes are legal.
  * @param aMultiquadrant = true to create arcs upto 360 deg,
  *                      false when arc is inside one quadrant
  * @param aLayerNegative = true if the current layer is negative
  */
-static void fillArcGBRITEM(  GERBER_DRAW_ITEM* aGbrItem, int Dcode_index,
-                             const wxPoint& aStart, const wxPoint& aEnd,
-                             const wxPoint& aRelCenter, wxSize aPenSize,
-                             bool aClockwise, bool aMultiquadrant,
-                             bool aLayerNegative  )
+void fillArcGBRITEM(  GERBER_DRAW_ITEM* aGbrItem, int Dcode_index,
+                      const wxPoint& aStart, const wxPoint& aEnd,
+                      const wxPoint& aRelCenter, wxSize aPenSize,
+                      bool aClockwise, bool aMultiquadrant,
+                      bool aLayerNegative  )
 {
     wxPoint center, delta;
 
@@ -383,6 +378,9 @@ static void fillArcPOLY(  GERBER_DRAW_ITEM* aGbrItem,
     const int increment_angle = 3600 / 36;
     int count = std::abs( arc_angle / increment_angle );
 
+    if( aGbrItem->m_Polygon.OutlineCount() == 0 )
+        aGbrItem->m_Polygon.NewOutline();
+
     // calculate polygon corners
     // when arc is counter-clockwise, dummyGbrItem arc goes from end to start
     // and we must always create a polygon from start to end.
@@ -401,7 +399,7 @@ static void fillArcPOLY(  GERBER_DRAW_ITEM* aGbrItem,
         else    // last point
             end_arc = aClockwise ? end : start;
 
-        aGbrItem->m_PolyCorners.push_back( end_arc + center );
+        aGbrItem->m_Polygon.Append( VECTOR2I( end_arc + center ) );
 
         start_arc = end_arc;
     }
@@ -476,34 +474,32 @@ bool GERBER_FILE_IMAGE::Execute_G_Command( char*& text, int G_command )
         break;
 
     case GC_COMMENT:
-        // Skip comment, but only if the line does not start by "G04 #@! TF"
-        // which is a metadata
-        if( strncmp( text, " #@! TF", 7 ) == 0 )
+        // Skip comment, but only if the line does not start by "G04 #@! "
+        // which is a metadata, i.e. a X2 command inside the comment.
+        // this comment is called a "structured comment"
+        if( strncmp( text, " #@! ", 5 ) == 0 )
         {
-            text += 7;
-            X2_ATTRIBUTE dummy;
-            dummy.ParseAttribCmd( m_Current_File, NULL, 0, text );
-            if( dummy.IsFileFunction() )
+            text += 5;
+            // The string starting at text is the same as the X2 attribute,
+            // but a X2 attribute ends by '%'. So we build the X2 attribute string
+            std::string x2buf;
+
+            while( *text && (*text != '*') )
             {
-                delete m_FileFunction;
-                m_FileFunction = new X2_ATTRIBUTE_FILEFUNCTION( dummy );
+                x2buf += *text;
+                text++;
             }
+            // add the end of X2 attribute string
+            x2buf += "*%";
+            x2buf += '\0';
+
+            char* cptr = (char*)x2buf.data();
+            int code_command = ReadXCommandID( cptr );
+            ExecuteRS274XCommand( code_command, NULL, 0, cptr );
         }
 
-        while ( *text && (*text != '*') )
-                    text++;
-        break;
-
-    case GC_LINEAR_INTERPOL_10X:
-        m_Iterpolation = GERB_INTERPOL_LINEAR_10X;
-        break;
-
-    case GC_LINEAR_INTERPOL_0P1X:
-        m_Iterpolation = GERB_INTERPOL_LINEAR_01X;
-        break;
-
-    case GC_LINEAR_INTERPOL_0P01X:
-        m_Iterpolation = GERB_INTERPOL_LINEAR_001X;
+        while( *text && (*text != '*') )
+            text++;
         break;
 
     case GC_SELECT_TOOL:
@@ -514,7 +510,7 @@ bool GERBER_FILE_IMAGE::Execute_G_Command( char*& text, int G_command )
         if( D_commande > (TOOLS_MAX_COUNT - 1) )
             D_commande = TOOLS_MAX_COUNT - 1;
         m_Current_Tool = D_commande;
-        D_CODE* pt_Dcode = GetDCODE( D_commande, false );
+        D_CODE* pt_Dcode = GetDCODE( D_commande );
         if( pt_Dcode )
             pt_Dcode->m_InUse = true;
         break;
@@ -556,11 +552,13 @@ bool GERBER_FILE_IMAGE::Execute_G_Command( char*& text, int G_command )
         if( m_Exposure && GetItemsList() )    // End of polygon
         {
             GERBER_DRAW_ITEM * gbritem = m_Drawings.GetLast();
+            gbritem->m_Polygon.Append( gbritem->m_Polygon.Vertex( 0 ) );
             StepAndRepeatItem( *gbritem );
         }
         m_Exposure = false;
         m_PolygonFillMode = false;
         m_PolygonFillModeState = 0;
+        m_Iterpolation = GERB_INTERPOL_LINEAR_1X;   // not sure it should be done
         break;
 
     case GC_MOVE:       // Non existent
@@ -598,7 +596,7 @@ bool GERBER_FILE_IMAGE::Execute_DCODE_Command( char*& text, int D_commande )
         // call
         m_Current_Tool = D_commande;
 
-        D_CODE* pt_Dcode = GetDCODE( D_commande, false );
+        D_CODE* pt_Dcode = GetDCODE( D_commande );
         if( pt_Dcode )
             pt_Dcode->m_InUse = true;
 
@@ -639,11 +637,14 @@ bool GERBER_FILE_IMAGE::Execute_DCODE_Command( char*& text, int D_commande )
                 gbritem = m_Drawings.GetLast();
 
                 gbritem->m_Start = m_PreviousPos;       // m_Start is used as temporary storage
-                if( gbritem->m_PolyCorners.size() == 0 )
-                    gbritem->m_PolyCorners.push_back( gbritem->m_Start );
+                if( gbritem->m_Polygon.OutlineCount() == 0 )
+                {
+                    gbritem->m_Polygon.NewOutline();
+                    gbritem->m_Polygon.Append( VECTOR2I( gbritem->m_Start ) );
+                }
 
                 gbritem->m_End = m_CurrentPos;       // m_End is used as temporary storage
-                gbritem->m_PolyCorners.push_back( gbritem->m_End );
+                gbritem->m_Polygon.Append( VECTOR2I( gbritem->m_End ) );
                 break;
             }
 
@@ -655,6 +656,7 @@ bool GERBER_FILE_IMAGE::Execute_DCODE_Command( char*& text, int D_commande )
             if( m_Exposure && GetItemsList() )    // End of polygon
             {
                 gbritem = m_Drawings.GetLast();
+                gbritem->m_Polygon.Append( gbritem->m_Polygon.Vertex( 0 ) );
                 StepAndRepeatItem( *gbritem );
             }
             m_Exposure    = false;
@@ -673,7 +675,7 @@ bool GERBER_FILE_IMAGE::Execute_DCODE_Command( char*& text, int D_commande )
         case 1:     // code D01 Draw line, exposure ON
             m_Exposure = true;
 
-            tool = GetDCODE( m_Current_Tool, false );
+            tool = GetDCODE( m_Current_Tool );
             if( tool )
             {
                 size     = tool->m_Size;
@@ -692,22 +694,27 @@ bool GERBER_FILE_IMAGE::Execute_DCODE_Command( char*& text, int D_commande )
                 StepAndRepeatItem( *gbritem );
                 break;
 
-            case GERB_INTERPOL_LINEAR_01X:
-            case GERB_INTERPOL_LINEAR_001X:
-            case GERB_INTERPOL_LINEAR_10X:
-                wxBell();
-                break;
-
             case GERB_INTERPOL_ARC_NEG:
             case GERB_INTERPOL_ARC_POS:
                 gbritem = new GERBER_DRAW_ITEM( this );
                 m_Drawings.Append( gbritem );
 
-                fillArcGBRITEM( gbritem, dcode, m_PreviousPos,
-                                m_CurrentPos, m_IJPos, size,
-                                ( m_Iterpolation == GERB_INTERPOL_ARC_NEG ) ?
-                                false : true, m_360Arc_enbl, GetLayerParams().m_LayerNegative );
+                if( m_LastCoordIsIJPos )
+                {
+                    fillArcGBRITEM( gbritem, dcode, m_PreviousPos,
+                                    m_CurrentPos, m_IJPos, size,
+                                    ( m_Iterpolation == GERB_INTERPOL_ARC_NEG ) ?
+                                    false : true, m_360Arc_enbl, GetLayerParams().m_LayerNegative );
+                    m_LastCoordIsIJPos = false;
+                }
+                else
+                {
+                    fillLineGBRITEM( gbritem, dcode, m_PreviousPos,
+                                     m_CurrentPos, size, GetLayerParams().m_LayerNegative );
+                }
+
                 StepAndRepeatItem( *gbritem );
+
                 break;
 
             default:
@@ -726,7 +733,7 @@ bool GERBER_FILE_IMAGE::Execute_DCODE_Command( char*& text, int D_commande )
             break;
 
         case 3:     // code D3: flash aperture
-            tool = GetDCODE( m_Current_Tool, false );
+            tool = GetDCODE( m_Current_Tool );
             if( tool )
             {
                 size     = tool->m_Size;

@@ -40,6 +40,7 @@
 #include <wx/filename.h>
 #include <wx/stdpaths.h>
 #include <wx/snglinst.h>
+#include <wx/html/htmlwin.h>
 
 #include <kiway.h>
 #include <pgm_base.h>
@@ -99,6 +100,21 @@ PGM_BASE& Pgm()
     return program;
 }
 
+// A module to allow Html modules initialization/cleanup
+// When a wxHtmlWindow is used *only* in a dll/so module, the Html text is displayed
+// as plain text.
+// This helper class is just used to force wxHtmlWinParser initialization
+// see https://groups.google.com/forum/#!topic/wx-users/FF0zv5qGAT0
+class HtmlModule: public wxModule
+{
+public:
+    HtmlModule() { }
+    virtual bool OnInit() override { AddDependency( CLASSINFO( wxHtmlWinParser ) ); return true; };
+    virtual void OnExit() override {};
+private:
+    wxDECLARE_DYNAMIC_CLASS( HtmlModule );
+};
+wxIMPLEMENT_DYNAMIC_CLASS(HtmlModule, wxModule);
 
 /**
  * Struct APP_SINGLE_TOP
@@ -118,11 +134,27 @@ struct APP_SINGLE_TOP : public wxApp
         {
             wxSetEnv ( wxT("UBUNTU_MENUPROXY" ), wxT( "0" ) );
         }
+
+        // Force the use of X11 backend (or wayland-x11 compatibilty layer).  This is required until wxWidgets
+        // supports the Wayland compositors
+        wxSetEnv( wxT( "GDK_BACKEND" ), wxT( "x11" ) );
+
+        // Disable overlay scrollbars as they mess up wxWidgets window sizing and cause excessive redraw requests
+        wxSetEnv( wxT( "GTK_OVERLAY_SCROLLING" ), wxT( "0" ) );
+
+        // Set GTK2-style input instead of xinput2.  This disables touchscreen and smooth scrolling
+        // Needed to ensure that we are not getting multiple mouse scroll events
+        wxSetEnv( wxT( "GDK_CORE_DEVICE_EVENTS" ), wxT( "1" ) );
     }
 #endif
 
     bool OnInit() override
     {
+        // Force wxHtmlWinParser initialization when a wxHtmlWindow is used only
+        // in a shared modules (.so or .dll file)
+        // Otherwise the Html text is displayed as plain text.
+        HtmlModule html_init;
+
         try
         {
             return program.OnPgmInit();
@@ -186,19 +218,57 @@ struct APP_SINGLE_TOP : public wxApp
         return ret;
     }
 
+
+#if defined( DEBUG )
+    /**
+     * Override main loop exception handling on debug builds.
+     *
+     * It can be painfully difficult to debug exceptions that happen in wxUpdateUIEvent
+     * handlers.  The override provides a bit more useful information about the exception
+     * and a breakpoint can be set to pin point the event where the exception was thrown.
+     */
+    virtual bool OnExceptionInMainLoop() override
+    {
+        try
+        {
+            throw;
+        }
+        catch( const std::exception& e )
+        {
+            wxLogError( "Unhandled exception class: %s  what: %s",
+                        FROM_UTF8( typeid(e).name() ),
+                        FROM_UTF8( e.what() ) );
+        }
+        catch( const IO_ERROR& ioe )
+        {
+            wxLogError( ioe.What() );
+        }
+        catch(...)
+        {
+            wxLogError( "Unhandled exception of unknown type" );
+        }
+
+        return false;   // continue on. Return false to abort program
+    }
+#endif
+
+#ifdef __WXMAC__
+
     /**
      * Function MacOpenFile
      * is specific to MacOSX (not used under Linux or Windows).
      * MacOSX requires it for file association.
      * @see http://wiki.wxwidgets.org/WxMac-specific_topics
      */
-    void MacOpenFile( const wxString& aFileName )   // overload wxApp virtual
+    void MacOpenFile( const wxString& aFileName ) override
     {
         Pgm().MacOpenFile( aFileName );
     }
+
+#endif
 };
 
-IMPLEMENT_APP( APP_SINGLE_TOP );
+IMPLEMENT_APP( APP_SINGLE_TOP )
 
 
 bool PGM_SINGLE_TOP::OnPgmInit()
@@ -235,19 +305,60 @@ bool PGM_SINGLE_TOP::OnPgmInit()
     Kiway.set_kiface( KIWAY::KifaceType( TOP_FRAME ), kiface );
 #endif
 
+    // Open project or file specified on the command line:
+    int argc = App().argc;
+
+    int args_offset = 1;
+
+    FRAME_T appType = TOP_FRAME;
+
+    const struct
+    {
+        wxString name;
+        FRAME_T type;
+    } frameTypes[] = {
+        { wxT( "pcb" ), FRAME_PCB },
+        { wxT( "fpedit" ), FRAME_PCB_MODULE_EDITOR },
+        { wxT( "" ), FRAME_T_COUNT }
+    };
+
+    if( argc > 2 )
+    {
+        if( App().argv[1] == "--frame" )
+        {
+            wxString appName = App().argv[2];
+            appType = FRAME_T_COUNT;
+
+            for( int i = 0; frameTypes[i].type != FRAME_T_COUNT; i++ )
+            {
+                const auto& frame = frameTypes[i];
+                if(frame.name == appName)
+                {
+                    appType = frame.type;
+                }
+            }
+            args_offset += 2;
+
+            if( appType == FRAME_T_COUNT )
+            {
+                wxLogError( wxT( "Unknown frame: %s" ), appName );
+                return false;
+            }
+        }
+    }
+
+
     // Use KIWAY to create a top window, which registers its existence also.
     // "TOP_FRAME" is a macro that is passed on compiler command line from CMake,
     // and is one of the types in FRAME_T.
-    KIWAY_PLAYER* frame = Kiway.Player( TOP_FRAME, true );
+    KIWAY_PLAYER* frame = Kiway.Player( appType, true );
 
     Kiway.SetTop( frame );
 
     App().SetTopWindow( frame );      // wxApp gets a face.
 
-    // Open project or file specified on the command line:
-    int argc = App().argc;
 
-    if( argc > 1 )
+    if( argc > args_offset )
     {
         /*
             gerbview handles multiple project data files, i.e. gerber files on
@@ -260,16 +371,16 @@ bool PGM_SINGLE_TOP::OnPgmInit()
 
         std::vector<wxString>   argSet;
 
-        for( int i=1;  i<argc;  ++i )
+        for( int i = args_offset;  i < argc;  ++i )
         {
             argSet.push_back( App().argv[i] );
         }
 
-        // special attention to the first argument: argv[1] (==argSet[0])
-        wxFileName argv1( argSet[0] );
-
-        if( argc == 2 )
+        // special attention to a single argument: argv[1] (==argSet[0])
+        if( argc == args_offset + 1 )
         {
+            wxFileName argv1( argSet[0] );
+
 #if defined(PGM_DATA_FILE_EXT)
             // PGM_DATA_FILE_EXT, if present, may be different for each compile,
             // it may come from CMake on the compiler command line, but often does not.

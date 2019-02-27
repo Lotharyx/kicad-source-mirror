@@ -25,9 +25,8 @@
  */
 
 #include <fctsys.h>
-#include <plot_common.h>
-#include <class_sch_screen.h>
-#include <schframe.h>
+#include <plotter.h>
+#include <sch_edit_frame.h>
 #include <base_units.h>
 #include <sch_sheet_path.h>
 #include <project.h>
@@ -104,13 +103,13 @@ void DIALOG_PLOT_SCHEMATIC::createPSFile( bool aPlotAll, bool aPlotFrameRef )
             if( plotOneSheetPS( plotFileName.GetFullPath(), screen, plotPage, plot_offset,
                                 scale, aPlotFrameRef ) )
             {
-                msg.Printf( _( "Plot: '%s' OK.\n" ), GetChars( plotFileName.GetFullPath() ) );
+                msg.Printf( _( "Plot: \"%s\" OK.\n" ), GetChars( plotFileName.GetFullPath() ) );
                 reporter.Report( msg, REPORTER::RPT_ACTION );
             }
             else
             {
                 // Error
-                msg.Printf( _( "Unable to create file '%s'.\n" ),
+                msg.Printf( _( "Unable to create file \"%s\".\n" ),
                             GetChars( plotFileName.GetFullPath() ) );
                 reporter.Report( msg, REPORTER::RPT_ERROR );
             }

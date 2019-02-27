@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2012 NBEE Embedded Systems, Miguel Angel Ajo <miguelangel@nbee.es>
- * Copyright (C) 1992-2012 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,38 +28,42 @@
  */
 
 #include <Python.h>
+#undef HAVE_CLOCK_GETTIME  // macro is defined in Python.h and causes redefine warning
 
 #include <pcbnew_scripting_helpers.h>
 #include <pcbnew.h>
 #include <pcbnew_id.h>
 #include <build_version.h>
 #include <class_board.h>
+#include <class_drawpanel.h>
 #include <kicad_string.h>
 #include <io_mgr.h>
 #include <macros.h>
 #include <stdlib.h>
+#include <pcb_draw_panel_gal.h>
+#include <action_plugin.h>
 
-static PCB_EDIT_FRAME* PcbEditFrame = NULL;
+static PCB_EDIT_FRAME* s_PcbEditFrame = NULL;
 
 BOARD* GetBoard()
 {
-    if( PcbEditFrame )
-        return PcbEditFrame->GetBoard();
+    if( s_PcbEditFrame )
+        return s_PcbEditFrame->GetBoard();
     else
         return NULL;
 }
 
 
-void ScriptingSetPcbEditFrame( PCB_EDIT_FRAME* aPCBEdaFrame )
+void ScriptingSetPcbEditFrame( PCB_EDIT_FRAME* aPcbEditFrame )
 {
-    PcbEditFrame = aPCBEdaFrame;
+    s_PcbEditFrame = aPcbEditFrame;
 }
 
 
 BOARD* LoadBoard( wxString& aFileName )
 {
     if( aFileName.EndsWith( wxT( ".kicad_pcb" ) ) )
-        return LoadBoard( aFileName, IO_MGR::KICAD );
+        return LoadBoard( aFileName, IO_MGR::KICAD_SEXP );
 
     else if( aFileName.EndsWith( wxT( ".brd" ) ) )
         return LoadBoard( aFileName, IO_MGR::LEGACY );
@@ -71,39 +75,87 @@ BOARD* LoadBoard( wxString& aFileName )
 
 BOARD* LoadBoard( wxString& aFileName, IO_MGR::PCB_FILE_T aFormat )
 {
-    return IO_MGR::Load( aFormat, aFileName );
+    BOARD* brd = IO_MGR::Load( aFormat, aFileName );
+
+    if( brd )
+    {
+        brd->BuildConnectivity();
+        brd->BuildListOfNets();
+        brd->SynchronizeNetsAndNetClasses();
+    }
+
+
+    return brd;
 }
 
 
-bool SaveBoard( wxString& aFilename, BOARD* aBoard )
+bool SaveBoard( wxString& aFileName, BOARD* aBoard, IO_MGR::PCB_FILE_T aFormat )
 {
-    return SaveBoard( aFilename, aBoard, IO_MGR::KICAD );
-}
-
-
-bool SaveBoard( wxString& aFileName, BOARD* aBoard,
-                IO_MGR::PCB_FILE_T aFormat )
-{
-    aBoard->m_Status_Pcb &= ~CONNEXION_OK;
+    aBoard->BuildConnectivity();
     aBoard->SynchronizeNetsAndNetClasses();
     aBoard->GetDesignSettings().SetCurrentNetClass( NETCLASS::Default );
 
-#if 0
-    wxString    header;
-    PROPERTIES  props;
-
-    if( aFormat==IO_MGR::LEGACY )
-    {
-        header = wxString::Format(
-            wxT( "PCBNEW-BOARD Version %d date %s\n\n# Created by Pcbnew%s scripting\n\n" ),
-            LEGACY_BOARD_FILE_VERSION, DateAndTime().GetData(),
-            GetBuildVersion().GetData() );
-        props["header"] = header;
-    }
-
-    IO_MGR::Save( aFormat, aFileName, aBoard, &props );
-#else
     IO_MGR::Save( aFormat, aFileName, aBoard, NULL );
-#endif
+
     return true;
+}
+
+
+bool SaveBoard( wxString& aFileName, BOARD* aBoard )
+{
+    return SaveBoard( aFileName, aBoard, IO_MGR::KICAD_SEXP );
+}
+
+
+void Refresh()
+{
+    if( s_PcbEditFrame )
+    {
+        auto board = s_PcbEditFrame->GetBoard();
+        board->BuildConnectivity();
+
+        if( s_PcbEditFrame->IsGalCanvasActive() )
+        {
+            auto gal_canvas = static_cast<PCB_DRAW_PANEL_GAL*>( s_PcbEditFrame->GetGalCanvas() );
+
+            // Reinit everything: this is the easy way to do that
+            s_PcbEditFrame->UseGalCanvas( true );
+            gal_canvas->Refresh();
+        }
+        else
+            // first argument is erase background, second is a wxRect that
+            // defines a reftresh area (all canvas if null)
+            s_PcbEditFrame->GetCanvas()->Refresh( true, NULL );
+    }
+}
+
+
+void WindowZoom( int xl, int yl, int width, int height )
+{
+    EDA_RECT Rect( wxPoint( xl, yl ), wxSize( width, height ) );
+
+    if( s_PcbEditFrame )
+        s_PcbEditFrame->Window_Zoom( Rect );
+}
+
+
+void UpdateUserInterface()
+{
+    if( s_PcbEditFrame )
+        s_PcbEditFrame->UpdateUserInterface();
+}
+
+
+int GetUserUnits()
+{
+    if( s_PcbEditFrame )
+        return s_PcbEditFrame->GetUserUnits();
+
+    return -1;
+}
+
+
+bool IsActionRunning()
+{
+    return ACTION_PLUGINS::IsActionRunning();
 }

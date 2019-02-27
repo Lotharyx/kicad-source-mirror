@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2011 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2011 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,12 +26,10 @@
 #define _LIB_COLLECTORS_H_
 
 
-#include <class_collector.h>
-#include <lib_draw_item.h>
-
+#include <collector.h>
+#include <class_libentry.h>
 
 class LIB_COLLECTOR;
-
 
 class LIB_COLLECTOR_DATA
 {
@@ -75,6 +73,11 @@ public:
      * A scan list for all rotatable schematic items.
      */
     static const KICAD_T RotatableItems[];
+
+    /**
+     * A scan list for all double-clickable library items.
+     */
+    static const KICAD_T DoubleClickItems[];
 
     /**
      * A scan list for all schematic items except pins.
@@ -127,7 +130,7 @@ public:
      * @param aUnit The unit of the items to collect or zero if all units.
      * @param aConvert The convert of the items to collect or zero if all conversions.
      */
-    void Collect( LIB_ITEMS& aItem, const KICAD_T aFilterList[], const wxPoint& aPosition,
+    void Collect( LIB_ITEMS_CONTAINER& aItem, const KICAD_T aFilterList[], const wxPoint& aPosition,
                   int aUnit = 0, int aConvert = 0 );
 };
 

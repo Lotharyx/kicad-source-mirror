@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -64,6 +64,7 @@ class DIMENSION : public BOARD_ITEM
     int         m_Width;        ///< Line width
     int         m_Shape;        ///< Currently always 0.
     EDA_UNITS_T m_Unit;         ///< 0 = inches, 1 = mm
+    bool        m_UseMils;      ///< If inches, use mils.
     int         m_Value;        ///< value of PCB dimensions.
     int         m_Height;       ///< length of feature lines
     TEXTE_PCB   m_Text;
@@ -83,25 +84,30 @@ public:
 
     ~DIMENSION();
 
+    static inline bool ClassOf( const EDA_ITEM* aItem )
+    {
+        return aItem && PCB_DIMENSION_T == aItem->Type();
+    }
+
     void SetValue( int aValue ) { m_Value = aValue; }
 
     int GetValue() const { return m_Value; }
 
-    const wxPoint&  GetPosition() const override;
+    const wxPoint GetPosition() const override;
 
     void            SetPosition( const wxPoint& aPos ) override;
 
     void SetTextSize( const wxSize& aTextSize )
     {
-        m_Text.SetSize( aTextSize );
+        m_Text.SetTextSize( aTextSize );
     }
 
-    void SetLayer( LAYER_ID aLayer ) override;
+    void SetLayer( PCB_LAYER_ID aLayer ) override;
 
     void SetShape( int aShape )         { m_Shape = aShape; }
-    int GetShape() const { return m_Shape; }
+    int GetShape() const                { return m_Shape; }
 
-    int GetWidth() const { return m_Width; }
+    int GetWidth() const                { return m_Width; }
     void SetWidth( int aWidth )         { m_Width = aWidth; }
 
     /**
@@ -173,9 +179,20 @@ public:
     /**
      * Function AdjustDimensionDetails
      * Calculate coordinates of segments used to draw the dimension.
-     * @param aDoNotChangeText (bool) if false, the dimension text is initialized
      */
-    void            AdjustDimensionDetails( bool aDoNotChangeText = false );
+    void AdjustDimensionDetails();
+
+    void GetUnits( EDA_UNITS_T& aUnits, bool& aUseMils ) const
+    {
+        aUnits = m_Unit;
+        aUseMils = m_UseMils;
+    }
+
+    void SetUnits( EDA_UNITS_T aUnits, bool aUseMils )
+    {
+        m_Unit = aUnits;
+        m_UseMils = aUseMils;
+    }
 
     void            SetText( const wxString& NewText );
     const wxString  GetText() const;
@@ -205,13 +222,10 @@ public:
      */
     void            Mirror( const wxPoint& axis_pos );
 
-    void            GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList ) override;
+    void            GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
     bool            HitTest( const wxPoint& aPosition ) const override;
 
-    /** @copydoc BOARD_ITEM::HitTest(const EDA_RECT& aRect,
-     *                               bool aContained = true, int aAccuracy ) const
-     */
     bool HitTest( const EDA_RECT& aRect, bool aContained = true, int aAccuracy = 0 ) const override;
 
     wxString GetClass() const override
@@ -222,14 +236,15 @@ public:
     // Virtual function
     const EDA_RECT    GetBoundingBox() const override;
 
-    wxString    GetSelectMenuText() const override;
+    wxString    GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    BITMAP_DEF GetMenuImage() const override { return add_dimension_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
     EDA_ITEM*   Clone() const override;
 
-    /// @copydoc VIEW_ITEM::ViewBBox()
     virtual const BOX2I ViewBBox() const override;
+
+    virtual void SwapData( BOARD_ITEM* aImage ) override;
 
 #if defined(DEBUG)
     virtual void Show( int nestLevel, std::ostream& os ) const override { ShowDummy( os ); }

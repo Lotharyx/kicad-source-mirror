@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2018 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2012 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
-  * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
+  * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,13 +29,13 @@
  */
 
 #include <fctsys.h>
-#include <PolyLine.h>
 #include <trigo.h>
-#include <wxstruct.h>
 #include <macros.h>
 #include <msgpanel.h>
 #include <base_units.h>
+#include <bitmaps.h>
 
+#include <view/view.h>
 #include <pcbnew.h>
 
 #include <class_board.h>
@@ -45,13 +45,19 @@
 #include <convert_basic_shapes_to_polygon.h>
 
 
-int D_PAD::m_PadSketchModePenSize = 0;      // Pen size used to draw pads in sketch mode
+/**
+ * Helper function
+ * Return a string (to be shown to the user) describing a layer mask.
+ * Useful for showing where is a pad.
+ * The BOARD is needed because layer names are (somewhat) customizable
+ */
+static wxString LayerMaskDescribe( const BOARD* aBoard, LSET aMask );
 
+int D_PAD::m_PadSketchModePenSize = 0;      // Pen size used to draw pads in sketch mode
 
 D_PAD::D_PAD( MODULE* parent ) :
     BOARD_CONNECTED_ITEM( parent, PCB_PAD_T )
 {
-    m_NumPadName          = 0;
     m_Size.x = m_Size.y   = Mils2iu( 60 );  // Default pad size 60 mils.
     m_Drill.x = m_Drill.y = Mils2iu( 30 );  // Default drill size 30 mils.
     m_Orient              = 0;              // Pad rotation in 1/10 degrees.
@@ -63,6 +69,8 @@ D_PAD::D_PAD( MODULE* parent ) :
     }
 
     SetShape( PAD_SHAPE_CIRCLE );                   // Default pad shape is PAD_CIRCLE.
+    SetAnchorPadShape( PAD_SHAPE_CIRCLE );          // Default shape for custom shaped pads
+                                                    // is PAD_CIRCLE.
     SetDrillShape( PAD_DRILL_SHAPE_CIRCLE );        // Default pad drill shape is a circle.
     m_Attribute           = PAD_ATTRIB_STANDARD;    // Default pad type is NORMAL (thru hole)
     m_LocalClearance      = 0;
@@ -75,6 +83,8 @@ D_PAD::D_PAD( MODULE* parent ) :
     m_ZoneConnection      = PAD_ZONE_CONN_INHERITED; // Use parent setting by default
     m_ThermalWidth        = 0;                  // Use parent setting by default
     m_ThermalGap          = 0;                  // Use parent setting by default
+
+    m_customShapeClearanceArea = CUST_PAD_SHAPE_IN_ZONE_OUTLINE;
 
     // Set layers mask to default for a standard thru hole pad.
     m_layerMask           = StandardMask();
@@ -112,7 +122,15 @@ LSET D_PAD::UnplatedHoleMask()
     return saved;
 }
 
-bool D_PAD::IsFlipped()
+
+LSET D_PAD::ApertureMask()
+{
+    static LSET saved = LSET( 1, F_Paste );
+    return saved;
+}
+
+
+bool D_PAD::IsFlipped() const
 {
     if( GetParent() &&  GetParent()->GetLayer() == B_Cu )
         return true;
@@ -151,6 +169,22 @@ int D_PAD::boundingRadius() const
         radius += 1 + KiROUND( EuclideanNorm( wxSize( x - radius, y - radius )));
         break;
 
+    case PAD_SHAPE_CUSTOM:
+        radius = 0;
+
+        for( int cnt = 0; cnt < m_customShapeAsPolygon.OutlineCount(); ++cnt )
+        {
+            const SHAPE_LINE_CHAIN& poly = m_customShapeAsPolygon.COutline( cnt );
+            for( int ii = 0; ii < poly.PointCount(); ++ii )
+            {
+                int dist = KiROUND( poly.CPoint( ii ).EuclideanNorm() );
+                radius = std::max( radius, dist );
+            }
+        }
+
+        radius += 1;
+        break;
+
     default:
         radius = 0;
     }
@@ -169,37 +203,92 @@ int D_PAD::GetRoundRectCornerRadius( const wxSize& aSize ) const
 }
 
 
+void D_PAD::SetRoundRectCornerRadius( double aRadius )
+{
+    int min_r = std::min( m_Size.x, m_Size.y );
+
+    if( min_r > 0 )
+        SetRoundRectRadiusRatio( aRadius / min_r );
+}
+
+
 const EDA_RECT D_PAD::GetBoundingBox() const
 {
     EDA_RECT area;
     wxPoint quadrant1, quadrant2, quadrant3, quadrant4;
-    int x, y, dx, dy;
+    int x, y, r, dx, dy;
+
+    wxPoint center = ShapePos();
+    wxPoint endPoint;
+
+    EDA_RECT endRect;
 
     switch( GetShape() )
     {
     case PAD_SHAPE_CIRCLE:
-        area.SetOrigin( m_Pos );
+        area.SetOrigin( center );
         area.Inflate( m_Size.x / 2 );
         break;
 
     case PAD_SHAPE_OVAL:
-        // Calculate the position of each rounded ent
-        quadrant1.x =  m_Size.x/2;
-        quadrant1.y =  0;
-        quadrant2.x =  0;
-        quadrant2.y =  m_Size.y/2;
+        /* To get the BoundingBox of an oval pad:
+         * a) If the pad is ROUND, see method for PAD_SHAPE_CIRCLE above
+         * OTHERWISE:
+         * b) Construct EDA_RECT for portion between circular ends
+         * c) Rotate that EDA_RECT
+         * d) Add the circular ends to the EDA_RECT
+         */
 
-        RotatePoint( &quadrant1, m_Orient );
-        RotatePoint( &quadrant2, m_Orient );
+        // Test if the shape is circular
+        if( m_Size.x == m_Size.y )
+        {
+            area.SetOrigin( center );
+            area.Inflate( m_Size.x / 2 );
+            break;
+        }
 
-        // Calculate the max position of each end, relative to the pad position
-        // (the min position is symetrical)
-        dx = std::max( std::abs( quadrant1.x ) , std::abs( quadrant2.x )  );
-        dy = std::max( std::abs( quadrant1.y ) , std::abs( quadrant2.y )  );
+        if( m_Size.x > m_Size.y )
+        {
+            // Pad is horizontal
+            dx = ( m_Size.x - m_Size.y ) / 2;
+            dy = m_Size.y / 2;
 
-        // Set the bbox
-        area.SetOrigin( m_Pos );
+            // Location of end-points
+            x = dx;
+            y = 0;
+            r = dy;
+        }
+        else
+        {
+            // Pad is vertical
+            dx = m_Size.x / 2;
+            dy = ( m_Size.y - m_Size.x ) / 2;
+
+            x = 0;
+            y = dy;
+            r = dx;
+        }
+
+        // Construct the center rectangle and rotate
+        area.SetOrigin( center );
         area.Inflate( dx, dy );
+        area = area.GetBoundingBoxRotated( center, m_Orient );
+
+        endPoint = wxPoint( x, y );
+        RotatePoint( &endPoint, m_Orient );
+
+        // Add points at each quadrant of circular regions
+        endRect.SetOrigin( center + endPoint );
+        endRect.Inflate( r );
+
+        area.Merge( endRect );
+
+        endRect.SetSize( 0, 0 );
+        endRect.SetOrigin( center - endPoint );
+        endRect.Inflate( r );
+
+        area.Merge( endRect );
+
         break;
 
     case PAD_SHAPE_RECT:
@@ -217,19 +306,23 @@ const EDA_RECT D_PAD::GetBoundingBox() const
         dy = std::max( std::abs( quadrant1.y ) , std::abs( quadrant2.y )  );
 
         // Set the bbox
-        area.SetOrigin( m_Pos );
+        area.SetOrigin( ShapePos() );
         area.Inflate( dx, dy );
         break;
 
     case PAD_SHAPE_TRAPEZOID:
-        //Use the four corners and track their rotation
+        // Use the four corners and track their rotation
         // (Trapezoids will not be symmetric)
+
         quadrant1.x =  (m_Size.x + m_DeltaSize.y)/2;
         quadrant1.y =  (m_Size.y - m_DeltaSize.x)/2;
+
         quadrant2.x = -(m_Size.x + m_DeltaSize.y)/2;
         quadrant2.y =  (m_Size.y + m_DeltaSize.x)/2;
+
         quadrant3.x = -(m_Size.x - m_DeltaSize.y)/2;
         quadrant3.y = -(m_Size.y + m_DeltaSize.x)/2;
+
         quadrant4.x =  (m_Size.x - m_DeltaSize.y)/2;
         quadrant4.y = -(m_Size.y - m_DeltaSize.x)/2;
 
@@ -242,8 +335,35 @@ const EDA_RECT D_PAD::GetBoundingBox() const
         y  = std::min( quadrant1.y, std::min( quadrant2.y, std::min( quadrant3.y, quadrant4.y) ) );
         dx = std::max( quadrant1.x, std::max( quadrant2.x, std::max( quadrant3.x, quadrant4.x) ) );
         dy = std::max( quadrant1.y, std::max( quadrant2.y, std::max( quadrant3.y, quadrant4.y) ) );
-        area.SetOrigin( m_Pos.x+x, m_Pos.y+y );
+
+        area.SetOrigin( ShapePos().x + x, ShapePos().y + y );
         area.SetSize( dx-x, dy-y );
+        break;
+
+    case PAD_SHAPE_CUSTOM:
+        {
+        SHAPE_POLY_SET polySet( m_customShapeAsPolygon );
+        // Move shape to actual position
+        CustomShapeAsPolygonToBoardPosition( &polySet, GetPosition(), GetOrientation() );
+        quadrant1 = m_Pos;
+        quadrant2 = m_Pos;
+
+        for( int cnt = 0; cnt < polySet.OutlineCount(); ++cnt )
+        {
+            const SHAPE_LINE_CHAIN& poly = polySet.COutline( cnt );
+
+            for( int ii = 0; ii < poly.PointCount(); ++ii )
+            {
+                quadrant1.x = std::min( quadrant1.x, poly.CPoint( ii ).x );
+                quadrant1.y = std::min( quadrant1.y, poly.CPoint( ii ).y );
+                quadrant2.x = std::max( quadrant2.x, poly.CPoint( ii ).x );
+                quadrant2.y = std::max( quadrant2.y, poly.CPoint( ii ).y );
+            }
+        }
+
+        area.SetOrigin( quadrant1 );
+        area.SetEnd( quadrant2 );
+        }
         break;
 
     default:
@@ -319,7 +439,79 @@ void D_PAD::Flip( const wxPoint& aCentre )
     // So the copper layers count is not taken in account
     SetLayerSet( FlipLayerMask( m_layerMask ) );
 
+    // Flip the basic shapes, in custom pads
+    FlipPrimitives();
+
     // m_boundingRadius = -1;  the shape has not been changed
+}
+
+
+// Flip the basic shapes, in custom pads
+void D_PAD::FlipPrimitives()
+{
+    // Flip custom shapes
+    for( unsigned ii = 0; ii < m_basicShapes.size(); ++ii )
+    {
+        PAD_CS_PRIMITIVE& primitive = m_basicShapes[ii];
+
+        MIRROR( primitive.m_Start.y, 0 );
+        MIRROR( primitive.m_End.y, 0 );
+        primitive.m_ArcAngle = -primitive.m_ArcAngle;
+
+        switch( primitive.m_Shape )
+        {
+        case S_POLYGON:         // polygon
+            for( unsigned jj = 0; jj < primitive.m_Poly.size(); jj++ )
+                MIRROR( primitive.m_Poly[jj].y, 0 );
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    // Flip local coordinates in merged Polygon
+    for( int cnt = 0; cnt < m_customShapeAsPolygon.OutlineCount(); ++cnt )
+    {
+        SHAPE_LINE_CHAIN& poly = m_customShapeAsPolygon.Outline( cnt );
+
+        for( int ii = 0; ii < poly.PointCount(); ++ii )
+            MIRROR( poly.Point( ii ).y, 0 );
+    }
+}
+
+
+void D_PAD::MirrorXPrimitives( int aX )
+{
+    // Mirror custom shapes
+    for( unsigned ii = 0; ii < m_basicShapes.size(); ++ii )
+    {
+        PAD_CS_PRIMITIVE& primitive = m_basicShapes[ii];
+
+        MIRROR( primitive.m_Start.x, aX );
+        MIRROR( primitive.m_End.x, aX );
+        primitive.m_ArcAngle = -primitive.m_ArcAngle;
+
+        switch( primitive.m_Shape )
+        {
+        case S_POLYGON:         // polygon
+            for( unsigned jj = 0; jj < primitive.m_Poly.size(); jj++ )
+                MIRROR( primitive.m_Poly[jj].x, aX );
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    // Mirror the local coordinates in merged Polygon
+    for( int cnt = 0; cnt < m_customShapeAsPolygon.OutlineCount(); ++cnt )
+    {
+        SHAPE_LINE_CHAIN& poly = m_customShapeAsPolygon.Outline( cnt );
+
+        for( int ii = 0; ii < poly.PointCount(); ++ii )
+            MIRROR( poly.Point( ii ).x, aX );
+    }
 }
 
 
@@ -355,7 +547,7 @@ void D_PAD::AppendConfigs( PARAM_CFG_ARRAY* aResult )
 
 
 // Returns the position of the pad.
-const wxPoint D_PAD::ShapePos() const
+wxPoint D_PAD::ShapePos() const
 {
     if( m_Offset.x == 0 && m_Offset.y == 0 )
         return m_Pos;
@@ -370,54 +562,12 @@ const wxPoint D_PAD::ShapePos() const
 }
 
 
-const wxString D_PAD::GetPadName() const
-{
-    wxString name;
-
-    StringPadName( name );
-    return name;
-}
-
-
-void D_PAD::StringPadName( wxString& text ) const
-{
-    text.Empty();
-
-    for( int ii = 0;  ii < PADNAMEZ && m_Padname[ii];  ii++ )
-    {
-        // m_Padname is 8 bit KiCad font junk, do not sign extend
-        text.Append( (unsigned char) m_Padname[ii] );
-    }
-}
-
-
-// Change pad name
-void D_PAD::SetPadName( const wxString& name )
-{
-    int ii, len;
-
-    len = name.Length();
-
-    if( len > PADNAMEZ )
-        len = PADNAMEZ;
-
-    // m_Padname[] is not UTF8, it is an 8 bit character that matches the KiCad font,
-    // so only copy the lower 8 bits of each character.
-
-    for( ii = 0; ii < len; ii++ )
-        m_Padname[ii] = (char) name.GetChar( ii );
-
-    for( ii = len; ii < PADNAMEZ; ii++ )
-        m_Padname[ii] = '\0';
-}
-
-
 bool D_PAD::IncrementPadName( bool aSkipUnconnectable, bool aFillSequenceGaps )
 {
     bool skip = aSkipUnconnectable && ( GetAttribute() == PAD_ATTRIB_HOLE_NOT_PLATED );
 
     if( !skip )
-        SetPadName( GetParent()->GetNextPadName( aFillSequenceGaps ) );
+        SetName( GetParent()->GetNextPadName( aFillSequenceGaps ) );
 
     return !skip;
 }
@@ -476,7 +626,17 @@ int D_PAD::GetClearance( BOARD_CONNECTED_ITEM* aItem ) const
 
 int D_PAD::GetSolderMaskMargin() const
 {
+    // The pad inherits the margin only to calculate a default shape,
+    // therefore only if it is also a copper layer
+    // Pads defined only on mask layers (and perhaps on other tech layers) use the shape
+    // defined by the pad settings only
+    bool isOnCopperLayer = ( m_layerMask & LSET::AllCuMask() ).any();
+
+    if( !isOnCopperLayer )
+        return 0;
+
     int     margin = m_LocalSolderMaskMargin;
+
     MODULE* module = GetParent();
 
     if( module )
@@ -490,7 +650,10 @@ int D_PAD::GetSolderMaskMargin() const
         if( margin == 0 )
         {
             BOARD* brd = GetBoard();
-            margin = brd->GetDesignSettings().m_SolderMaskMargin;
+            if( brd )
+            {
+                margin = brd->GetDesignSettings().m_SolderMaskMargin;
+            }
         }
     }
 
@@ -509,8 +672,18 @@ int D_PAD::GetSolderMaskMargin() const
 
 wxSize D_PAD::GetSolderPasteMargin() const
 {
+    // The pad inherits the margin only to calculate a default shape,
+    // therefore only if it is also a copper layer.
+    // Pads defined only on mask layers (and perhaps on other tech layers) use the shape
+    // defined by the pad settings only
+    bool isOnCopperLayer = ( m_layerMask & LSET::AllCuMask() ).any();
+
+    if( !isOnCopperLayer )
+        return wxSize( 0, 0 );
+
     int     margin = m_LocalSolderPasteMargin;
     double  mratio = m_LocalSolderPasteMarginRatio;
+
     MODULE* module = GetParent();
 
     if( module )
@@ -518,15 +691,17 @@ wxSize D_PAD::GetSolderPasteMargin() const
         if( margin == 0 )
             margin = module->GetLocalSolderPasteMargin();
 
-        BOARD * brd = GetBoard();
+        auto brd = GetBoard();
 
-        if( margin == 0 )
-            margin = brd->GetDesignSettings().m_SolderPasteMargin;
+        if( margin == 0 && brd )
+        {
+                margin = brd->GetDesignSettings().m_SolderPasteMargin;
+        }
 
         if( mratio == 0.0 )
             mratio = module->GetLocalSolderPasteMarginRatio();
 
-        if( mratio == 0.0 )
+        if( mratio == 0.0 && brd )
         {
             mratio = brd->GetDesignSettings().m_SolderPasteMarginRatio;
         }
@@ -580,30 +755,21 @@ int D_PAD::GetThermalGap() const
 }
 
 
-void D_PAD::GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM>& aList )
+void D_PAD::GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM>& aList )
 {
     MODULE*     module;
-    wxString    Line;
+    wxString    msg;
     BOARD*      board;
 
     module = (MODULE*) m_Parent;
 
     if( module )
     {
-        wxString msg = module->GetReference();
-        aList.push_back( MSG_PANEL_ITEM( _( "Footprint" ), msg, DARKCYAN ) );
-        StringPadName( Line );
-        aList.push_back( MSG_PANEL_ITEM( _( "Pad" ), Line, BROWN ) );
+        aList.push_back( MSG_PANEL_ITEM( _( "Footprint" ), module->GetReference(), DARKCYAN ) );
+        aList.push_back( MSG_PANEL_ITEM( _( "Pad" ), m_name, BROWN ) );
     }
 
     aList.push_back( MSG_PANEL_ITEM( _( "Net" ), GetNetname(), DARKCYAN ) );
-
-    /* For test and debug only: display m_physical_connexion and
-     * m_logical_connexion */
-#if 1   // Used only to debug connectivity calculations
-    Line.Printf( wxT( "%d-%d-%d " ), GetSubRatsnest(), GetSubNet(), GetZoneSubNet() );
-    aList.push_back( MSG_PANEL_ITEM( wxT( "L-P-Z" ), Line, DARKGREEN ) );
-#endif
 
     board = GetBoard();
 
@@ -612,45 +778,46 @@ void D_PAD::GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM>& aList )
 
     aList.push_back( MSG_PANEL_ITEM( ShowPadShape(), ShowPadAttr(), DARKGREEN ) );
 
-    Line = ::CoordinateToString( m_Size.x );
-    aList.push_back( MSG_PANEL_ITEM( _( "Width" ), Line, RED ) );
+    msg = MessageTextFromValue( aUnits, m_Size.x, true );
+    aList.push_back( MSG_PANEL_ITEM( _( "Width" ), msg, RED ) );
 
-    Line = ::CoordinateToString( m_Size.y );
-    aList.push_back( MSG_PANEL_ITEM( _( "Height" ), Line, RED ) );
+    msg = MessageTextFromValue( aUnits, m_Size.y, true );
+    aList.push_back( MSG_PANEL_ITEM( _( "Height" ), msg, RED ) );
 
-    Line = ::CoordinateToString( (unsigned) m_Drill.x );
+    msg = MessageTextFromValue( aUnits, m_Drill.x, true );
 
     if( GetDrillShape() == PAD_DRILL_SHAPE_CIRCLE )
     {
-        aList.push_back( MSG_PANEL_ITEM( _( "Drill" ), Line, RED ) );
+        aList.push_back( MSG_PANEL_ITEM( _( "Drill" ), msg, RED ) );
     }
     else
     {
-        Line = ::CoordinateToString( (unsigned) m_Drill.x );
-        wxString msg;
-        msg = ::CoordinateToString( (unsigned) m_Drill.y );
-        Line += wxT( "/" ) + msg;
-        aList.push_back( MSG_PANEL_ITEM( _( "Drill X / Y" ), Line, RED ) );
+        msg = MessageTextFromValue( aUnits, m_Drill.x, true )
+               + wxT( "/" )
+               + MessageTextFromValue( aUnits, m_Drill.y, true );
+        aList.push_back( MSG_PANEL_ITEM( _( "Drill X / Y" ), msg, RED ) );
     }
 
     double module_orient_degrees = module ? module->GetOrientationDegrees() : 0;
 
     if( module_orient_degrees != 0.0 )
-        Line.Printf( wxT( "%3.1f(+%3.1f)" ),
-                     GetOrientationDegrees() - module_orient_degrees,
-                     module_orient_degrees );
+        msg.Printf( wxT( "%3.1f(+%3.1f)" ),
+                    GetOrientationDegrees() - module_orient_degrees,
+                    module_orient_degrees );
     else
-        Line.Printf( wxT( "%3.1f" ), GetOrientationDegrees() );
+        msg.Printf( wxT( "%3.1f" ), GetOrientationDegrees() );
 
-    aList.push_back( MSG_PANEL_ITEM( _( "Angle" ), Line, LIGHTBLUE ) );
+    aList.push_back( MSG_PANEL_ITEM( _( "Angle" ), msg, LIGHTBLUE ) );
 
-    Line = ::CoordinateToString( m_Pos.x ) + wxT( ", " ) + ::CoordinateToString( m_Pos.y );
-    aList.push_back( MSG_PANEL_ITEM( _( "Position" ), Line, LIGHTBLUE ) );
+    msg = MessageTextFromValue( aUnits, m_Pos.x )
+           + wxT( ", " )
+           + MessageTextFromValue( aUnits, m_Pos.y );
+    aList.push_back( MSG_PANEL_ITEM( _( "Position" ), msg, LIGHTBLUE ) );
 
     if( GetPadToDieLength() )
     {
-        Line = ::CoordinateToString( GetPadToDieLength() );
-        aList.push_back( MSG_PANEL_ITEM( _( "Length in package" ), Line, CYAN ) );
+        msg = MessageTextFromValue( aUnits, GetPadToDieLength(), true );
+        aList.push_back( MSG_PANEL_ITEM( _( "Length in package" ), msg, CYAN ) );
     }
 }
 
@@ -688,9 +855,10 @@ void D_PAD::GetOblongDrillGeometry( wxPoint& aStartPoint,
     aEndPoint.y = - delta_cy;
 }
 
+
 bool D_PAD::HitTest( const wxPoint& aPosition ) const
 {
-    int     dx, dy;
+    int dx, dy;
 
     wxPoint shape_pos = ShapePos();
 
@@ -718,6 +886,7 @@ bool D_PAD::HitTest( const wxPoint& aPosition ) const
         wxPoint poly[4];
         BuildPadPolygon( poly, wxSize(0,0), 0 );
         RotatePoint( &delta, -m_Orient );
+
         return TestPointInsidePolygon( poly, 4, delta );
     }
 
@@ -754,7 +923,7 @@ bool D_PAD::HitTest( const wxPoint& aPosition ) const
     {
         // Check for hit in polygon
         SHAPE_POLY_SET outline;
-        const int segmentToCircleCount = 32;
+        const int segmentToCircleCount = ARC_APPROX_SEGMENTS_COUNT_HIGH_DEF;
         TransformRoundRectToPolygon( outline, wxPoint(0,0), GetSize(), m_Orient,
                                  GetRoundRectCornerRadius(), segmentToCircleCount );
 
@@ -762,11 +931,213 @@ bool D_PAD::HitTest( const wxPoint& aPosition ) const
         return TestPointInsidePolygon( (const wxPoint*)&poly.CPoint(0), poly.PointCount(), delta );
     }
         break;
+
+    case PAD_SHAPE_CUSTOM:
+        // Check for hit in polygon
+        RotatePoint( &delta, -m_Orient );
+
+        if( m_customShapeAsPolygon.OutlineCount() )
+        {
+            const SHAPE_LINE_CHAIN& poly = m_customShapeAsPolygon.COutline( 0 );
+            return TestPointInsidePolygon( (const wxPoint*)&poly.CPoint(0), poly.PointCount(), delta );
+        }
+        break;
     }
 
     return false;
 }
 
+
+bool D_PAD::HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy ) const
+{
+    EDA_RECT arect = aRect;
+    arect.Normalize();
+    arect.Inflate( aAccuracy );
+
+    wxPoint shapePos = ShapePos();
+
+    EDA_RECT shapeRect;
+
+    int r;
+
+    EDA_RECT bb = GetBoundingBox();
+
+    wxPoint endCenter;
+    int radius;
+
+    if( !arect.Intersects( bb ) )
+        return false;
+
+    // This covers total containment for all test cases
+    if( arect.Contains( bb ) )
+        return true;
+
+    switch( GetShape() )
+    {
+    case PAD_SHAPE_CIRCLE:
+        return arect.IntersectsCircle( GetPosition(), GetBoundingRadius() );
+
+    case PAD_SHAPE_RECT:
+        shapeRect.SetOrigin( shapePos );
+        shapeRect.Inflate( m_Size.x / 2, m_Size.y / 2 );
+        return arect.Intersects( shapeRect, m_Orient );
+
+    case PAD_SHAPE_OVAL:
+        // Circlular test if dimensions are equal
+        if( m_Size.x == m_Size.y )
+            return arect.IntersectsCircle( shapePos, GetBoundingRadius() );
+
+        shapeRect.SetOrigin( shapePos );
+
+        // Horizontal dimension is greater
+        if( m_Size.x > m_Size.y )
+        {
+            radius = m_Size.y / 2;
+
+            shapeRect.Inflate( m_Size.x / 2 - radius, radius );
+
+            endCenter = wxPoint( m_Size.x / 2 - radius, 0 );
+            RotatePoint( &endCenter, m_Orient );
+
+            // Test circular ends
+            if( arect.IntersectsCircle( shapePos + endCenter, radius ) ||
+                arect.IntersectsCircle( shapePos - endCenter, radius ) )
+            {
+                return true;
+            }
+        }
+        else
+        {
+            radius = m_Size.x / 2;
+
+            shapeRect.Inflate( radius, m_Size.y / 2 - radius );
+
+            endCenter = wxPoint( 0, m_Size.y / 2 - radius );
+            RotatePoint( &endCenter, m_Orient );
+
+            // Test circular ends
+            if( arect.IntersectsCircle( shapePos + endCenter, radius ) ||
+                arect.IntersectsCircle( shapePos - endCenter, radius ) )
+            {
+                return true;
+            }
+        }
+
+        // Test rectangular portion between rounded ends
+        if( arect.Intersects( shapeRect, m_Orient ) )
+        {
+            return true;
+        }
+
+        break;
+
+    case PAD_SHAPE_TRAPEZOID:
+        /* Trapezoid intersection tests:
+         * A) Any points of rect inside trapezoid
+         * B) Any points of trapezoid inside rect
+         * C) Any sides of trapezoid cross rect
+         */
+        {
+
+        wxPoint poly[4];
+        BuildPadPolygon( poly, wxSize( 0, 0 ), 0 );
+
+        wxPoint corners[4];
+
+        corners[0] = wxPoint( arect.GetLeft(),  arect.GetTop() );
+        corners[1] = wxPoint( arect.GetRight(), arect.GetTop() );
+        corners[2] = wxPoint( arect.GetRight(), arect.GetBottom() );
+        corners[3] = wxPoint( arect.GetLeft(),  arect.GetBottom() );
+
+        for( int i=0; i<4; i++ )
+        {
+            RotatePoint( &poly[i], m_Orient );
+            poly[i] += shapePos;
+        }
+
+        for( int ii=0; ii<4; ii++ )
+        {
+            if( TestPointInsidePolygon( poly, 4, corners[ii] ) )
+            {
+                return true;
+            }
+
+            if( arect.Contains( poly[ii] ) )
+            {
+                return true;
+            }
+
+            if( arect.Intersects( poly[ii], poly[(ii+1) % 4] ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
+        }
+
+    case PAD_SHAPE_ROUNDRECT:
+        /* RoundRect intersection can be broken up into simple tests:
+         * a) Test intersection of horizontal rect
+         * b) Test intersection of vertical rect
+         * c) Test intersection of each corner
+         */
+
+
+        r = GetRoundRectCornerRadius();
+
+        /* Test A - intersection of horizontal rect */
+        shapeRect.SetSize( 0, 0 );
+        shapeRect.SetOrigin( shapePos );
+        shapeRect.Inflate( m_Size.x / 2, m_Size.y / 2 - r );
+
+        // Short-circuit test for zero width or height
+        if( shapeRect.GetWidth() > 0 && shapeRect.GetHeight() > 0 &&
+            arect.Intersects( shapeRect, m_Orient ) )
+        {
+            return true;
+        }
+
+        /* Test B - intersection of vertical rect */
+        shapeRect.SetSize( 0, 0 );
+        shapeRect.SetOrigin( shapePos );
+        shapeRect.Inflate( m_Size.x / 2 - r, m_Size.y / 2 );
+
+        // Short-circuit test for zero width or height
+        if( shapeRect.GetWidth() > 0 && shapeRect.GetHeight() > 0 &&
+            arect.Intersects( shapeRect, m_Orient ) )
+        {
+            return true;
+        }
+
+        /* Test C - intersection of each corner */
+
+        endCenter = wxPoint( m_Size.x / 2 - r, m_Size.y / 2 - r );
+        RotatePoint( &endCenter, m_Orient );
+
+        if( arect.IntersectsCircle( shapePos + endCenter, r ) ||
+            arect.IntersectsCircle( shapePos - endCenter, r ) )
+        {
+            return true;
+        }
+
+        endCenter = wxPoint( m_Size.x / 2 - r, -m_Size.y / 2 + r );
+        RotatePoint( &endCenter, m_Orient );
+
+        if( arect.IntersectsCircle( shapePos + endCenter, r ) ||
+            arect.IntersectsCircle( shapePos - endCenter, r ) )
+        {
+            return true;
+        }
+
+        break;
+
+    default:
+        break;
+    }
+
+    return false;
+}
 
 int D_PAD::Compare( const D_PAD* padref, const D_PAD* padcmp )
 {
@@ -827,8 +1198,8 @@ int D_PAD::Compare( const D_PAD* padref, const D_PAD* padcmp )
 void D_PAD::Rotate( const wxPoint& aRotCentre, double aAngle )
 {
     RotatePoint( &m_Pos, aRotCentre, aAngle );
-    m_Orient += aAngle;
-    NORMALIZE_ANGLE_360( m_Orient );
+
+    m_Orient = NormalizeAngle360Min( m_Orient + aAngle );
 
     SetLocalCoord();
 }
@@ -852,6 +1223,9 @@ wxString D_PAD::ShowPadShape() const
 
     case PAD_SHAPE_ROUNDRECT:
         return _( "Roundrect" );
+
+    case PAD_SHAPE_CUSTOM:
+        return _( "CustomShape" );
 
     default:
         return wxT( "???" );
@@ -881,26 +1255,27 @@ wxString D_PAD::ShowPadAttr() const
 }
 
 
-wxString D_PAD::GetSelectMenuText() const
+wxString D_PAD::GetSelectMenuText( EDA_UNITS_T aUnits ) const
 {
-    wxString text;
-    wxString padlayers( LayerMaskDescribe( GetBoard(), m_layerMask ) );
-    wxString padname( GetPadName() );
-
-    if( padname.IsEmpty() )
+    if( GetName().IsEmpty() )
     {
-        text.Printf( _( "Pad on %s of %s" ),
-                     GetChars( padlayers ),
-                     GetChars(GetParent()->GetReference() ) );
+        return wxString::Format( _( "Pad of %s on %s" ),
+                                 GetParent()->GetReference(),
+                                 LayerMaskDescribe( GetBoard(), m_layerMask ) );
     }
     else
     {
-        text.Printf( _( "Pad %s on %s of %s" ),
-                     GetChars(GetPadName() ), GetChars( padlayers ),
-                     GetChars(GetParent()->GetReference() ) );
+        return wxString::Format( _( "Pad %s of %s on %s" ),
+                                 GetName(),
+                                 GetParent()->GetReference(),
+                                 LayerMaskDescribe( GetBoard(), m_layerMask ) );
     }
+}
 
-    return text;
+
+BITMAP_DEF D_PAD::GetMenuImage() const
+{
+    return pad_xpm;
 }
 
 
@@ -910,37 +1285,47 @@ EDA_ITEM* D_PAD::Clone() const
 }
 
 
+bool D_PAD::PadShouldBeNPTH() const
+{
+    return( m_Attribute == PAD_ATTRIB_STANDARD
+            && m_Drill.x >= m_Size.x && m_Drill.y >= m_Size.y );
+}
+
+
 void D_PAD::ViewGetLayers( int aLayers[], int& aCount ) const
 {
     aCount = 0;
 
-    // These types of pads contain a hole
-    if( m_Attribute == PAD_ATTRIB_STANDARD || m_Attribute == PAD_ATTRIB_HOLE_NOT_PLATED )
-        aLayers[aCount++] = ITEM_GAL_LAYER( PADS_HOLES_VISIBLE );
+    // These 2 types of pads contain a hole
+    if( m_Attribute == PAD_ATTRIB_STANDARD )
+        aLayers[aCount++] = LAYER_PADS_PLATEDHOLES;
+
+    if( m_Attribute == PAD_ATTRIB_HOLE_NOT_PLATED )
+        aLayers[aCount++] = LAYER_NON_PLATEDHOLES;
 
     if( IsOnLayer( F_Cu ) && IsOnLayer( B_Cu ) )
     {
         // Multi layer pad
-        aLayers[aCount++] = ITEM_GAL_LAYER( PADS_VISIBLE );
-        aLayers[aCount++] = NETNAMES_GAL_LAYER( PADS_NETNAMES_VISIBLE );
+        aLayers[aCount++] = LAYER_PADS_TH;
+        aLayers[aCount++] = LAYER_PADS_NETNAMES;
     }
     else if( IsOnLayer( F_Cu ) )
     {
-        aLayers[aCount++] = ITEM_GAL_LAYER( PAD_FR_VISIBLE );
-        aLayers[aCount++] = NETNAMES_GAL_LAYER( PAD_FR_NETNAMES_VISIBLE );
+        aLayers[aCount++] = LAYER_PAD_FR;
+        aLayers[aCount++] = LAYER_PAD_FR_NETNAMES;
     }
     else if( IsOnLayer( B_Cu ) )
     {
-        aLayers[aCount++] = ITEM_GAL_LAYER( PAD_BK_VISIBLE );
-        aLayers[aCount++] = NETNAMES_GAL_LAYER( PAD_BK_NETNAMES_VISIBLE );
+        aLayers[aCount++] = LAYER_PAD_BK;
+        aLayers[aCount++] = LAYER_PAD_BK_NETNAMES;
     }
 
     // Check non-copper layers. This list should include all the layers that the
     // footprint editor allows a pad to be placed on.
-    static const LAYER_ID layers_mech[] = { F_Mask, B_Mask, F_Paste, B_Paste,
+    static const PCB_LAYER_ID layers_mech[] = { F_Mask, B_Mask, F_Paste, B_Paste,
         F_Adhes, B_Adhes, F_SilkS, B_SilkS, Dwgs_User, Eco1_User, Eco2_User };
 
-    for( LAYER_ID each_layer : layers_mech )
+    for( PCB_LAYER_ID each_layer : layers_mech )
     {
         if( IsOnLayer( each_layer ) )
             aLayers[aCount++] = each_layer;
@@ -952,24 +1337,53 @@ void D_PAD::ViewGetLayers( int aLayers[], int& aCount ) const
         wxString msg;
         msg.Printf( wxT( "footprint %s, pad %s: could not find valid layer for pad" ),
                 GetParent() ? GetParent()->GetReference() : "<null>",
-                GetPadName().IsEmpty() ? "(unnamed)" : GetPadName() );
+                GetName().IsEmpty() ? "(unnamed)" : GetName() );
         wxLogWarning( msg );
     }
 #endif
 }
 
 
-unsigned int D_PAD::ViewGetLOD( int aLayer ) const
+unsigned int D_PAD::ViewGetLOD( int aLayer, KIGFX::VIEW* aView ) const
 {
+    if( aView->GetPrintMode() > 0 )  // In printing mode the pad is always drawable
+        return 0;
+
+    const int HIDE = std::numeric_limits<unsigned int>::max();
+    BOARD* board = GetBoard();
+
+    // Handle Render tab switches
+    if( ( GetAttribute() == PAD_ATTRIB_STANDARD || GetAttribute() == PAD_ATTRIB_HOLE_NOT_PLATED )
+         && !aView->IsLayerVisible( LAYER_PADS_TH ) )
+        return HIDE;
+
+    if( !IsFlipped() && !aView->IsLayerVisible( LAYER_MOD_FR ) )
+        return HIDE;
+
+    if( IsFlipped() && !aView->IsLayerVisible( LAYER_MOD_BK ) )
+        return HIDE;
+
+    if( IsFrontLayer( ( PCB_LAYER_ID )aLayer ) && !aView->IsLayerVisible( LAYER_PAD_FR ) )
+        return HIDE;
+
+    if( IsBackLayer( ( PCB_LAYER_ID )aLayer ) && !aView->IsLayerVisible( LAYER_PAD_BK ) )
+        return HIDE;
+
+    // Only draw the pad if at least one of the layers it crosses is being displayed
+    if( board && !( board->GetVisibleLayers() & GetLayerSet() ).any() )
+        return HIDE;
+
     // Netnames will be shown only if zoom is appropriate
     if( IsNetnameLayer( aLayer ) )
     {
-        // Pad sizes can be zero briefly when someone is typing a number like "0.5" in the pad properties dialog.
-        // Fail gracefully if this happens.
-        if( ( m_Size.x == 0 ) && ( m_Size.y == 0 ) )
-            return UINT_MAX;
+        int divisor = std::max( m_Size.x, m_Size.y );
 
-        return ( Millimeter2iu( 100 ) / std::max( m_Size.x, m_Size.y ) );
+        // Pad sizes can be zero briefly when someone is typing a number like "0.5"
+        // in the pad properties dialog
+        if( divisor == 0 )
+            return HIDE;
+
+        return ( Millimeter2iu( 10 ) / divisor );
     }
 
     // Other layers are shown without any conditions
@@ -990,4 +1404,115 @@ const BOX2I D_PAD::ViewBBox() const
 
     return BOX2I( VECTOR2I( bbox.GetOrigin() ) - VECTOR2I( xMargin, yMargin ),
                   VECTOR2I( bbox.GetSize() ) + VECTOR2I( 2 * xMargin, 2 * yMargin ) );
+}
+
+
+wxString LayerMaskDescribe( const BOARD *aBoard, LSET aMask )
+{
+    // Try to be smart and useful.  Check all copper first.
+    if( aMask[F_Cu] && aMask[B_Cu] )
+        return _( "All copper layers" );
+
+    // Check for copper.
+    auto layer = aBoard->GetEnabledLayers().AllCuMask() & aMask;
+
+    for( int i = 0; i < 2; i++ )
+    {
+        for( int bit = PCBNEW_LAYER_ID_START; bit < PCB_LAYER_ID_COUNT; ++bit )
+        {
+            if( layer[ bit ] )
+            {
+                wxString layerInfo = aBoard->GetLayerName( static_cast<PCB_LAYER_ID>( bit ) );
+
+                if( aMask.count() > 1 )
+                    layerInfo << _( " and others" );
+
+                return layerInfo;
+            }
+        }
+
+        // No copper; check for technicals.
+        layer = aBoard->GetEnabledLayers().AllTechMask() & aMask;
+    }
+
+    // No copper, no technicals: no layer
+    return _( "no layers" );
+}
+
+
+void D_PAD::ImportSettingsFromMaster( const D_PAD& aMasterPad )
+{
+    SetShape( aMasterPad.GetShape() );
+    SetLayerSet( aMasterPad.GetLayerSet() );
+    SetAttribute( aMasterPad.GetAttribute() );
+
+    // The pad orientation, for historical reasons is the
+    // pad rotation + parent rotation.
+    // So we have to manage this parent rotation
+    double pad_rot = aMasterPad.GetOrientation();
+
+    if( aMasterPad.GetParent() )
+        pad_rot -= aMasterPad.GetParent()->GetOrientation();
+
+    if( GetParent() )
+        pad_rot += GetParent()->GetOrientation();
+
+    SetOrientation( pad_rot );
+
+    SetSize( aMasterPad.GetSize() );
+    SetDelta( wxSize( 0, 0 ) );
+    SetOffset( aMasterPad.GetOffset() );
+    SetDrillSize( aMasterPad.GetDrillSize() );
+    SetDrillShape( aMasterPad.GetDrillShape() );
+    SetRoundRectRadiusRatio( aMasterPad.GetRoundRectRadiusRatio() );
+
+    switch( aMasterPad.GetShape() )
+    {
+    case PAD_SHAPE_TRAPEZOID:
+        SetDelta( aMasterPad.GetDelta() );
+        break;
+
+    case PAD_SHAPE_CIRCLE:
+        // ensure size.y == size.x
+        SetSize( wxSize( GetSize().x, GetSize().x ) );
+        break;
+
+    default:
+        ;
+    }
+
+    switch( aMasterPad.GetAttribute() )
+    {
+    case PAD_ATTRIB_SMD:
+    case PAD_ATTRIB_CONN:
+        // These pads do not have hole (they are expected to be only on one
+        // external copper layer)
+        SetDrillSize( wxSize( 0, 0 ) );
+        break;
+
+    default:
+        ;
+    }
+
+    // copy also local settings:
+    SetLocalClearance( aMasterPad.GetLocalClearance() );
+    SetLocalSolderMaskMargin( aMasterPad.GetLocalSolderMaskMargin() );
+    SetLocalSolderPasteMargin( aMasterPad.GetLocalSolderPasteMargin() );
+    SetLocalSolderPasteMarginRatio( aMasterPad.GetLocalSolderPasteMarginRatio() );
+
+    SetZoneConnection( aMasterPad.GetZoneConnection() );
+    SetThermalWidth( aMasterPad.GetThermalWidth() );
+    SetThermalGap( aMasterPad.GetThermalGap() );
+
+    // Add or remove custom pad shapes:
+    SetPrimitives( aMasterPad.GetPrimitives() );
+    SetAnchorPadShape( aMasterPad.GetAnchorPadShape() );
+    MergePrimitivesAsPolygon();
+}
+
+void D_PAD::SwapData( BOARD_ITEM* aImage )
+{
+    assert( aImage->Type() == PCB_PAD_T );
+
+    std::swap( *((MODULE*) this), *((MODULE*) aImage) );
 }

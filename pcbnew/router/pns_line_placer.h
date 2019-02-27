@@ -1,7 +1,7 @@
 /*
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
- * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2013-2017 CERN
  * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
@@ -81,7 +81,7 @@ public:
      * result is violating design rules - in such case, the track is only committed
      * if Settings.CanViolateDRC() is on.
      */
-    bool FixRoute( const VECTOR2I& aP, ITEM* aEndItem ) override;
+    bool FixRoute( const VECTOR2I& aP, ITEM* aEndItem, bool aForceFinish ) override;
 
     /**
      * Function ToggleVia()
@@ -189,6 +189,14 @@ public:
 
     LOGGER* Logger() override;
 
+    /**
+     * Function SplitAdjacentSegments()
+     *
+     * Checks if point aP lies on segment aSeg. If so, splits the segment in two,
+     * forming a joint at aP and stores updated topology in node aNode.
+     */
+    bool SplitAdjacentSegments( NODE* aNode, ITEM* aSeg, const VECTOR2I& aP );
+
 
 private:
     /**
@@ -233,14 +241,6 @@ private:
      * Used by posture switching mechanism.
      */
     void setInitialDirection( const DIRECTION_45& aDirection );
-
-    /**
-     * Function splitAdjacentSegments()
-     *
-     * Checks if point aP lies on segment aSeg. If so, splits the segment in two,
-     * forming a joint at aP and stores updated topology in node aNode.
-     */
-    void splitAdjacentSegments( NODE* aNode, ITEM* aSeg, const VECTOR2I& aP );
 
     /**
      * Function removeLoops()
@@ -335,6 +335,11 @@ private:
      */
     void routeStep( const VECTOR2I& aP );
 
+    const LINE reduceToNearestObstacle( const LINE& aOriginalLine );
+
+    bool rhStopAtNearestObstacle( const VECTOR2I& aP, LINE& aNewHead );
+
+
     ///> route step, walkaround mode
     bool rhWalkOnly( const VECTOR2I& aP, LINE& aNewHead);
 
@@ -346,7 +351,7 @@ private:
 
     const VIA makeVia( const VECTOR2I& aP );
 
-    bool buildInitialLine( const VECTOR2I& aP, LINE& aHead );
+    bool buildInitialLine( const VECTOR2I& aP, LINE& aHead, bool aInvertPosture = false );
 
     ///> current routing direction
     DIRECTION_45 m_direction;

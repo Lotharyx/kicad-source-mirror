@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2012 Torsten Hueter, torstenhtr <at> gmx.de
  * Copyright (C) 2012 Kicad Developers, see change_log.txt for contributors.
- * Copyright (C) 2013-2016 CERN
+ * Copyright (C) 2013-2017 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * Graphics Abstraction Layer (GAL) for OpenGL
@@ -31,16 +31,16 @@
 
 // GAL imports
 #include <gal/graphics_abstraction_layer.h>
+#include <gal/gal_display_options.h>
 #include <gal/opengl/shader.h>
 #include <gal/opengl/vertex_manager.h>
 #include <gal/opengl/vertex_item.h>
 #include <gal/opengl/cached_container.h>
 #include <gal/opengl/noncached_container.h>
 #include <gal/opengl/opengl_compositor.h>
+#include <gal/hidpi_gl_canvas.h>
 
-#include <wx/glcanvas.h>
-
-#include <map>
+#include <unordered_map>
 #include <boost/smart_ptr/shared_array.hpp>
 #include <memory>
 
@@ -48,10 +48,12 @@
 #define CALLBACK
 #endif
 
+struct bitmap_glyph;
+
 namespace KIGFX
 {
 class SHADER;
-
+class GL_BITMAP_CACHE;
 
 /**
  * @brief Class OpenGL_GAL is the OpenGL implementation of the Graphics Abstraction Layer.
@@ -60,7 +62,7 @@ class SHADER;
  * and quads. The purpose is to provide a fast graphics interface, that takes advantage of modern
  * graphics card GPUs. All methods here benefit thus from the hardware acceleration.
  */
-class OPENGL_GAL : public GAL, public wxGLCanvas
+class OPENGL_GAL : public GAL, public HIDPI_GL_CANVAS
 {
 public:
     /**
@@ -78,34 +80,30 @@ public:
      *
      * @param aName is the name of this window for use by wxWindow::FindWindowByName()
      */
-    OPENGL_GAL( wxWindow* aParent, wxEvtHandler* aMouseListener = NULL,
-                wxEvtHandler* aPaintListener = NULL, const wxString& aName = wxT( "GLCanvas" ) );
+    OPENGL_GAL( GAL_DISPLAY_OPTIONS& aDisplayOptions, wxWindow* aParent,
+                wxEvtHandler* aMouseListener = nullptr, wxEvtHandler* aPaintListener = nullptr,
+                const wxString& aName = wxT( "GLCanvas" ) );
 
     virtual ~OPENGL_GAL();
 
+    virtual bool IsOpenGlEngine() override { return true; }
+
     /// @copydoc GAL::IsInitialized()
-    virtual bool IsInitialized() const override { return IsShownOnScreen(); }
+    virtual bool IsInitialized() const override
+    {
+        // is*Initialized flags, but it is enough for OpenGL to show up
+        return IsShownOnScreen() && !GetClientRect().IsEmpty();
+    }
 
     ///> @copydoc GAL::IsVisible()
-    bool IsVisible() const override {
-        return IsShownOnScreen();
+    bool IsVisible() const override
+    {
+        return IsShownOnScreen() && !GetClientRect().IsEmpty();
     }
 
     // ---------------
     // Drawing methods
     // ---------------
-
-    /// @copydoc GAL::BeginDrawing()
-    virtual void BeginDrawing() override;
-
-    /// @copydoc GAL::EndDrawing()
-    virtual void EndDrawing() override;
-
-    /// @copydoc GAL::BeginUpdate()
-    virtual void BeginUpdate() override;
-
-    /// @copydoc GAL::EndUpdate()
-    virtual void EndUpdate() override;
 
     /// @copydoc GAL::DrawLine()
     virtual void DrawLine( const VECTOR2D& aStartPoint, const VECTOR2D& aEndPoint ) override;
@@ -121,20 +119,30 @@ public:
     virtual void DrawArc( const VECTOR2D& aCenterPoint, double aRadius,
                           double aStartAngle, double aEndAngle ) override;
 
+    /// @copydoc GAL::DrawArcSegment()
+    virtual void DrawArcSegment( const VECTOR2D& aCenterPoint, double aRadius,
+                                 double aStartAngle, double aEndAngle, double aWidth ) override;
+
     /// @copydoc GAL::DrawRectangle()
     virtual void DrawRectangle( const VECTOR2D& aStartPoint, const VECTOR2D& aEndPoint ) override;
 
     /// @copydoc GAL::DrawPolyline()
     virtual void DrawPolyline( const std::deque<VECTOR2D>& aPointList ) override;
     virtual void DrawPolyline( const VECTOR2D aPointList[], int aListSize ) override;
+    virtual void DrawPolyline( const SHAPE_LINE_CHAIN& aLineChain ) override;
 
     /// @copydoc GAL::DrawPolygon()
     virtual void DrawPolygon( const std::deque<VECTOR2D>& aPointList ) override;
     virtual void DrawPolygon( const VECTOR2D aPointList[], int aListSize ) override;
+    virtual void DrawPolygon( const SHAPE_POLY_SET& aPolySet ) override;
+    virtual void DrawPolygon( const SHAPE_LINE_CHAIN& aPolySet ) override;
 
     /// @copydoc GAL::DrawCurve()
     virtual void DrawCurve( const VECTOR2D& startPoint, const VECTOR2D& controlPointA,
                             const VECTOR2D& controlPointB, const VECTOR2D& endPoint ) override;
+
+    /// @copydoc GAL::DrawBitmap()
+    virtual void DrawBitmap( const BITMAP_BASE& aBitmap ) override;
 
     /// @copydoc GAL::BitmapText()
     virtual void BitmapText( const wxString& aText, const VECTOR2D& aPosition,
@@ -157,7 +165,7 @@ public:
     virtual void Flush() override;
 
     /// @copydoc GAL::ClearScreen()
-    virtual void ClearScreen( const COLOR4D& aColor ) override;
+    virtual void ClearScreen( ) override;
 
     // --------------
     // Transformation
@@ -225,6 +233,11 @@ public:
     /// @copydoc GAL::ClearTarget()
     virtual void ClearTarget( RENDER_TARGET aTarget ) override;
 
+    /// @copydoc GAL::SetNegativeDrawMode()
+    virtual void SetNegativeDrawMode( bool aSetting ) override {}
+
+    virtual void ComputeWorldScreenMatrix() override;
+
     // -------
     // Cursor
     // -------
@@ -256,6 +269,8 @@ public:
         paintListener = aPaintListener;
     }
 
+    virtual void EnableDepthTest( bool aEnabled = false ) override;
+
     ///< Parameters passed to the GLU tesselator
     typedef struct
     {
@@ -282,7 +297,7 @@ private:
     static GLuint fontTexture;                  ///< Bitmap font texture handle (shared)
 
     // Vertex buffer objects related fields
-    typedef std::map< unsigned int, std::shared_ptr<VERTEX_ITEM> > GROUPS_MAP;
+    typedef std::unordered_map< unsigned int, std::shared_ptr<VERTEX_ITEM> > GROUPS_MAP;
     GROUPS_MAP              groups;                 ///< Stores informations about VBO objects (groups)
     unsigned int            groupCounter;           ///< Counter used for generating keys for groups
     VERTEX_MANAGER*         currentManager;         ///< Currently used VERTEX_MANAGER (for storing VERTEX_ITEMs)
@@ -297,13 +312,41 @@ private:
     RENDER_TARGET           currentTarget;          ///< Current rendering target
 
     // Shader
-    static SHADER*          shader;                 ///< There is only one shader used for different objects
+    SHADER*                 shader;                 ///< There is only one shader used for different objects
 
     // Internal flags
     bool                    isFramebufferInitialized;   ///< Are the framebuffers initialized?
     static bool             isBitmapFontLoaded;         ///< Is the bitmap font texture loaded?
     bool                    isBitmapFontInitialized;    ///< Is the shader set to use bitmap fonts?
+    bool                    isInitialized;              ///< Basic initialization flag, has to be done
+                                                        ///< when the window is visible
     bool                    isGrouping;                 ///< Was a group started?
+    bool                    isContextLocked;            ///< Used for assertion checking
+    int                     lockClientCookie;
+    GLint                   ufm_worldPixelSize;
+    GLint                   ufm_screenPixelSize;
+    GLint                   ufm_pixelSizeMultiplier;
+
+    std::unique_ptr<GL_BITMAP_CACHE>         bitmapCache;
+
+    void lockContext( int aClientCookie ) override;
+
+    void unlockContext( int aClientCookie ) override;
+
+    /// @copydoc GAL::BeginUpdate()
+    virtual void beginUpdate() override;
+
+    /// @copydoc GAL::EndUpdate()
+    virtual void endUpdate() override;
+
+    /// @copydoc GAL::BeginDrawing()
+    virtual void beginDrawing() override;
+
+    /// @copydoc GAL::EndDrawing()
+    virtual void endDrawing() override;
+
+    ///< Update handler for OpenGL settings
+    bool updatedGalDisplayOptions( const GAL_DISPLAY_OPTIONS& aOptions ) override;
 
     // Polygon tesselation
     /// The tessellator
@@ -351,10 +394,31 @@ private:
     void drawStrokedSemiCircle( const VECTOR2D& aCenterPoint, double aRadius, double aAngle );
 
     /**
+     * @brief Generic way of drawing a polyline stored in different containers.
+     * @param aPointGetter is a function to obtain coordinates of n-th vertex.
+     * @param aPointCount is the number of points to be drawn.
+     */
+    void drawPolyline( const std::function<VECTOR2D (int)>& aPointGetter, int aPointCount );
+
+    /**
+     * @brief Draws a filled polygon. It does not need the last point to have the same coordinates
+     * as the first one.
+     * @param aPoints is the vertices data (3 coordinates: x, y, z).
+     * @param aPointCount is the number of points.
+     */
+    void drawPolygon( GLdouble* aPoints, int aPointCount );
+
+    /**
+     * @brief Draws a set of polygons with a cached triangulation. Way faster than drawPolygon.
+     */
+    void drawTriangulatedPolyset( const SHAPE_POLY_SET& aPoly );
+
+
+    /**
      * @brief Draws a single character using bitmap font.
      * Its main purpose is to be used in BitmapText() function.
      *
-     * @param aCharacter is the character to be drawn.
+     * @param aChar is the character to be drawn.
      * @return Width of the drawn glyph.
      */
     int drawBitmapChar( unsigned long aChar );
@@ -377,7 +441,7 @@ private:
      * @return Pair containing text bounding box and common Y axis offset. The values are expressed
      * as a number of pixels on the bitmap font texture and need to be scaled before drawing.
      */
-    std::pair<VECTOR2D, int> computeBitmapTextSize( const wxString& aText ) const;
+    std::pair<VECTOR2D, float> computeBitmapTextSize( const UTF8& aText ) const;
 
     // Event handling
     /**
@@ -407,38 +471,23 @@ private:
     unsigned int getNewGroupNumber();
 
     /**
-     * @brief Checks if the required OpenGL version and extensions are supported.
-     * @return true in case of success.
+     * @brief Compute the angle step when drawing arcs/circles approximated with lines.
      */
-    bool runTest();
-
-    // Helper class to determine OpenGL capabilities
-    class OPENGL_TEST: public wxGLCanvas
+    double calcAngleStep( double aRadius ) const
     {
-    public:
-        OPENGL_TEST( wxDialog* aParent, OPENGL_GAL* aGal, wxGLContext* aContext );
+        // Bigger arcs need smaller alpha increment to make them look smooth
+        return std::min( 1e6 / aRadius, 2.0 * M_PI / CIRCLE_POINTS );
+    }
 
-        void Render( wxPaintEvent& aEvent );
-        void OnTimeout( wxTimerEvent& aEvent );
-        void OnDialogPaint( wxPaintEvent& aEvent );
+    double getWorldPixelSize() const;
 
-        inline bool IsTested() const { return m_tested; }
-        inline bool IsOk() const { return m_result && m_tested; }
-        inline std::string GetError() const { return m_error; }
+    VECTOR2D getScreenPixelSize() const;
 
-    private:
-        void error( const std::string& aError );
 
-        wxDialog* m_parent;
-        OPENGL_GAL* m_gal;
-        wxGLContext* m_context;
-        bool m_tested;
-        bool m_result;
-        std::string m_error;
-        wxTimer m_timeoutTimer;
-    };
-
-    friend class OPENGL_TEST;
+    /**
+     * @brief Basic OpenGL initialization.
+     */
+    void init();
 };
 } // namespace KIGFX
 

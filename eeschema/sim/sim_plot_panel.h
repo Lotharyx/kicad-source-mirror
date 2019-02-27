@@ -2,6 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2016 CERN
+ * Copyright (C) 2016-2017 KiCad Developers, see AUTHORS.txt for contributors.
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
@@ -79,7 +80,7 @@ private:
     wxRealPoint m_coords;
     mpWindow* m_window;
 
-    const int DRAG_MARGIN = 10;
+    static constexpr int DRAG_MARGIN = 10;
 };
 
 
@@ -196,7 +197,7 @@ public:
 
     void DeleteAllTraces();
 
-    bool IsShown( const wxString& aName ) const
+    bool TraceShown( const wxString& aName ) const
     {
         return m_traces.count( aName ) > 0;
     }
@@ -223,6 +224,9 @@ public:
 
     bool IsGridShown() const
     {
+        if( !m_axis_x || !m_axis_y1 )
+            return false;
+
         assert( m_axis_x->GetTicks() == m_axis_y1->GetTicks() );
         return !m_axis_x->GetTicks();
     }

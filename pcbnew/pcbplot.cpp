@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2018 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2012 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 1992-2015 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,11 +28,10 @@
  */
 
 #include <fctsys.h>
-#include <plot_common.h>
+#include <plotter.h>
 #include <confirm.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <pcbplot.h>
-#include <pcbstruct.h>
 #include <base_units.h>
 #include <reporter.h>
 #include <class_board.h>
@@ -43,6 +42,7 @@
 #include <dialog_plot.h>
 #include <macros.h>
 #include <build_version.h>
+#include <gbr_metadata.h>
 
 
 const wxString GetGerberProtelExtension( LAYER_NUM aLayer )
@@ -85,8 +85,8 @@ const wxString GetGerberProtelExtension( LAYER_NUM aLayer )
     }
 }
 
-const wxString GetGerberFileFunctionAttribute( const BOARD *aBoard,
-                LAYER_NUM aLayer, bool aUseX1CompatibilityMode )
+
+const wxString GetGerberFileFunctionAttribute( const BOARD *aBoard, LAYER_NUM aLayer )
 {
     wxString attrib;
 
@@ -171,6 +171,12 @@ const wxString GetGerberFileFunctionAttribute( const BOARD *aBoard,
         break;
     }
 
+    // This code adds a optional parameter: the type of copper layers.
+    // Because it is not used by Pcbnew (it can be used only by external autorouters)
+    // user do not really set this parameter.
+    // Therefore do not add it.
+    // However, this code is left here, for perhaps a future usage.
+#if 0
     // Add the signal type of the layer, if relevant
     if( IsCopperLayer( aLayer ) )
     {
@@ -191,13 +197,10 @@ const wxString GetGerberFileFunctionAttribute( const BOARD *aBoard,
             break;   // do nothing (but avoid a warning for unhandled LAYER_T values from GCC)
         }
     }
+#endif
 
     wxString fileFct;
-
-    if( aUseX1CompatibilityMode )
-        fileFct.Printf( "G04 #@! TF.FileFunction,%s*", GetChars( attrib ) );
-    else
-        fileFct.Printf( "%%TF.FileFunction,%s*%%", GetChars( attrib ) );
+    fileFct.Printf( "%%TF.FileFunction,%s*%%", GetChars( attrib ) );
 
     return fileFct;
 }
@@ -260,61 +263,50 @@ static const wxString GetGerberFilePolarityAttribute( LAYER_NUM aLayer )
 /* Add some X2 attributes to the file header, as defined in the
  * Gerber file format specification J4 and "Revision 2015.06"
  */
-void AddGerberX2Attribute( PLOTTER * aPlotter,
-            const BOARD *aBoard, LAYER_NUM aLayer )
+
+// A helper function to convert a X2 attribute string to a X1 structured comment:
+static wxString& makeStringCompatX1( wxString& aText, bool aUseX1CompatibilityMode )
+{
+    if( aUseX1CompatibilityMode )
+    {
+        aText.Replace( "%", "" );
+        aText.Prepend( "G04 #@! " );
+    }
+
+    return aText;
+}
+
+
+void AddGerberX2Header( PLOTTER * aPlotter,
+            const BOARD *aBoard, bool aUseX1CompatibilityMode )
 {
     wxString text;
 
     // Creates the TF,.GenerationSoftware. Format is:
     // %TF,.GenerationSoftware,<vendor>,<application name>[,<application version>]*%
     text.Printf( wxT( "%%TF.GenerationSoftware,KiCad,Pcbnew,%s*%%" ), GetBuildVersion() );
-    aPlotter->AddLineToHeader( text );
+    aPlotter->AddLineToHeader( makeStringCompatX1( text, aUseX1CompatibilityMode ) );
 
-    // creates the TF.CreationDate ext:
-    // The attribute value must conform to the full version of the ISO 8601
-    // date and time format, including time and time zone. Note that this is
-    // the date the Gerber file was effectively created,
-    // not the time the project of PCB was started
-    wxDateTime date( wxDateTime::GetTimeNow() );
-    // Date format: see http://www.cplusplus.com/reference/ctime/strftime
-    wxString msg = date.Format( wxT( "%z" ) );  // Extract the time zone offset
-    // The time zone offset format is + (or -) mm or hhmm  (mm = number of minutes, hh = number of hours)
-    // we want +(or -) hh:mm
-    if( msg.Len() > 3 )
-        msg.insert( 3, ":", 1 ),
-    text.Printf( wxT( "%%TF.CreationDate,%s%s*%%" ), GetChars( date.FormatISOCombined() ), GetChars( msg ) );
+    // creates the TF.CreationDate attribute:
+    text = GbrMakeCreationDateAttributeString( aUseX1CompatibilityMode ?
+                                                    GBR_NC_STRING_FORMAT_X1 :
+                                                    GBR_NC_STRING_FORMAT_X2 );
     aPlotter->AddLineToHeader( text );
 
     // Creates the TF,.ProjectId. Format is (from Gerber file format doc):
     // %TF.ProjectId,<project id>,<project GUID>,<revision id>*%
     // <project id> is the name of the project, restricted to basic ASCII symbols only,
+    // Rem: <project id> accepts only ASCII 7 code (only basic ASCII codes are allowed in gerber files).
     // and comma not accepted
     // All illegal chars will be replaced by underscore
-    // <project GUID> is a 32 hexadecimal digits string which is an unique id of a project.
-    // This is a random 128-bit number expressed in 32 hexadecimal digits.
-    // See en.wikipedia.org/wiki/GUID for more information
+    //
+    // <project GUID> is a string which is an unique id of a project.
     // However Kicad does not handle such a project GUID, so it is built from the board name
-    // Rem: <project id> accepts only ASCII 7 code (only basic ASCII codes are allowed in gerber files).
     wxFileName fn = aBoard->GetFileName();
-    msg = fn.GetFullName();
-    wxString guid;
+    wxString msg = fn.GetFullName();
 
-    // Build a 32 digits GUID from the board name:
-    for( unsigned ii = 0; ii < msg.Len(); ii++ )
-    {
-        int cc1 = int( msg[ii] ) & 0x0F;
-        int cc2 = ( int( msg[ii] ) >> 4) & 0x0F;
-        guid << wxString::Format( wxT( "%X%X" ), cc2, cc1 );
-
-        if( guid.Len() >= 32 )
-            break;
-    }
-
-    // guid has 32 digits, so add missing digits
-    int cnt = 32 - guid.Len();
-
-    if( cnt > 0 )
-        guid.Append( '0', cnt );
+    // Build a <project GUID>, from the board name
+    wxString guid = GbrMakeProjectGUIDfromString( msg );
 
     // build the <project id> string: this is the board short filename (without ext)
     // and all non ASCII chars and comma are replaced by '_'
@@ -329,17 +321,50 @@ void AddGerberX2Attribute( PLOTTER * aPlotter,
         rev = wxT( "rev?" );
 
     text.Printf( wxT( "%%TF.ProjectId,%s,%s,%s*%%" ), msg.ToAscii(), GetChars( guid ), rev.ToAscii() );
-    aPlotter->AddLineToHeader( text );
+    aPlotter->AddLineToHeader( makeStringCompatX1( text, aUseX1CompatibilityMode ) );
+
+    // Add the TF.SameCoordinates, that specify all gerber files uses the same
+    // origin and orientation, and the registration between files is OK.
+    // The parameter of TF.SameCoordinates is a string that is common
+    // to all files using the same registration and has no special meaning:
+    // this is just a key
+    // Because there is no mirroring/rotation in Kicad, only the plot offset origin
+    // can create incorrect registration.
+    // So we create a key from plot offset options.
+    // and therefore for a given board, all Gerber files having the same key have the same
+    // plot origin and use the same registration
+    //
+    // Currently the key is "Original" when using absolute Pcbnew coordinates,
+    // and te PY ans PY position od auxiliary axis, when using it.
+    // Please, if absolute Pcbnew coordinates, one day, are set by user, change the way
+    // the key is built to ensure file only using the *same* axis have the same key.
+    wxString registration_id = "Original";
+    wxPoint auxOrigin = aBoard->GetAuxOrigin();
+
+    if( aBoard->GetPlotOptions().GetUseAuxOrigin() && auxOrigin.x && auxOrigin.y )
+        registration_id.Printf( "PX%xPY%x", auxOrigin.x, auxOrigin.y );
+
+    text.Printf( "%%TF.SameCoordinates,%s*%%", registration_id.GetData() );
+    aPlotter->AddLineToHeader( makeStringCompatX1( text, aUseX1CompatibilityMode ) );
+}
+
+
+void AddGerberX2Attribute( PLOTTER * aPlotter,
+            const BOARD *aBoard, LAYER_NUM aLayer, bool aUseX1CompatibilityMode )
+{
+    AddGerberX2Header( aPlotter, aBoard, aUseX1CompatibilityMode );
+
+    wxString text;
 
     // Add the TF.FileFunction
-    text = GetGerberFileFunctionAttribute( aBoard, aLayer, false );
-    aPlotter->AddLineToHeader( text );
+    text = GetGerberFileFunctionAttribute( aBoard, aLayer );
+    aPlotter->AddLineToHeader( makeStringCompatX1( text, aUseX1CompatibilityMode ) );
 
     // Add the TF.FilePolarity (for layers which support that)
     text = GetGerberFilePolarityAttribute( aLayer );
 
     if( !text.IsEmpty() )
-        aPlotter->AddLineToHeader( text );
+        aPlotter->AddLineToHeader( makeStringCompatX1( text, aUseX1CompatibilityMode ) );
 }
 
 
@@ -356,7 +381,7 @@ void BuildPlotFileName( wxFileName* aFilename, const wxString& aOutputDir,
 
     // remove leading and trailing spaces if any from the suffix, if
     // something survives add it to the name;
-    // also the suffix can contain some not allowed chars in filename (/ \ . :),
+    // also the suffix can contain some not allowed chars in filename (/ \ . : and some others),
     // so change them to underscore
     // Remember it can be called from a python script, so the illegal chars
     // have to be filtered here.
@@ -365,7 +390,7 @@ void BuildPlotFileName( wxFileName* aFilename, const wxString& aOutputDir,
     suffix.Trim( false );
 
     wxString badchars = wxFileName::GetForbiddenChars(wxPATH_DOS);
-    badchars.Append( '%' );
+    badchars.Append( "%." );
 
     for( unsigned ii = 0; ii < badchars.Len(); ii++ )
         suffix.Replace( badchars[ii], wxT("_") );

@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2012 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
  * Copyright (C) 2012 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 1992-2016 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -38,10 +38,11 @@
 #include <bitmaps.h>
 #include <gestfich.h>
 #include <menus_helpers.h>
+#include <trace_helpers.h>
 #include <wildcards_and_files_ext.h>
 
-#include "class_treeproject_item.h"
-#include "class_treeprojectfiles.h"
+#include "treeproject_item.h"
+#include "treeprojectfiles.h"
 #include "pgm_kicad.h"
 
 #include "tree_project_frame.h"
@@ -75,9 +76,10 @@ static const wxChar* s_allowedExtensionsToList[] =
     wxT( "^.*\\.txt$" ),
     wxT( "^.*\\.pho$" ),            // Gerber file (Old Kicad extension)
     wxT( "^.*\\.gbr$" ),            // Gerber file
-    wxT( "^.*\\.gb[alops]$" ),      // Gerber back (or bottom) layer file
-    wxT( "^.*\\.gt[alops]$" ),      // Gerber front (or top) layer file
-    wxT( "^.*\\.g[0-9]{1,2}$" ),    // Gerber inner layer file
+    wxT( "^.*\\.gbrjob$" ),         // Gerber job file
+    wxT( "^.*\\.gb[alops]$" ),      // Gerber back (or bottom) layer file (deprecated Protel ext)
+    wxT( "^.*\\.gt[alops]$" ),      // Gerber front (or top) layer file (deprecated Protel ext)
+    wxT( "^.*\\.g[0-9]{1,2}$" ),    // Gerber inner layer file (deprecated Protel ext)
     wxT( "^.*\\.odt$" ),
     wxT( "^.*\\.htm$" ),
     wxT( "^.*\\.html$" ),
@@ -99,8 +101,8 @@ static const wxChar* s_allowedExtensionsToList[] =
 // File extension definitions.
 const wxChar  TextFileExtension[] = wxT( "txt" );
 
-// File wildcard definitions.
-const wxChar  TextFileWildcard[] = wxT( "Text files (*.txt)|*.txt" );
+// Gerber file extension wildcard.
+const wxString GerberFileExtensionWildCard( ".((gbr|gbrjob|(gb|gt)[alops])|pho)" );
 
 
 /**
@@ -116,6 +118,7 @@ BEGIN_EVENT_TABLE( TREE_PROJECT_FRAME, wxSashLayoutWindow )
     EVT_TREE_ITEM_EXPANDED( ID_PROJECT_TREE, TREE_PROJECT_FRAME::OnExpand )
     EVT_TREE_ITEM_RIGHT_CLICK( ID_PROJECT_TREE, TREE_PROJECT_FRAME::OnRight )
     EVT_MENU( ID_PROJECT_TXTEDIT, TREE_PROJECT_FRAME::OnOpenSelectedFileWithTextEditor )
+    EVT_MENU( ID_PROJECT_SWITCH_TO_OTHER, TREE_PROJECT_FRAME::OnSwitchToSelectedProject )
     EVT_MENU( ID_PROJECT_NEWDIR, TREE_PROJECT_FRAME::OnCreateNewDirectory )
     EVT_MENU( ID_PROJECT_DELETE, TREE_PROJECT_FRAME::OnDeleteFile )
     EVT_MENU( ID_PROJECT_RENAME, TREE_PROJECT_FRAME::OnRenameFile )
@@ -123,11 +126,9 @@ END_EVENT_TABLE()
 
 
 TREE_PROJECT_FRAME::TREE_PROJECT_FRAME( KICAD_MANAGER_FRAME* parent ) :
-    wxSashLayoutWindow( parent,
-                        ID_LEFT_FRAME,
-                        wxDefaultPosition,
-                        wxDefaultSize,
-                        wxNO_BORDER | wxSW_3D | wxTAB_TRAVERSAL )
+    wxSashLayoutWindow( parent, ID_LEFT_FRAME,
+                        wxDefaultPosition, wxDefaultSize,
+                        wxNO_BORDER | wxTAB_TRAVERSAL )
 {
     m_Parent = parent;
     m_TreeProject = NULL;
@@ -174,6 +175,19 @@ void TREE_PROJECT_FRAME::RemoveFilter( const wxString& filter )
             return;
         }
     }
+}
+
+
+void TREE_PROJECT_FRAME::OnSwitchToSelectedProject( wxCommandEvent& event )
+{
+    TREEPROJECT_ITEM* tree_data = GetSelectedData();
+
+    if( !tree_data )
+        return;
+
+    wxString prj_filename = tree_data->GetFileName();
+
+    m_Parent->LoadProject( prj_filename );
 }
 
 
@@ -257,7 +271,7 @@ wxString TREE_PROJECT_FRAME::GetFileExt( TreeFileType type )
         break;
 
     case TREE_GERBER:
-        ext = GerberFileExtension;
+        ext = GerberFileExtensionWildCard;
         break;
 
     case TREE_HTML:
@@ -326,68 +340,68 @@ wxString TREE_PROJECT_FRAME::GetFileWildcard( TreeFileType type )
     switch( type )
     {
     case TREE_PROJECT:
-        ext = ProjectFileWildcard;
+        ext = ProjectFileWildcard();
         break;
 
     case TREE_SCHEMA:
-        ext = SchematicFileWildcard;
+        ext = SchematicFileWildcard();
         break;
 
     case TREE_LEGACY_PCB:
     case TREE_SEXP_PCB:
-        ext = PcbFileWildcard;
+        ext = PcbFileWildcard();
         break;
 
     case TREE_GERBER:
-        ext = GerberFileWildcard;
+        ext = GerberFileWildcard();
         break;
 
     case TREE_HTML:
-        ext = HtmlFileWildcard;
+        ext = HtmlFileWildcard();
         break;
 
     case TREE_PDF:
-        ext = PdfFileWildcard;
+        ext = PdfFileWildcard();
         break;
 
     case TREE_TXT:
-        ext = TextFileWildcard;
+        ext = TextFileWildcard();
         break;
 
     case TREE_NET:
-        ext = NetlistFileWildcard;
+        ext = NetlistFileWildcard();
         break;
 
     case TREE_CMP_LINK:
-        ext = ComponentFileWildcard;
+        ext = ComponentFileWildcard();
         break;
 
     case TREE_REPORT:
-        ext = ReportFileWildcard;
+        ext = ReportFileWildcard();
         break;
 
     case TREE_FP_PLACE:
-        ext = FootprintPlaceFileWildcard;
+        ext = FootprintPlaceFileWildcard();
         break;
 
     case TREE_DRILL:
-        ext = DrillFileWildcard;
+        ext = DrillFileWildcard();
         break;
 
     case TREE_SVG:
-        ext = SVGFileWildcard;
+        ext = SVGFileWildcard();
         break;
 
     case TREE_PAGE_LAYOUT_DESCR:
-        ext = PageLayoutDescrFileWildcard;
+        ext = PageLayoutDescrFileWildcard();
         break;
 
     case TREE_FOOTPRINT_FILE:
-        ext = KiCadFootprintLibFileWildcard;
+        ext = KiCadFootprintLibFileWildcard();
         break;
 
     case TREE_SCHEMATIC_LIBFILE:
-        ext = SchematicLibraryFileWildcard;
+        ext = SchematicLibraryFileWildcard();
         break;
 
      default:                       // Eliminates unnecessary GCC warning.
@@ -463,6 +477,7 @@ bool TREE_PROJECT_FRAME::AddItemToTreeProject( const wxString& aName,
             wxString    fullFileName = aName.BeforeLast( '.' );
             wxString    rootName;
             TREEPROJECT_ITEM* itemData = GetItemIdData( m_root );
+
             if( itemData )
                 rootName = itemData->GetFileName().BeforeLast( '.' );
 
@@ -678,38 +693,49 @@ void TREE_PROJECT_FRAME::OnRight( wxTreeEvent& Event )
 
     switch( tree_id )
     {
-        case TREE_PROJECT:
-            AddMenuItem( &popupMenu, ID_PROJECT_NEWDIR,
-                         _( "New D&irectory" ),
-                         _( "Create a New Directory" ),
-                         KiBitmap( directory_xpm ) );
-            break;
+    case TREE_PROJECT:
+        // Add a swith to an other project option only if the selected item
+        // is not the root item (current project)
+        if( curr_item != m_TreeProject->GetRootItem() )
+        {
+            AddMenuItem( &popupMenu, ID_PROJECT_SWITCH_TO_OTHER,
+                         _( "&Switch to this Project" ),
+                         _( "Close all editors, and switch to the selected project" ),
+                         KiBitmap( open_project_xpm ) );
+            popupMenu.AppendSeparator();
+        }
 
-        case TREE_DIRECTORY:
-            AddMenuItem( &popupMenu, ID_PROJECT_NEWDIR,
-                         _( "New D&irectory" ),
-                         _( "Create a New Directory" ),
-                         KiBitmap( directory_xpm ) );
-            AddMenuItem( &popupMenu,  ID_PROJECT_DELETE,
-                         _( "&Delete Directory" ),
-                         _( "Delete the Directory and its content" ),
-                         KiBitmap( delete_xpm ) );
-            break;
+        AddMenuItem( &popupMenu, ID_PROJECT_NEWDIR,
+                     _( "New D&irectory..." ),
+                     _( "Create a New Directory" ),
+                     KiBitmap( directory_xpm ) );
+        break;
 
-        default:
-            AddMenuItem( &popupMenu, ID_PROJECT_TXTEDIT,
-                         _( "&Edit in a text editor" ),
-                         _( "Open the file in a Text Editor" ),
-                         KiBitmap( icon_txt_xpm ) );
-            AddMenuItem( &popupMenu, ID_PROJECT_RENAME,
-                         _( "&Rename file" ),
-                         _( "Rename file" ),
-                         KiBitmap( right_xpm ) );
-            AddMenuItem( &popupMenu,  ID_PROJECT_DELETE,
-                         _( "&Delete File" ),
-                         _( "Delete the Directory and its content" ),
-                         KiBitmap( delete_xpm ) );
-            break;
+    case TREE_DIRECTORY:
+        AddMenuItem( &popupMenu, ID_PROJECT_NEWDIR,
+                     _( "New D&irectory..." ),
+                     _( "Create a New Directory" ),
+                     KiBitmap( directory_xpm ) );
+        AddMenuItem( &popupMenu,  ID_PROJECT_DELETE,
+                     _( "&Delete Directory" ),
+                     _( "Delete the Directory and its content" ),
+                     KiBitmap( delete_xpm ) );
+        break;
+
+    default:
+        AddMenuItem( &popupMenu, ID_PROJECT_TXTEDIT,
+                     _( "&Edit in a Text Editor" ),
+                     _( "Open the file in a Text Editor" ),
+                     KiBitmap( editor_xpm ) );
+        AddMenuItem( &popupMenu, ID_PROJECT_RENAME,
+                     _( "&Rename File..." ),
+                     _( "Rename file" ),
+                     KiBitmap( right_xpm ) );
+        AddMenuItem( &popupMenu,  ID_PROJECT_DELETE,
+                     _( "&Delete File" ),
+                     _( "Delete the Directory and its content" ),
+                     KiBitmap( delete_xpm ) );
+        break;
     }
 
     PopupMenu( &popupMenu );
@@ -756,7 +782,7 @@ void TREE_PROJECT_FRAME::OnRenameFile( wxCommandEvent& )
 
     wxString buffer = m_TreeProject->GetItemText( curr_item );
     wxString msg = wxString::Format(
-                    _( "Change filename: '%s'" ),
+                    _( "Change filename: \"%s\"" ),
                     GetChars( tree_data->GetFileName() ) );
 
     wxTextEntryDialog   dlg( this, msg, _( "Change filename" ), buffer );
@@ -778,12 +804,12 @@ void TREE_PROJECT_FRAME::OnRenameFile( wxCommandEvent& )
 
 void TREE_PROJECT_FRAME::OnSelect( wxTreeEvent& Event )
 {
-    TREEPROJECT_ITEM*   tree_data = GetSelectedData();
+    TREEPROJECT_ITEM* selected_item = GetSelectedData();
 
-    if( !tree_data )
+    if( !selected_item )
         return;
 
-    tree_data->Activate( this );
+    selected_item->Activate( this );
 }
 
 
@@ -920,7 +946,7 @@ wxTreeItemId TREE_PROJECT_FRAME::findSubdirTreeItem( const wxString& aSubDir )
 
 void TREE_PROJECT_FRAME::OnFileSystemEvent( wxFileSystemWatcherEvent& event )
 {
-    wxFileName pathModified = event.GetPath();
+    const wxFileName& pathModified = event.GetPath();
     wxString subdir = pathModified.GetPath();
     wxString fn = pathModified.GetFullPath();
 
@@ -971,8 +997,8 @@ void TREE_PROJECT_FRAME::OnFileSystemEvent( wxFileSystemWatcherEvent& event )
 
     case wxFSW_EVENT_RENAME :
         {
-            wxFileName  newpath = event.GetNewPath();
-            wxString    newfn = newpath.GetFullPath();
+            const wxFileName& newpath = event.GetNewPath();
+            wxString newfn = newpath.GetFullPath();
 
             while( kid.IsOk() )
             {
@@ -1058,9 +1084,9 @@ void TREE_PROJECT_FRAME::FileWatcherReset()
         if( itemData && itemData->GetType() == TREE_DIRECTORY )
         {
             // we can see wxString under a debugger, not a wxFileName
-            wxString path = itemData->GetFileName();
+            const wxString& path = itemData->GetFileName();
 
-            wxLogDebug( "%s: add '%s'\n", __func__, TO_UTF8( path ) );
+            wxLogTrace( tracePathsAndFiles, "%s: add '%s'\n", __func__, TO_UTF8( path ) );
 
             if( wxFileName::IsDirReadable( path ) )     // linux whines about watching protected dir
             {
@@ -1080,10 +1106,10 @@ void TREE_PROJECT_FRAME::FileWatcherReset()
 #if defined(DEBUG) && 1
     wxArrayString paths;
     m_watcher->GetWatchedPaths( &paths );
-    wxLogDebug( "%s: watched paths:", __func__ );
+    wxLogTrace( tracePathsAndFiles, "%s: watched paths:", __func__ );
 
     for( unsigned ii = 0; ii < paths.GetCount(); ii++ )
-        wxLogDebug( " %s\n", TO_UTF8( paths[ii] ) );
+        wxLogTrace( tracePathsAndFiles, " %s\n", TO_UTF8( paths[ii] ) );
 #endif
 }
 

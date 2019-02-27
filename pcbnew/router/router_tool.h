@@ -1,7 +1,7 @@
 /*
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
- * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2013-2017 CERN
  * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  * Author: Maciej Suminski <maciej.suminski@cern.ch>
@@ -34,28 +34,37 @@ public:
     bool Init() override;
     void Reset( RESET_REASON aReason ) override;
 
-    int RouteSingleTrace ( const TOOL_EVENT& aEvent );
-    int RouteDiffPair ( const TOOL_EVENT& aEvent );
-    int InlineDrag ( const TOOL_EVENT& aEvent );
+    int RouteSingleTrace( const TOOL_EVENT& aEvent );
+    int RouteDiffPair( const TOOL_EVENT& aEvent );
+    int InlineBreakTrack( const TOOL_EVENT& aEvent );
+    bool CanInlineDrag();
+    int InlineDrag( const TOOL_EVENT& aEvent );
 
-    int DpDimensionsDialog ( const TOOL_EVENT& aEvent );
-    int SettingsDialog ( const TOOL_EVENT& aEvent );
+    // TODO make this private?
+    int DpDimensionsDialog( const TOOL_EVENT& aEvent );
+    int SettingsDialog( const TOOL_EVENT& aEvent );
+    int CustomTrackWidthDialog( const TOOL_EVENT& aEvent );
+
+    void setTransitions() override;
+
+    // A filter for narrowing a collection representing a simple corner
+    // or a non-fanout-via to a single TRACK item.
+    static void NeighboringSegmentFilter( const VECTOR2I& aPt, GENERAL_COLLECTOR& aCollector );
 
 private:
-
     int mainLoop( PNS::ROUTER_MODE aMode );
 
-    int getDefaultWidth( int aNetCode );
-
     void performRouting();
-    void performDragging();
+    void performDragging( int aMode = PNS::DM_ANY );
+    void breakTrack();
 
-    void getNetclassDimensions( int aNetCode, int& aWidth, int& aViaDiameter, int& aViaDrill );
     void handleCommonEvents( const TOOL_EVENT& evt );
 
     int getStartLayer( const PNS::ITEM* aItem );
     void switchLayerOnViaPlacement();
-    bool onViaCommand( TOOL_EVENT& aEvent, VIATYPE_T aType );
+
+    int onViaCommand( const TOOL_EVENT& aEvent );
+    int onTrackViaSizeChanged( const TOOL_EVENT& aEvent );
 
     bool prepareInteractive();
     bool finishInteractive();

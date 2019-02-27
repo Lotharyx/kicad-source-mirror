@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 CERN
+ * Copyright (C) 2013-2017 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
@@ -27,18 +27,20 @@
 
 #include <tool/tool_interactive.h>
 #include "edit_points.h"
+#include <status_popup.h>
 
 #include <memory>
 
 
 class SELECTION_TOOL;
+class SHAPE_POLY_SET;
 
 /**
  * Class POINT_EDITOR
  *
  * Tool that displays edit points allowing to modify items by dragging the points.
  */
-class POINT_EDITOR : public TOOL_INTERACTIVE
+class POINT_EDITOR : public PCB_TOOL
 {
 public:
     POINT_EDITOR();
@@ -57,7 +59,7 @@ public:
     int OnSelectionChange( const TOOL_EVENT& aEvent );
 
     ///> Sets up handlers for various events.
-    void SetTransitions() override;
+    void setTransitions() override;
 
 private:
     ///> Selection tool used for obtaining selected items
@@ -78,11 +80,24 @@ private:
     // EDIT_POINT for alternative constraint mode
     EDIT_POINT m_altConstrainer;
 
+    // Flag indicating whether the selected zone needs to be refilled
+    bool m_refill;
+
+    std::unique_ptr<STATUS_TEXT_POPUP> m_statusPopup;
+
     ///> Updates item's points with edit points.
     void updateItem() const;
 
     ///> Applies the last changes to the edited item.
-    void finishItem() const;
+    void finishItem();
+
+    /**
+     * Validates a polygon and restores it to its original version if available.
+     * @param aModified is the polygon to be checked.
+     * @param aOriginal is the original copy that will be used to restore its state.
+     * @return True if polygon is valid.
+     */
+    bool validatePolygon( SHAPE_POLY_SET& aModified, const SHAPE_POLY_SET* aOriginal = nullptr ) const;
 
     ///> Updates edit points with item's points.
     void updatePoints();
@@ -114,8 +129,16 @@ private:
     ///> Condition to display "Create corner" context menu entry.
     static bool addCornerCondition( const SELECTION& aSelection );
 
+    ///> Determine if the tool can currently add a corner to the given item
+    static bool canAddCorner( const EDA_ITEM& aItem );
+
     ///> Condition to display "Remove corner" context menu entry.
     bool removeCornerCondition( const SELECTION& aSelection );
+
+    /// TOOL_ACTION handlers
+    int addCorner( const TOOL_EVENT& aEvent );
+    int removeCorner( const TOOL_EVENT& aEvent );
+    int modifiedSelection( const TOOL_EVENT& aEvent );
 };
 
 #endif

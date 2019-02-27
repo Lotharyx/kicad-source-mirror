@@ -29,14 +29,37 @@
 
 #include <tool/tool_event.h>
 #include <tool/tool_interactive.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <class_board.h>
+#include <view/view_group.h>
+#include <pcb_view.h>
+#include <pcb_draw_panel_gal.h>
+
+#include <functional>
+#include <tool/tool_menu.h>
 
 /**
  * Class PCB_TOOL
  *
  * A tool operating on a BOARD object
 **/
+
+class PCB_TOOL;
+class PCB_EDIT_FRAME;
+class PCB_DISPLAY_OPTIONS;
+class SELECTION;
+
+struct INTERACTIVE_PLACER_BASE
+{
+    virtual std::unique_ptr<BOARD_ITEM> CreateItem() = 0;
+    virtual void SnapItem( BOARD_ITEM *aItem );
+    virtual bool PlaceItem( BOARD_ITEM *aItem, BOARD_COMMIT& aCommit );
+
+    PCB_EDIT_FRAME* m_frame;
+    BOARD* m_board;
+    int m_modifiers;
+};
+
 
 class PCB_TOOL : public TOOL_INTERACTIVE
 {
@@ -47,6 +70,7 @@ public:
      * Creates a tool with given id & name. The name must be unique. */
     PCB_TOOL( TOOL_ID aId, const std::string& aName ) :
         TOOL_INTERACTIVE ( aId, aName ),
+        m_menu( *this ),
         m_editModules( false ) {};
 
     /**
@@ -55,9 +79,13 @@ public:
      * Creates a tool with given name. The name must be unique. */
     PCB_TOOL( const std::string& aName ) :
         TOOL_INTERACTIVE ( aName ),
+        m_menu( *this ),
         m_editModules( false ) {};
 
     virtual ~PCB_TOOL() {};
+
+    virtual bool Init() override;
+    virtual void Reset( RESET_REASON aReason ) override;
 
     /**
      * Function SetEditModules()
@@ -77,9 +105,47 @@ public:
     }
 
 protected:
-    KIGFX::VIEW* view() const { return getView(); }
+
+    enum INTERACTIVE_PLACEMENT_OPTIONS {
+        IPO_ROTATE = 1,
+        IPO_FLIP = 2,
+        IPO_PROPERTIES = 4,
+        IPO_SINGLE_CLICK = 8,
+        IPO_REPEAT = 16
+    };
+
+
+    /**
+     * Helper function for performing a common interactive idiom:
+     * wait for a left click, place an item there (perhaps with a
+     * dialog or other user interaction), then have it move with
+     * the mouse and respond to rotate/flip, etc
+     *
+     * More complex interactive processes are not supported here, you
+     * should implement a customised event loop for those.
+     *
+     * @param aItemCreator the callable that will attempt to create the item
+     * @param aCommitMessage the message used on a successful commit
+     */
+    void doInteractiveItemPlacement( INTERACTIVE_PLACER_BASE *aPlacer,
+                                     const wxString& aCommitMessage,
+                                     int aOptions = IPO_ROTATE | IPO_FLIP | IPO_REPEAT );
+
+    virtual void setTransitions() override;
+
+
+    KIGFX::PCB_VIEW* view() const { return static_cast<KIGFX::PCB_VIEW*>( getView() ); }
+    KIGFX::VIEW_CONTROLS* controls() const { return getViewControls(); }
     PCB_EDIT_FRAME* frame() const { return getEditFrame<PCB_EDIT_FRAME>(); }
     BOARD* board() const { return getModel<BOARD>(); }
+    MODULE* module() const { return board()->m_Modules; }
+    PCB_DISPLAY_OPTIONS* displayOptions() const;
+    PCB_DRAW_PANEL_GAL* canvas() const;
+    const SELECTION& selection() const;
+    SELECTION& selection();
+
+    /// Menu model displayed by the tool.
+    TOOL_MENU m_menu;
 
     bool m_editModules;
 };

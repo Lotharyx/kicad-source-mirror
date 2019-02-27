@@ -59,7 +59,7 @@ public:
     virtual bool Move( const VECTOR2I& aP, ITEM* aEndItem ) override;
 
     /// @copydoc PLACEMENT_ALGO::FixRoute()
-    virtual bool FixRoute( const VECTOR2I& aP, ITEM* aEndItem ) override;
+    virtual bool FixRoute( const VECTOR2I& aP, ITEM* aEndItem, bool aForceFinish = false ) override;
 
     /// @copydoc PLACEMENT_ALGO::CurrentNode()
     NODE* CurrentNode( bool aLoopsRemoved = false ) const override;
@@ -80,7 +80,7 @@ public:
     int CurrentLayer() const override;
 
     /// @copydoc MEANDER_PLACER_BASE::TuningInfo()
-    virtual const wxString TuningInfo() const override;
+    virtual const wxString TuningInfo( EDA_UNITS_T aUnits ) const override;
 
     /// @copydoc MEANDER_PLACER_BASE::TuningStatus()
     virtual TUNING_STATUS TuningStatus() const override;

@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2012 NBEE Embedded Systems, Miguel Angel Ajo <miguelangel@nbee.es>
- * Copyright (C) 1992-2012 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,6 +28,7 @@
  */
 
 %include <std_vector.i>
+%include <std_list.i>
 %include <std_basic_string.i>
 %include <std_string.i>
 %include <std_map.i>
@@ -70,6 +71,7 @@ principle should be easily implemented by adapting the current STL containers.
 %ignore GetCommandOptions;
 
 %rename(getWxRect) operator wxRect;
+%rename(getBOX2I) operator BOX2I;
 %ignore operator <<;
 %ignore operator=;
 
@@ -81,16 +83,16 @@ principle should be easily implemented by adapting the current STL containers.
     #include <macros.h>
     #include <cstddef>
     #include <base_struct.h>
-    #include <class_eda_rect.h>
+    #include <eda_rect.h>
     #include <common.h>
     #include <wx_python_helpers.h>
     #include <cstddef>
     #include <vector>
     #include <bitset>
 
-    #include <class_title_block.h>
-    #include <class_colors_design_settings.h>
-    #include <class_marker_base.h>
+    #include <title_block.h>
+    #include <colors_design_settings.h>
+    #include <marker_base.h>
     #include <eda_text.h>
     #include <convert_to_biu.h>
 %}
@@ -98,35 +100,52 @@ principle should be easily implemented by adapting the current STL containers.
 // all the wx wrappers for wxString, wxPoint, wxRect, wxChar ..
 %include wx.i
 
-// header files that must be wrapped
+// SWIG is incompatible with std::unique_ptr
+%ignore GetNewConfig;
 
+// header files that must be wrapped
 %include macros.h
 %include core/typeinfo.h
 %include base_struct.h
-%include class_eda_rect.h
+%include eda_rect.h
 %include common.h
-%include class_title_block.h
-%include class_colors_design_settings.h
-%include class_marker_base.h
+%include title_block.h
+%include gal/color4d.h
+%include core/settings.h
+%include colors_design_settings.h
+%include marker_base.h
 %include eda_text.h
 
+// Cast time_t to known type for Python
+typedef long time_t;
 
 // std template mappings
 %template(intVector) std::vector<int>;
 %template(str_utf8_Map) std::map< std::string,UTF8 >;
 
-// wrapper of BASE_SEQ (see typedef std::vector<LAYER_ID> BASE_SEQ;)
-%template(base_seqVect) std::vector<enum LAYER_ID>;
+// wrapper of BASE_SEQ (see typedef std::vector<PCB_LAYER_ID> BASE_SEQ;)
+%template(base_seqVect) std::vector<enum PCB_LAYER_ID>;
 
-// TODO: wrapper of BASE_SET (see std::bitset<LAYER_ID_COUNT> BASE_SET;)
+// TODO: wrapper of BASE_SET (see std::bitset<PCB_LAYER_ID_COUNT> BASE_SET;)
 
 
 // KiCad plugin handling
 %include "kicadplugins.i"
 
-// map CPolyLine and classes used in CPolyLine:
-#include <../polygon/PolyLine.h>
-%include <../polygon/PolyLine.h>
+#include <geometry/shape.h>
+%include <geometry/shape.h>
+
+// Contains VECTOR2I
+%include math.i
+
+// ignore warning from nested classes
+#pragma SWIG nowarn=325
+%ignore SHAPE_LINE_CHAIN::convertFromClipper;
+#include <geometry/shape_line_chain.h>
+%include <geometry/shape_line_chain.h>
+
+#include <geometry/shape_poly_set.h>
+%include <geometry/shape_poly_set.h>
 
 // ignore warning relative to operator = and operator ++:
 #pragma SWIG nowarn=362,383
@@ -134,6 +153,7 @@ principle should be easily implemented by adapting the current STL containers.
 // Rename operators defined in utf8.h
 %rename(utf8_to_charptr) operator char* () const;
 %rename(utf8_to_wxstring) operator wxString () const;
+%rename(utf8_to_string) operator const std::string& () const;
 
 #include <utf8.h>
 %include <utf8.h>

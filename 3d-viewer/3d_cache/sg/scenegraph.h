@@ -25,7 +25,7 @@
  * @file scenegraph.h
  * defines the basic data set required to represent a 3D model;
  * this model must remain compatible with VRML2.0 in order to
- * facilitate VRML export of scene graph data created by avaiable
+ * facilitate VRML export of scene graph data created by available
  * 3D plugins.
  */
 
@@ -79,10 +79,10 @@ public:
     bool AddChildNode( SGNODE* aNode ) override;
 
     void ReNameNodes( void ) override;
-    bool WriteVRML( std::ofstream& aFile, bool aReuseFlag ) override;
+    bool WriteVRML( std::ostream& aFile, bool aReuseFlag ) override;
 
-    bool WriteCache( std::ofstream& aFile, SGNODE* parentNode ) override;
-    bool ReadCache( std::ifstream& aFile, SGNODE* parentNode ) override;
+    bool WriteCache( std::ostream& aFile, SGNODE* parentNode ) override;
+    bool ReadCache( std::istream& aFile, SGNODE* parentNode ) override;
 
     bool Prepare( const glm::dmat4* aTransform,
         S3D::MATLIST& materials, std::vector< SMESH >& meshes );

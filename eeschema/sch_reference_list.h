@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1992-2011 jean-pierre Charras <jean-pierre.charras@gipsa-lab.inpg.fr>
  * Copyright (C) 1992-2011 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2015 KiCad Developers, see authors.txt for contributors.
+ * Copyright (C) 1992-2018 KiCad Developers, see authors.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -65,7 +65,7 @@ class SCH_REFERENCE
     SCH_SHEET_PATH m_SheetPath;         ///< The sheet path for this reference.
     bool           m_IsNew;             ///< True if not yet annotated.
     int            m_SheetNum;          ///< The sheet number for the reference.
-    time_t         m_TimeStamp;         ///< The time stamp for the reference.
+    timestamp_t    m_TimeStamp;         ///< The time stamp for the reference.
     EDA_TEXT*      m_Value;             ///< The component value of the reference.  It is the
                                         ///< same for all instances.
     int            m_NumRef;            ///< The numeric part of the reference designator.
@@ -97,7 +97,7 @@ public:
 
     LIB_PART*      GetLibPart() const       { return m_Entry; }
 
-    SCH_SHEET_PATH GetSheetPath() const     { return m_SheetPath; }
+    const SCH_SHEET_PATH& GetSheetPath() const { return m_SheetPath; }
 
     int GetUnit() const                     { return m_Unit; }
 
@@ -140,6 +140,22 @@ public:
         return m_Ref.c_str();
     }
 
+    wxString GetRefNumber() const
+    {
+        wxString ref;
+
+        if( m_NumRef < 0 )
+            return wxT( "?" );
+
+        // To avoid a risk of duplicate, for power components
+        // the ref number is 0nnn instead of nnn.
+        // Just because sometimes only power components are annotated
+        if( GetLibPart() && GetLibPart()->IsPower() )
+            ref = wxT( "0" );
+
+        return ref << m_NumRef;
+    }
+
     int CompareValue( const SCH_REFERENCE& item ) const
     {
         return m_Value->GetText().Cmp( item.m_Value->GetText() );
@@ -152,7 +168,8 @@ public:
 
     int CompareLibName( const SCH_REFERENCE& item ) const
     {
-        return m_RootCmp->GetPartName().Cmp( item.m_RootCmp->GetPartName() );
+        return m_RootCmp->GetLibId().GetLibItemName().compare(
+            item.m_RootCmp->GetLibId().GetLibItemName() );
     }
 
     /**
@@ -286,6 +303,7 @@ public:
      * @param aUseSheetNum Set to true to start annotation for each sheet at the sheet number
      *                     times \a aSheetIntervalId.  Otherwise annotate incrementally.
      * @param aSheetIntervalId The per sheet reference designator multiplier.
+     * @param aStartNumber The number to start with if NOT numbering based on sheet number.
      * @param aLockedUnitMap A SCH_MULTI_UNIT_REFERENCE_MAP of reference designator wxStrings
      *      to SCH_REFERENCE_LISTs. May be an empty map. If not empty, any multi-unit parts
      *      found in this map will be annotated as a group rather than individually.
@@ -296,7 +314,8 @@ public:
      * referenced U201 to U351, and items in sheet 3 start from U352
      * </p>
      */
-    void Annotate( bool aUseSheetNum, int aSheetIntervalId, SCH_MULTI_UNIT_REFERENCE_MAP aLockedUnitMap );
+    void Annotate( bool aUseSheetNum, int aSheetIntervalId, int aStartNumber,
+                   SCH_MULTI_UNIT_REFERENCE_MAP aLockedUnitMap );
 
     /**
      * Function CheckAnnotation
@@ -310,10 +329,10 @@ public:
      * <li>Components with multiple parts per package with invalid part count.</li>
      * </ul>
      * </p>
-     * @param aMessageList A wxArrayString to store error messages.
+     * @param aReporter A sink for error messages.  Use NULL_REPORTER if you don't need errors.
      * @return The number of errors found.
      */
-    int CheckAnnotation( wxArrayString* aMessageList );
+    int CheckAnnotation( REPORTER& aReporter );
 
     /**
      * Function sortByXCoordinate
@@ -400,7 +419,6 @@ public:
     }
 
     /**
-     * Function GetUnit
      * searches the sorted list of components for a another component with the same
      * reference and a given part unit.  Use this method to manage components with
      * multiple parts per package.
@@ -409,13 +427,6 @@ public:
      * @return index in aComponentsList if found or -1 if not found
      */
     int FindUnit( size_t aIndex, int aUnit );
-
-    /**
-     * Function ResetHiddenReferences
-     * clears the annotation for all references that have an invisible reference designator.
-     * Invisible reference designators always have # as the first letter.
-     */
-    void ResetHiddenReferences();
 
     /**
      * Function GetRefsInUse
@@ -456,6 +467,15 @@ public:
         }
     }
 #endif
+
+    /**
+     * Function Shorthand
+     * Returns a shorthand string representing all the references in the list.  For instance,
+     * "R1, R2, R4 - R7, U1"
+     * @param aList
+     */
+    static wxString Shorthand( std::vector<SCH_REFERENCE> aList );
+
 
 private:
     /* sort functions used to sort componentFlatList

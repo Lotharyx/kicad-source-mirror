@@ -34,95 +34,16 @@
 #include <pgm_base.h>
 #include <gr_basic.h>
 #include <common.h>
-#include <class_drawpanel.h>
-#include <class_base_screen.h>
-#include <drawtxt.h>
+#include <base_screen.h>
 #include <draw_frame.h>
 #include <worksheet.h>
-#include <class_title_block.h>
+#include <title_block.h>
 #include <build_version.h>
 
 #include <worksheet_shape_builder.h>
 
+
 static const wxString productName = wxT( "KiCad E.D.A.  " );
-
-void DrawPageLayout( wxDC* aDC, EDA_RECT* aClipBox,
-                     const PAGE_INFO& aPageInfo,
-                     const wxString &aFullSheetName,
-                     const wxString& aFileName,
-                     TITLE_BLOCK& aTitleBlock,
-                     int aSheetCount, int aSheetNumber,
-                     int aPenWidth, double aScalar,
-                     EDA_COLOR_T aColor, EDA_COLOR_T aAltColor,
-                     const wxString& aSheetLayer )
-{
-    WS_DRAW_ITEM_LIST drawList;
-
-    drawList.SetPenSize( aPenWidth );
-    drawList.SetMilsToIUfactor( aScalar );
-    drawList.SetSheetNumber( aSheetNumber );
-    drawList.SetSheetCount( aSheetCount );
-    drawList.SetFileName( aFileName );
-    drawList.SetSheetName( aFullSheetName );
-    drawList.SetSheetLayer( aSheetLayer );
-
-    drawList.BuildWorkSheetGraphicList( aPageInfo,
-                               aTitleBlock, aColor, aAltColor );
-
-    // Draw item list
-    drawList.Draw( aClipBox, aDC );
-}
-
-
-void EDA_DRAW_FRAME::DrawWorkSheet( wxDC* aDC, BASE_SCREEN* aScreen, int aLineWidth,
-                                     double aScalar, const wxString &aFilename,
-                                     const wxString &aSheetLayer )
-{
-    if( !m_showBorderAndTitleBlock )
-        return;
-
-    const PAGE_INFO&  pageInfo = GetPageSettings();
-    wxSize  pageSize = pageInfo.GetSizeMils();
-
-    // if not printing, draw the page limits:
-    if( !aScreen->m_IsPrinting && m_showPageLimits )
-    {
-        GRSetDrawMode( aDC, GR_COPY );
-        GRRect( m_canvas->GetClipBox(), aDC, 0, 0,
-                pageSize.x * aScalar, pageSize.y * aScalar, aLineWidth,
-                m_drawBgColor == WHITE ? LIGHTGRAY : DARKDARKGRAY );
-    }
-
-    TITLE_BLOCK t_block = GetTitleBlock();
-    EDA_COLOR_T color = RED;
-
-    wxPoint origin = aDC->GetDeviceOrigin();
-
-    if( aScreen->m_IsPrinting && origin.y > 0 )
-    {
-        aDC->SetDeviceOrigin( 0, 0 );
-        aDC->SetAxisOrientation( true, false );
-    }
-
-    DrawPageLayout( aDC, m_canvas->GetClipBox(), pageInfo,
-                    GetScreenDesc(), aFilename, t_block,
-                    aScreen->m_NumberOfScreens, aScreen->m_ScreenNumber,
-                    aLineWidth, aScalar, color, color, aSheetLayer );
-
-    if( aScreen->m_IsPrinting && origin.y > 0 )
-    {
-        aDC->SetDeviceOrigin( origin.x, origin.y );
-        aDC->SetAxisOrientation( true, true );
-    }
-}
-
-
-wxString EDA_DRAW_FRAME::GetScreenDesc() const
-{
-    // Virtual function. In basic class, returns
-    // an empty string.
-    return wxEmptyString;
-}
 
 // returns the full text corresponding to the aTextbase,
 // after replacing format symbols by the corresponding value
@@ -178,7 +99,8 @@ wxString WS_DRAW_ITEM_LIST::BuildFullText( const wxString& aTextbase )
                 break;
 
             case 'Z':
-                msg += *m_paperFormat;
+                if( m_paperFormat )
+                    msg += *m_paperFormat;
                 break;
 
             case 'S':
@@ -197,11 +119,12 @@ wxString WS_DRAW_ITEM_LIST::BuildFullText( const wxString& aTextbase )
                 break;
 
             case 'L':
-                msg += *m_sheetLayer;
+                if( m_sheetLayer )
+                    msg += *m_sheetLayer;
                 break;
 
             case 'P':
-                msg += *m_sheetFullName;
+                msg += m_sheetFullName;
                 break;
 
             case 'Y':
@@ -243,7 +166,7 @@ wxString WS_DRAW_ITEM_LIST::BuildFullText( const wxString& aTextbase )
 
 
 void TITLE_BLOCK::Format( OUTPUTFORMATTER* aFormatter, int aNestLevel, int aControlBits ) const
-    throw( IO_ERROR )
+
 {
     // Don't write the title block information if there is nothing to write.
     bool isempty = true;

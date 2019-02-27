@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2012 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2004-2015 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2017 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2004-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,13 +29,12 @@
 #include <fctsys.h>
 #include <gr_basic.h>
 #include <macros.h>
-#include <class_drawpanel.h>
-#include <plot_common.h>
+#include <sch_draw_panel.h>
+#include <plotter.h>
 #include <trigo.h>
-#include <wxstruct.h>
-#include <richio.h>
 #include <base_units.h>
 #include <msgpanel.h>
+#include <bitmaps.h>
 
 #include <general.h>
 #include <lib_polyline.h>
@@ -48,87 +47,7 @@ LIB_POLYLINE::LIB_POLYLINE( LIB_PART*      aParent ) :
     m_Fill  = NO_FILL;
     m_Width = 0;
     m_isFillable = true;
-    m_typeName   = _( "PolyLine" );
     m_ModifyIndex = 0;
-}
-
-
-bool LIB_POLYLINE::Save( OUTPUTFORMATTER& aFormatter )
-{
-    int ccount = GetCornerCount();
-
-    aFormatter.Print( 0, "P %d %d %d %d", ccount, m_Unit, m_Convert, m_Width );
-
-    for( unsigned i = 0; i < GetCornerCount(); i++ )
-    {
-        aFormatter.Print( 0, " %d %d", m_PolyPoints[i].x, m_PolyPoints[i].y );
-    }
-
-    aFormatter.Print( 0, " %c\n", fill_tab[m_Fill] );
-
-    return true;
-}
-
-
-bool LIB_POLYLINE::Load( LINE_READER& aLineReader, wxString& aErrorMsg )
-{
-    char*   p;
-    int     i, ccount = 0;
-    wxPoint pt;
-    char*   line = (char*) aLineReader;
-
-    i = sscanf( line + 2, "%d %d %d %d", &ccount, &m_Unit, &m_Convert, &m_Width );
-
-    m_Fill = NO_FILL;
-
-    if( i < 4 )
-    {
-        aErrorMsg.Printf( _( "Polyline only had %d parameters of the required 4" ), i );
-        return false;
-    }
-
-    if( ccount <= 0 )
-    {
-        aErrorMsg.Printf( _( "Polyline count parameter %d is invalid" ), ccount );
-        return false;
-    }
-
-    strtok( line + 2, " \t\n" );     // Skip field
-    strtok( NULL, " \t\n" );         // Skip field
-    strtok( NULL, " \t\n" );         // Skip field
-    strtok( NULL, " \t\n" );
-
-    for( i = 0; i < ccount; i++ )
-    {
-        p = strtok( NULL, " \t\n" );
-
-        if( p == NULL || sscanf( p, "%d", &pt.x ) != 1 )
-        {
-            aErrorMsg.Printf( _( "Polyline point %d X position not defined" ), i );
-            return false;
-        }
-
-        p = strtok( NULL, " \t\n" );
-
-        if( p == NULL || sscanf( p, "%d", &pt.y ) != 1 )
-        {
-            aErrorMsg.Printf( _( "Polyline point %d Y position not defined" ), i );
-            return false;
-        }
-
-        AddPoint( pt );
-    }
-
-    if( ( p = strtok( NULL, " \t\n" ) ) != NULL )
-    {
-        if( p[0] == 'F' )
-            m_Fill = FILLED_SHAPE;
-
-        if( p[0] == 'f' )
-            m_Fill = FILLED_WITH_BG_BODYCOLOR;
-    }
-
-    return true;
 }
 
 
@@ -257,19 +176,25 @@ void LIB_POLYLINE::AddPoint( const wxPoint& point )
 
 int LIB_POLYLINE::GetPenSize() const
 {
-    return ( m_Width == 0 ) ? GetDefaultLineThickness() : m_Width;
+    if( m_Width > 0 )
+        return m_Width;
+
+    if( m_Width == 0 )
+       return GetDefaultLineThickness();
+
+    return -1;   // the minimal pen value
 }
 
 
 void LIB_POLYLINE::drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                                EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
+                                COLOR4D aColor, GR_DRAWMODE aDrawMode, void* aData,
                                 const TRANSFORM& aTransform )
 {
     wxPoint  pos1;
-    EDA_COLOR_T color = GetLayerColor( LAYER_DEVICE );
+    COLOR4D color = GetLayerColor( LAYER_DEVICE );
     wxPoint* buffer = NULL;
 
-    if( aColor < 0 )                // Used normal color or selected color
+    if( aColor == COLOR4D::UNSPECIFIED )                // Used normal color or selected color
     {
         if( IsSelected() )
             color = GetItemSelectedColor();
@@ -288,7 +213,7 @@ void LIB_POLYLINE::drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint
 
     FILL_T fill = aData ? NO_FILL : m_Fill;
 
-    if( aColor >= 0 )
+    if( aColor != COLOR4D::UNSPECIFIED )
         fill = NO_FILL;
 
     GRSetDrawMode( aDC, aDrawMode );
@@ -393,14 +318,14 @@ void LIB_POLYLINE::DeleteSegment( const wxPoint aPosition )
 }
 
 
-void LIB_POLYLINE::GetMsgPanelInfo( MSG_PANEL_ITEMS& aList )
+void LIB_POLYLINE::GetMsgPanelInfo( EDA_UNITS_T aUnits, MSG_PANEL_ITEMS& aList )
 {
     wxString msg;
     EDA_RECT bBox = GetBoundingBox();
 
-    LIB_ITEM::GetMsgPanelInfo( aList );
+    LIB_ITEM::GetMsgPanelInfo( aUnits, aList );
 
-    msg = StringFromValue( g_UserUnit, m_Width, true );
+    msg = MessageTextFromValue( aUnits, m_Width, true );
 
     aList.push_back( MSG_PANEL_ITEM( _( "Line Width" ), msg, BLUE ) );
 
@@ -411,12 +336,18 @@ void LIB_POLYLINE::GetMsgPanelInfo( MSG_PANEL_ITEMS& aList )
 }
 
 
-wxString LIB_POLYLINE::GetSelectMenuText() const
+wxString LIB_POLYLINE::GetSelectMenuText( EDA_UNITS_T aUnits ) const
 {
     return wxString::Format( _( "Polyline at (%s, %s) with %d points" ),
-                             GetChars( CoordinateToString( m_PolyPoints[0].x ) ),
-                             GetChars( CoordinateToString( m_PolyPoints[0].y ) ),
+                             MessageTextFromValue( aUnits, m_PolyPoints[0].x ),
+                             MessageTextFromValue( aUnits, m_PolyPoints[0].y ),
                              int( m_PolyPoints.size() ) );
+}
+
+
+BITMAP_DEF LIB_POLYLINE::GetMenuImage() const
+{
+    return add_polygon_xpm;
 }
 
 
@@ -476,14 +407,11 @@ void LIB_POLYLINE::BeginEdit( STATUS_FLAGS aEditMode, const wxPoint aPosition )
             prevPoint = point;
             index++;
         }
-
-        SetEraseLastDrawItem();
     }
     else if( aEditMode == IS_MOVED )
     {
         m_initialCursorPos = aPosition;
         m_initialPos = m_PolyPoints[0];
-        SetEraseLastDrawItem();
     }
 
     m_Flags = aEditMode;
@@ -532,16 +460,14 @@ void LIB_POLYLINE::EndEdit( const wxPoint& aPosition, bool aAbort )
     }
 
     m_Flags = 0;
-    SetEraseLastDrawItem( false );
 }
 
 
-void LIB_POLYLINE::calcEdit( const wxPoint& aPosition )
+void LIB_POLYLINE::CalcEdit( const wxPoint& aPosition )
 {
     if( m_Flags == IS_NEW )
     {
         m_PolyPoints[ GetCornerCount() - 1 ] = aPosition;
-        SetEraseLastDrawItem();
     }
     else if( m_Flags == IS_RESIZED )
     {

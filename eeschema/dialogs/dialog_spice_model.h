@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2016 CERN
+ * Copyright (C) 2016-2017 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
@@ -26,16 +26,20 @@
 #define DIALOG_SPICE_MODEL_H
 
 #include "dialog_spice_model_base.h"
+#include "netlist_exporter_pspice.h"
 
 #include <sim/spice_value.h>
 #include <sch_component.h>
+#include <sch_field.h>
+#include <lib_field.h>
 
 #include <wx/valnum.h>
 
 class DIALOG_SPICE_MODEL : public DIALOG_SPICE_MODEL_BASE
 {
 public:
-    DIALOG_SPICE_MODEL( wxWindow* aParent, SCH_COMPONENT& aComponent, SCH_FIELDS& aSchFields );
+    DIALOG_SPICE_MODEL( wxWindow* aParent, SCH_COMPONENT& aComponent, SCH_FIELDS* aSchFields );
+    DIALOG_SPICE_MODEL( wxWindow* aParent, SCH_COMPONENT& aComponent, LIB_FIELDS* aLibFields );
 
 private:
     /**
@@ -54,19 +58,20 @@ private:
     bool generatePowerSource( wxString& aTarget ) const;
 
     /**
-     * Loads a list of components from a file and adds them to a combo box.
+     * Loads a list of components (.model and .subckt) from a spice library
+     * file and adds them to a combo box.
      * @param aComboBox is the target combo box
-     * @param aFilePath is the file to be processed
-     * @param aKeyword is the keyword to select the type of components (e.g. "subckt" or "model")
+     * @param aFilePath is path to the library file
      */
-    void updateFromFile( wxComboBox* aComboBox, const wxString& aFilePath, const wxString& aKeyword );
+    void loadLibrary( const wxString& aFilePath );
 
     /**
      * Returns or creates a field in the edited schematic fields vector.
      * @param aFieldType is an SPICE_FIELD enum value.
      * @return Requested field.
      */
-    SCH_FIELD& getField( int aFieldType );
+    SCH_FIELD& getSchField( int aFieldType );
+    LIB_FIELD& getLibField( int aFieldType );
 
     /**
      * Adds a value to the PWL values list.
@@ -97,9 +102,14 @@ private:
         FinishDialogSettings();
     }
 
+    /**
+     * Initializes the internal settings
+     */
+    void Init();
+
     // Event handlers
-    void onSemiSelectLib( wxCommandEvent& event ) override;
-    void onSelectIcLib( wxCommandEvent& event ) override;
+    void onSelectLibrary( wxCommandEvent& event ) override;
+    void onModelSelected( wxCommandEvent& event ) override;
     void onPwlAdd( wxCommandEvent& event ) override;
     void onPwlRemove( wxCommandEvent& event ) override;
 
@@ -107,10 +117,32 @@ private:
     SCH_COMPONENT& m_component;
 
     ///> Fields from the component properties dialog
-    SCH_FIELDS& m_fields;
+    SCH_FIELDS* m_schfields;
+    LIB_FIELDS* m_libfields;
+    bool m_useSchFields;
 
     ///> Temporary field values
     std::map<int, wxString> m_fieldsTmp;
+
+    struct MODEL
+    {
+        ///> Line number in the library file
+        int line;
+
+        ///> Type of the device
+        SPICE_PRIMITIVE model;
+
+        ///> Convert string to model
+        static SPICE_PRIMITIVE parseModelType( const wxString& aValue );
+
+        MODEL( int aLine, enum SPICE_PRIMITIVE aModel )
+            : line( aLine ), model( aModel )
+        {
+        }
+    };
+
+    ///> Models available in the selected library file
+    std::map<wxString, MODEL> m_models;
 
     ///> Column identifiers for PWL power source value list
     long m_pwlTimeCol, m_pwlValueCol;

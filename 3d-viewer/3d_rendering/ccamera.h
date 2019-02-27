@@ -170,13 +170,9 @@ class CCAMERA
 
     void ZoomReset();
 
-    bool ZoomIn( float aFactor );
+    bool Zoom( float aFactor );
 
-    bool ZoomOut( float aFactor );
-
-    bool ZoomIn_T1( float aFactor );
-
-    bool ZoomOut_T1( float aFactor );
+    bool Zoom_T1( float aFactor );
 
     float ZoomGet() const ;
 
@@ -225,6 +221,14 @@ class CCAMERA
      * @param aOutDirection: out direction
      */
     void MakeRay( const SFVEC2I &aWindowPos, SFVEC3F &aOutOrigin, SFVEC3F &aOutDirection ) const;
+
+    /**
+     * @brief MakeRay - Make a ray based on a windows screen position, it will interpolate based on the float aWindowPos
+     * @param aWindowPos: the windows buffer position (float value)
+     * @param aOutOrigin: out origin position of the ray
+     * @param aOutDirection: out direction
+     */
+    void MakeRay( const SFVEC2F &aWindowPos, SFVEC3F &aOutOrigin, SFVEC3F &aOutDirection ) const;
 
     /**
      * @brief MakeRayAtCurrrentMousePosition - Make a ray based on the latest mouse position

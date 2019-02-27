@@ -5,7 +5,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2012 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2016-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -69,7 +69,7 @@ class LEGACY_PLUGIN : public PLUGIN
 
 public:
 
-    //-----<PLUGIN IMPLEMENTATION>----------------------------------------------
+    //-----<PLUGIN API>---------------------------------------------------------
 
     const wxString PluginName() const override
     {
@@ -84,17 +84,20 @@ public:
     BOARD* Load( const wxString& aFileName, BOARD* aAppendToMe,
             const PROPERTIES* aProperties = NULL ) override;
 
-    wxArrayString FootprintEnumerate( const wxString& aLibraryPath,
+    void FootprintEnumerate( wxArrayString& aFootprintNames, const wxString& aLibraryPath,
             const PROPERTIES* aProperties = NULL ) override;
 
     MODULE* FootprintLoad( const wxString& aLibraryPath, const wxString& aFootprintName,
             const PROPERTIES* aProperties = NULL ) override;
 
-    bool FootprintLibDelete( const wxString& aLibraryPath, const PROPERTIES* aProperties = NULL ) override;
+    bool FootprintLibDelete( const wxString& aLibraryPath,
+                             const PROPERTIES* aProperties = NULL ) override;
+
+    long long GetLibraryTimestamp( const wxString& aLibraryPath ) const override;
 
     bool IsFootprintLibWritable( const wxString& aLibraryPath ) override;
 
-    //-----</PLUGIN IMPLEMENTATION>---------------------------------------------
+    //-----</PLUGIN API>--------------------------------------------------------
 
     typedef int     BIU;
 
@@ -107,7 +110,7 @@ public:
     void    SaveModule3D( const MODULE* aModule ) const;
 
     // return the new .kicad_pcb layer id from the old (legacy) layer id
-    static LAYER_ID leg_layer2new( int cu_count, LAYER_NUM aLayerNum );
+    static PCB_LAYER_ID leg_layer2new( int cu_count, LAYER_NUM aLayerNum );
 
     static LSET     leg_mask2new( int cu_count, unsigned aMask );
 
@@ -143,7 +146,7 @@ protected:
     ///> otherwise returns unchanged net code
     inline int getNetCode( int aNetCode )
     {
-        if( aNetCode < (int) m_netCodes.size() )
+        if( (unsigned int) aNetCode < m_netCodes.size() )
             return m_netCodes[aNetCode];
 
         return aNetCode;
@@ -207,7 +210,7 @@ protected:
      * reads a list of segments (Tracks and Vias, or Segzones)
      *
      * @param aStructType is either PCB_TRACE_T to indicate tracks and vias, or
-     *        PCB_ZONE_T to indicate oldschool zone segments (before polygons came to be).
+     *        PCB_SEGZONE_T to indicate oldschool zone segments (before polygons came to be).
      */
     void loadTrackList( int aStructType );
 

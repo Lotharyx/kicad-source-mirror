@@ -5,7 +5,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2012 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -25,22 +25,25 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <fctsys.h>
 #include <class_board.h>
 #include <dialog_plot_base.h>
 #include <pcb_plot_params.h>
+#include <widgets/unit_binder.h>
+
+// the plot dialog window name, used by wxWidgets
+#define DLG_WINDOW_NAME "plot_dialog-window"
 
 /**
- * Class DIALOG_PLOT
- *
+ * Class DIALOG_PLOT is the dialog to set the plot options, and create plot files
+ * in various formats.
  */
 class DIALOG_PLOT : public DIALOG_PLOT_BASE
 {
 public:
     DIALOG_PLOT( PCB_EDIT_FRAME* parent );
+
 private:
     PCB_EDIT_FRAME*     m_parent;
-    BOARD*              m_board;
     wxConfigBase*       m_config;
     LSEQ                m_layerList;                // List to hold CheckListBox layer numbers
     double              m_XScaleAdjust;             // X scale factor adjust to compensate
@@ -54,23 +57,27 @@ private:
     int                 m_widthAdjustMinValue;      // Global track width limits
     int                 m_widthAdjustMaxValue;      // tracks width will be "clipped" whenever the
                                                     // m_PSWidthAdjust to these limits.
+    UNIT_BINDER         m_defaultLineWidth;
+    UNIT_BINDER         m_defaultPenSize;
+    UNIT_BINDER         m_trackWidthCorrection;
 
     PCB_PLOT_PARAMS     m_plotOpts;
 
     // Event called functions
-    void        Init_Dialog();
     void        Plot( wxCommandEvent& event ) override;
-    void        OnQuit( wxCommandEvent& event ) override;
-    void        OnClose( wxCloseEvent& event ) override;
     void        OnOutputDirectoryBrowseClicked( wxCommandEvent& event ) override;
     void        OnRightClick( wxMouseEvent& event ) override;
     void        OnPopUpLayers( wxCommandEvent& event ) override;
     void        SetPlotFormat( wxCommandEvent& event ) override;
+    void        OnChangeDXFPlotMode( wxCommandEvent& event ) override;
     void        OnSetScaleOpt( wxCommandEvent& event ) override;
     void        CreateDrillFile( wxCommandEvent& event ) override;
-	virtual void onRunDRC( wxCommandEvent& event ) override;
+    void        OnGerberX2Checked( wxCommandEvent& event ) override;
+    void        onRunDRC( wxCommandEvent& event ) override;
 
-    // orther functions
+    // other functions
+    void        init_Dialog();      // main initialization
+    void        reInitDialog();     // initialization after calling drill dialog
     void        applyPlotSettings();
     PlotFormat  getPlotFormat();
 

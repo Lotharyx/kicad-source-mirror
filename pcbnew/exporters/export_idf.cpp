@@ -27,7 +27,7 @@
 
 
 #include <list>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <macros.h>
 #include <pcbnew.h>
 #include <class_board.h>
@@ -39,7 +39,7 @@
 #include "project.h"
 #include "kiway.h"
 #include "3d_cache/3d_cache.h"
-#include "3d_cache/3d_filename_resolver.h"
+#include "filename_resolver.h"
 
 #ifndef PCBNEW
 #define PCBNEW                  // needed to define the right value of Millimeter2iu(x)
@@ -49,7 +49,7 @@
 // assumed default graphical line thickness: == 0.1mm
 #define LINE_WIDTH (Millimeter2iu( 0.1 ))
 
-static S3D_FILENAME_RESOLVER* resolver;
+static FILENAME_RESOLVER* resolver;
 
 /**
  * Function idf_export_outline
@@ -76,7 +76,7 @@ static void idf_export_outline( BOARD* aPcb, IDF3_BOARD& aIDFBoard )
     aIDFBoard.GetUserOffset( offX, offY );
 
     // Retrieve segments and arcs from the board
-    for( BOARD_ITEM* item = aPcb->m_Drawings; item; item = item->Next() )
+    for( auto item : aPcb->Drawings() )
     {
         if( item->Type() != PCB_LINE_T || item->GetLayer() != Edge_Cuts )
             continue;
@@ -199,7 +199,7 @@ UseBoundingBox:
     // there is always some uncertainty in the board dimensions
     // computed via ComputeBoundingBox() since this depends on the
     // individual module entities.
-    EDA_RECT bbbox = aPcb->ComputeBoundingBox( true );
+    EDA_RECT bbbox = aPcb->GetBoardEdgesBoundingBox();
 
     // convert to mm and compensate for an assumed LINE_WIDTH line thickness
     double  x   = ( bbbox.GetOrigin().x + LINE_WIDTH / 2 ) * scale + offX;
@@ -287,7 +287,7 @@ static void idf_export_module( BOARD* aPcb, MODULE* aModule,
 
     aIDFBoard.GetUserOffset( dx, dy );
 
-    for( D_PAD* pad = aModule->Pads(); pad; pad = pad->Next() )
+    for( D_PAD* pad = aModule->PadsList(); pad; pad = pad->Next() )
     {
         drill = (double) pad->GetDrillSize().x * scale;
         x     = pad->GetPosition().x * scale + dx;
@@ -303,7 +303,7 @@ static void idf_export_module( BOARD* aPcb, MODULE* aModule,
                 kplate = IDF3::PTH;
 
             // hole type
-            tstr = TO_UTF8( pad->GetPadName() );
+            tstr = TO_UTF8( pad->GetName() );
 
             if( tstr.empty() || !tstr.compare( "0" ) || !tstr.compare( "~" )
                 || ( kplate == IDF3::NPTH )
@@ -379,8 +379,8 @@ static void idf_export_module( BOARD* aPcb, MODULE* aModule,
 
     IDF3_COMPONENT* comp = NULL;
 
-    std::list<S3D_INFO>::const_iterator sM = aModule->Models().begin();
-    std::list<S3D_INFO>::const_iterator eM = aModule->Models().end();
+    auto sM = aModule->Models().begin();
+    auto eM = aModule->Models().end();
     wxFileName idfFile;
     wxString   idfExt;
 

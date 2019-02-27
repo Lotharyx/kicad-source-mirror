@@ -35,7 +35,7 @@
 #include <pl_editor_id.h>
 #include <dialog_helpers.h>
 #include <worksheet_shape_builder.h>
-#include <class_worksheet_dataitem.h>
+#include <worksheet_dataitem.h>
 #include <dialog_page_settings.h>
 #include <invoke_pl_editor_dialog.h>
 
@@ -186,8 +186,8 @@ void PLEDITOR_PRINTOUT::DrawPage( int aPageNum )
     GRForceBlackPen( true );
     screen->m_IsPrinting = true;
 
-    EDA_COLOR_T bg_color = m_parent->GetDrawBgColor();
-    m_parent->SetDrawBgColor( WHITE );
+    COLOR4D bg_color = m_parent->GetDrawBgColor();
+    m_parent->SetDrawBgColor( MakeColour( WHITE ) );
 
     screen->m_ScreenNumber = aPageNum;
     m_parent->DrawWorkSheet( dc, screen, 0, IU_PER_MILS, wxEmptyString );
