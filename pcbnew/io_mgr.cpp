@@ -213,5 +213,6 @@ static IO_MGR::REGISTER_PLUGIN registerGithubPlugin( IO_MGR::GITHUB, wxT("Github
 #endif /* BUILD_GITHUB_PLUGIN */
 #ifdef BUILD_MYODBC_PLUGIN
 static IO_MGR::REGISTER_PLUGIN registerMyODBCPlugin( IO_MGR::MYODBC, wxT("MyODBC"), []() -> PLUGIN* { return new MYODBC_PLUGIN; } );
+#endif /* BUILD_MYODBC_PLUGIN */
 static IO_MGR::REGISTER_PLUGIN registerLegacyPlugin( IO_MGR::LEGACY, wxT("Legacy"), []() -> PLUGIN* { return new LEGACY_PLUGIN; } );
 static IO_MGR::REGISTER_PLUGIN registerGPCBPlugin( IO_MGR::GEDA_PCB, wxT("GEDA/Pcb"), []() -> PLUGIN* { return new GPCB_PLUGIN; } );

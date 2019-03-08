@@ -141,7 +141,7 @@ set( EESCHEMA_SRCS
     class_libentry.cpp
     class_library.cpp
     class_odbc_library.cpp
-    class_netlist_object.cpp
+    legacy_part_serializer.cpp
     cmp_library_keywords.cpp
     cmp_library_lexer.cpp
     component_references_lister.cpp

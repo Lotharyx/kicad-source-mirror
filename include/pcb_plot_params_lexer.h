@@ -39,7 +39,8 @@ namespace PCBPLOTPARAMS_T
         T_STRING        = DSN_STRING,       // a quoted string, stripped of the quotes
         T_EOF           = DSN_EOF,          // special case for end of file
 
-        T_drillshape = 0,
+        T_creategerberjobfile = 0,
+        T_drillshape,
         T_excludeedgelayer,
         T_false,
         T_gerberprecision,
@@ -144,7 +145,7 @@ public:
      * @return PCBPLOTPARAMS_T::T - the type of token found next.
      * @throw IO_ERROR - only if the LINE_READER throws it.
      */
-    PCBPLOTPARAMS_T::T NextTok() throw( IO_ERROR )
+    PCBPLOTPARAMS_T::T NextTok()
     {
         return (PCBPLOTPARAMS_T::T) DSNLEXER::NextTok();
     }
@@ -157,7 +158,7 @@ public:
      * @return int - the actual token read in.
      * @throw IO_ERROR, if the next token does not satisfy IsSymbol()
      */
-    PCBPLOTPARAMS_T::T NeedSYMBOL() throw( IO_ERROR )
+    PCBPLOTPARAMS_T::T NeedSYMBOL()
     {
         return (PCBPLOTPARAMS_T::T) DSNLEXER::NeedSYMBOL();
     }
@@ -170,7 +171,7 @@ public:
      * @return int - the actual token read in.
      * @throw IO_ERROR, if the next token does not satisfy the above test
      */
-    PCBPLOTPARAMS_T::T NeedSYMBOLorNUMBER() throw( IO_ERROR )
+    PCBPLOTPARAMS_T::T NeedSYMBOLorNUMBER()
     {
         return (PCBPLOTPARAMS_T::T) DSNLEXER::NeedSYMBOLorNUMBER();
     }

@@ -114,7 +114,7 @@ if ( KICAD_SCRIPTING_MODULES AND NOT KICAD_SCRIPTING )
     set ( KICAD_SCRIPTING ON )
 endif()
 
-option( BUILD_MYODBC_PLUGIN "Build the MYODBC_PLUGIN for pcbnew." ON )
+option( BUILD_MYODBC_PLUGIN "Build the MYODBC_PLUGIN for pcbnew and eeschema." ON )
 
 # same with KICAD_SCRIPTING_ACTION_MENUS
 if ( KICAD_SCRIPTING_ACTION_MENU AND NOT KICAD_SCRIPTING )
@@ -140,7 +140,8 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Global setting: __GXX_ABI_VERSION=1002, GLM_ENABLE_EXPERIMENTAL
-add_definitions(-D__GXX_ABI_VERSION=1002 -DGLM_ENABLE_EXPERIMENTAL)
+add_definitions(-fabi-version=2)  # gives us the desired __GXX_ABI_VERSION=1002 result
+add_definitions(-DGLM_ENABLE_EXPERIMENTAL)
 
 
 

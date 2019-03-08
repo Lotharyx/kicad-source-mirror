@@ -23,6 +23,9 @@
 if( BUILD_GITHUB_PLUGIN )
     set( GITHUB_PLUGIN_LIBRARIES github_plugin )
 endif()
+if( BUILD_MYODBC_PLUGIN )
+    set( MYODBC_PLUGIN_LIBRARIES myodbc_plugin )
+endif()
 
 add_executable( qa_pcbnew_tools
 
@@ -59,6 +62,7 @@ target_link_libraries( qa_pcbnew_tools
     unit_test_utils
     ${wxWidgets_LIBRARIES}
     ${GITHUB_PLUGIN_LIBRARIES}
+    ${MYODBC_PLUGIN_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
     ${PYTHON_LIBRARIES}
     ${Boost_LIBRARIES}      # must follow GITHUB

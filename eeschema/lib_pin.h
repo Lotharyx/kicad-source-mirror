@@ -71,6 +71,7 @@ class LIB_PIN : public LIB_ITEM
     // level, performing additional pin checking, multi-pin editing, and setting the modified
     // flag.  So the LEGACY_PLUGIN_CACHE needs direct access to the member variables.
     friend class SCH_LEGACY_PLUGIN_CACHE;
+    friend class LEGACY_PART_SERIALIZER;
 
     wxPoint  m_position;     ///< Position of the pin.
     int      m_length;       ///< Length of the pin.

@@ -42,6 +42,7 @@ namespace TFIELD_T
         T_field = 0,
         T_name,
         T_templatefields,
+        T_url,
         T_value,
         T_visible
     };
@@ -118,7 +119,7 @@ public:
      * @return TFIELD_T::T - the type of token found next.
      * @throw IO_ERROR - only if the LINE_READER throws it.
      */
-    TFIELD_T::T NextTok() throw( IO_ERROR )
+    TFIELD_T::T NextTok()
     {
         return (TFIELD_T::T) DSNLEXER::NextTok();
     }
@@ -131,7 +132,7 @@ public:
      * @return int - the actual token read in.
      * @throw IO_ERROR, if the next token does not satisfy IsSymbol()
      */
-    TFIELD_T::T NeedSYMBOL() throw( IO_ERROR )
+    TFIELD_T::T NeedSYMBOL()
     {
         return (TFIELD_T::T) DSNLEXER::NeedSYMBOL();
     }
@@ -144,7 +145,7 @@ public:
      * @return int - the actual token read in.
      * @throw IO_ERROR, if the next token does not satisfy the above test
      */
-    TFIELD_T::T NeedSYMBOLorNUMBER() throw( IO_ERROR )
+    TFIELD_T::T NeedSYMBOLorNUMBER()
     {
         return (TFIELD_T::T) DSNLEXER::NeedSYMBOLorNUMBER();
     }

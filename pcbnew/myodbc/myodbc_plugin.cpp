@@ -90,11 +90,10 @@ const wxString MYODBC_PLUGIN::GetFileExtension() const
 }
             
             
-wxArrayString MYODBC_PLUGIN::FootprintEnumerate(
+void MYODBC_PLUGIN::FootprintEnumerate(
+    wxArrayString & aArrayString,
     const wxString& aLibraryPath, const PROPERTIES* aProperties )
 {
-    wxArrayString ret;
-    
     MYSQL_ADAPTER::connection_parameters parameters;
     unpack_parameters(parameters, aProperties);
     m_db->Disconnect(); // Just in case!
@@ -104,7 +103,7 @@ wxArrayString MYODBC_PLUGIN::FootprintEnumerate(
             while(results->Fetch()) {
                 std::string fpname;
                 if(results->GetData(1, fpname))
-                    ret.Add(fpname);
+                    aArrayString.Add(fpname);
             }
         } else {
             std::string msg = StrPrintf( "Could not fetch footprint list.  Server said: %s", m_db->LastErrorString().c_str() );
@@ -115,7 +114,6 @@ wxArrayString MYODBC_PLUGIN::FootprintEnumerate(
         std::string msg = StrPrintf( "Could not connect to MySQL.  Driver said: %s", m_db->LastErrorString().c_str() );
         THROW_IO_ERROR( msg );
     }
-    return ret;
 }
             
             
@@ -140,7 +138,7 @@ MODULE* MYODBC_PLUGIN::FootprintLoad( const wxString& aLibraryPath,
                                 m_parser->SetLineReader( &reader );     // ownership not passed
                                 
                                 ret = (MODULE*) m_parser->Parse();
-                                ret->SetFPID( aFootprintName );
+                                ret->SetFPID( LIB_ID( wxEmptyString, aFootprintName ) );
             }
         } else {
             std::string msg = StrPrintf( "Could not fetch footprint data.  Server said: %s", m_db->LastErrorString().c_str() );
@@ -184,7 +182,7 @@ void MYODBC_PLUGIN::FootprintSave( const wxString& aLibraryPath,
         
         // We need binding now.
         std::string query = "INSERT INTO `footprints` (`name`,`data`) VALUES (?, ?)";
-        std::string name = module->GetFPID().GetFootprintName();
+        std::string name = module->GetFPID().GetLibItemName();
         std::string data = (const char *)serial.GetString().c_str();
         
         if(m_db->Prepare(query)) {

@@ -57,7 +57,9 @@ public:
 //      SCH_KICAD,       ///< The s-expression version of the schematic file formats.
         SCH_EAGLE,       ///< Autodesk Eagle file format
         // Add your schematic type here.
-
+// #ifdef BUILD_MYODBC_PLUGIN // For some reason that I can't determine, this doesn't seem to be defined
+        SCH_MYODBC,
+// #endif
         // ALTIUM,
         // etc.
     } )

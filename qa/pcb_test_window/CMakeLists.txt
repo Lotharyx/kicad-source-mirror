@@ -30,8 +30,11 @@ add_definitions(-DBOOST_TEST_DYN_LINK -DPCBNEW)
 if( BUILD_GITHUB_PLUGIN )
     set( GITHUB_PLUGIN_LIBRARIES github_plugin )
 endif()
+if( BUILD_MYODBC_PLUGIN )
+    set( MYODBC_PLUGIN_LIBRARIES myodbc_plugin )
+endif()
 
-add_dependencies( pnsrouter pcbcommon pcad2kicadpcb ${GITHUB_PLUGIN_LIBRARIES} )
+add_dependencies( pnsrouter pcbcommon pcad2kicadpcb ${GITHUB_PLUGIN_LIBRARIES} ${MYODBC_PLUGIN_LIBRARIES} )
 
 add_executable(test_window WIN32
   test.cpp

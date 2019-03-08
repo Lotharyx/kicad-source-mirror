@@ -48,6 +48,8 @@ include_directories(
     ../utils/idftools
     ${GLM_INCLUDE_DIR}
     ./specctra_import_export
+    ../bitmaps_png/include
+    ../polygon/include
     ${INC_AFTER}
     )
 
@@ -618,7 +620,6 @@ endif()
 
 if( BUILD_MYODBC_PLUGIN )
     add_subdirectory( myodbc )
-    add_dependencies( myodbc_plugin lib-dependencies )
 endif()
 
 # a very small program launcher for pcbnew_kiface

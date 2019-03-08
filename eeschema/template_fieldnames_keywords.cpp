@@ -16,6 +16,7 @@ const KEYWORD TEMPLATE_FIELDNAMES_LEXER::keywords[] = {
     TOKDEF( field ),
     TOKDEF( name ),
     TOKDEF( templatefields ),
+    TOKDEF( url ),
     TOKDEF( value ),
     TOKDEF( visible )
 };

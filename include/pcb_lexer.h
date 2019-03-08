@@ -41,6 +41,7 @@ namespace PCB_KEYS_T
 
         T_add_net = 0,
         T_allowed,
+        T_anchor,
         T_angle,
         T_arc,
         T_arc_segments,
@@ -66,8 +67,10 @@ namespace PCB_KEYS_T
         T_company,
         T_connect,
         T_connect_pads,
+        T_convexhull,
         T_copperpour,
         T_crossbar,
+        T_custom,
         T_date,
         T_descr,
         T_die_length,
@@ -133,6 +136,8 @@ namespace PCB_KEYS_T
         T_not_allowed,
         T_np_thru_hole,
         T_offset,
+        T_options,
+        T_outline,
         T_oval,
         T_pad,
         T_pad_drill,
@@ -150,6 +155,7 @@ namespace PCB_KEYS_T
         T_plus,
         T_polygon,
         T_portrait,
+        T_primitives,
         T_priority,
         T_pts,
         T_radius,
@@ -194,6 +200,7 @@ namespace PCB_KEYS_T
         T_tracks,
         T_trapezoid,
         T_tstamp,
+        T_unlocked,
         T_user,
         T_user_trace_width,
         T_user_via,
@@ -299,7 +306,7 @@ public:
      * @return PCB_KEYS_T::T - the type of token found next.
      * @throw IO_ERROR - only if the LINE_READER throws it.
      */
-    PCB_KEYS_T::T NextTok() throw( IO_ERROR )
+    PCB_KEYS_T::T NextTok()
     {
         return (PCB_KEYS_T::T) DSNLEXER::NextTok();
     }
@@ -312,7 +319,7 @@ public:
      * @return int - the actual token read in.
      * @throw IO_ERROR, if the next token does not satisfy IsSymbol()
      */
-    PCB_KEYS_T::T NeedSYMBOL() throw( IO_ERROR )
+    PCB_KEYS_T::T NeedSYMBOL()
     {
         return (PCB_KEYS_T::T) DSNLEXER::NeedSYMBOL();
     }
@@ -325,7 +332,7 @@ public:
      * @return int - the actual token read in.
      * @throw IO_ERROR, if the next token does not satisfy the above test
      */
-    PCB_KEYS_T::T NeedSYMBOLorNUMBER() throw( IO_ERROR )
+    PCB_KEYS_T::T NeedSYMBOLorNUMBER()
     {
         return (PCB_KEYS_T::T) DSNLEXER::NeedSYMBOLorNUMBER();
     }

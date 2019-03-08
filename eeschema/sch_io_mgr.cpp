@@ -26,6 +26,7 @@
 #include <sch_io_mgr.h>
 #include <sch_legacy_plugin.h>
 #include <sch_eagle_plugin.h>
+#include <class_odbc_library.h>
 
 #include <wildcards_and_files_ext.h>
 
@@ -57,6 +58,10 @@ SCH_PLUGIN* SCH_IO_MGR::FindPlugin( SCH_FILE_T aFileType )
         return new SCH_LEGACY_PLUGIN();
     case SCH_EAGLE:
         return new SCH_EAGLE_PLUGIN();
+#ifdef BUILD_MYODBC_PLUGIN
+    case SCH_MYODBC:
+        return new ODBC_SCH_PLUGIN();
+#endif
     }
 
     return NULL;
@@ -89,6 +94,11 @@ const wxString SCH_IO_MGR::ShowType( SCH_FILE_T aType )
 
     case SCH_EAGLE:
 	   return wxString( wxT( "EAGLE" ) );
+       
+#ifdef BUILD_MYODBC_PLUGIN
+    case SCH_MYODBC:
+        return wxString( wxT( "MyODBC" ) );
+#endif
     }
 }
 
@@ -103,7 +113,11 @@ SCH_IO_MGR::SCH_FILE_T SCH_IO_MGR::EnumFromStr( const wxString& aType )
         return SCH_LEGACY;
     else if( aType == wxT( "EAGLE" ) )
         return SCH_EAGLE;
-
+#ifdef BUILD_MYODBC_PLUGIN
+    else if( aType == wxT( "MyODBC" ) )
+        return SCH_MYODBC;
+#endif
+    
     // wxASSERT( blow up here )
 
     return SCH_FILE_T( -1 );
@@ -134,6 +148,12 @@ SCH_IO_MGR::SCH_FILE_T SCH_IO_MGR::GuessPluginTypeFromLibPath( const wxString& a
     {
         ret = SCH_LEGACY;
     }
+#ifdef BUILD_MYODBC_PLUGIN
+    else if( fn.GetExt() == SchematicLibraryFileExtension) {
+        if(ODBC_SCH_PLUGIN::ChkHeader(aLibPath))
+            ret = SCH_MYODBC;
+    }
+#endif
 
     return ret;
 }

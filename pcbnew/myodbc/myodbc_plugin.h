@@ -18,29 +18,29 @@ class MYODBC_PLUGIN : public PCB_IO
 {
 public:
     //-----<PLUGIN API>----------------------------------------------------------
-    const wxString PluginName() const;
+    const wxString PluginName() const override;
 
-    const wxString GetFileExtension() const;
+    const wxString GetFileExtension() const override;
 
-    wxArrayString FootprintEnumerate( const wxString& aLibraryPath,
-            const PROPERTIES* aProperties = NULL );
+    void FootprintEnumerate( wxArrayString & aArrayString, const wxString& aLibraryPath,
+            const PROPERTIES* aProperties = NULL ) override;
 
     MODULE* FootprintLoad( const wxString& aLibraryPath,
-            const wxString& aFootprintName, const PROPERTIES* aProperties );
+            const wxString& aFootprintName, const PROPERTIES* aProperties ) override;
 
     void FootprintSave( const wxString& aLibraryPath, const MODULE* aFootprint,
-            const PROPERTIES* aProperties = NULL );
+            const PROPERTIES* aProperties = NULL ) override;
 
     void FootprintDelete( const wxString& aLibraryPath, const wxString& aFootprintName,
-            const PROPERTIES* aProperties = NULL );
+            const PROPERTIES* aProperties = NULL ) override;
 
-    bool IsFootprintLibWritable( const wxString& aLibraryPath );
+    bool IsFootprintLibWritable( const wxString& aLibraryPath ) override;
 
-    void FootprintLibOptions( PROPERTIES* aListToAppendTo ) const;
+    void FootprintLibOptions( PROPERTIES* aListToAppendTo ) const override;
 
-    void FootprintLibCreate( const wxString& aLibraryPath, const PROPERTIES* aProperties );
+    void FootprintLibCreate( const wxString& aLibraryPath, const PROPERTIES* aProperties ) override;
 
-    bool FootprintLibDelete( const wxString& aLibraryPath, const PROPERTIES* aProperties );
+    bool FootprintLibDelete( const wxString& aLibraryPath, const PROPERTIES* aProperties ) override;
 
     //-----</PLUGIN API>---------------------------------------------------------
 

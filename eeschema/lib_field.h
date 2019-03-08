@@ -84,6 +84,7 @@ class LIB_FIELD : public LIB_ITEM, public EDA_TEXT
     void CalcEdit( const wxPoint& aPosition ) override;
 
     friend class SCH_LEGACY_PLUGIN_CACHE;   // Required to access m_name.
+    friend class LEGACY_PART_SERIALIZER;
 
 public:
 

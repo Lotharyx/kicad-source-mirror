@@ -153,7 +153,7 @@ public:
      * @return NL_T::T - the type of token found next.
      * @throw IO_ERROR - only if the LINE_READER throws it.
      */
-    NL_T::T NextTok() throw( IO_ERROR )
+    NL_T::T NextTok()
     {
         return (NL_T::T) DSNLEXER::NextTok();
     }
@@ -166,7 +166,7 @@ public:
      * @return int - the actual token read in.
      * @throw IO_ERROR, if the next token does not satisfy IsSymbol()
      */
-    NL_T::T NeedSYMBOL() throw( IO_ERROR )
+    NL_T::T NeedSYMBOL()
     {
         return (NL_T::T) DSNLEXER::NeedSYMBOL();
     }
@@ -179,7 +179,7 @@ public:
      * @return int - the actual token read in.
      * @throw IO_ERROR, if the next token does not satisfy the above test
      */
-    NL_T::T NeedSYMBOLorNUMBER() throw( IO_ERROR )
+    NL_T::T NeedSYMBOLorNUMBER()
     {
         return (NL_T::T) DSNLEXER::NeedSYMBOLorNUMBER();
     }

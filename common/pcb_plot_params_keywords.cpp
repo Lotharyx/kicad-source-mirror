@@ -13,6 +13,7 @@ using namespace PCBPLOTPARAMS_T;
 #define TOKDEF(x)    { #x, T_##x }
 
 const KEYWORD PCB_PLOT_PARAMS_LEXER::keywords[] = {
+    TOKDEF( creategerberjobfile ),
     TOKDEF( drillshape ),
     TOKDEF( excludeedgelayer ),
     TOKDEF( false ),

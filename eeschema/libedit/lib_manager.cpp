@@ -169,7 +169,7 @@ bool LIB_MANAGER::SaveLibrary( const wxString& aLibrary, const wxString& aFileNa
     wxCHECK( LibraryExists( aLibrary ), false );
     wxFileName fn( aFileName );
     wxCHECK( !fn.FileExists() || fn.IsFileWritable(), false );
-    SCH_PLUGIN::SCH_PLUGIN_RELEASER pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_LEGACY ) );
+    SCH_PLUGIN::SCH_PLUGIN_RELEASER pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::GuessPluginTypeFromLibPath(aFileName) ) );
     bool res = true;    // assume all libraries are successfully saved
 
     auto it = m_libs.find( aLibrary );
@@ -553,8 +553,13 @@ bool LIB_MANAGER::PartExists( const wxString& aAlias, const wxString& aLibrary )
     auto libBufIt = m_libs.find( aLibrary );
     LIB_ALIAS* alias = nullptr;
 
-    if( libBufIt != m_libs.end() )
-        return !!libBufIt->second.GetBuffer( aAlias );
+    if( libBufIt != m_libs.end() ) {
+        // Even though we know about the library, the requested alias may not yet
+        // be buffered.  Don't crap out here if it isn't, without making an 
+        // attempt to load it.
+        if(libBufIt->second.GetBuffer( aAlias ) != nullptr)
+            return true;
+    }
 
     try
     {
@@ -639,7 +644,8 @@ bool LIB_MANAGER::addLibrary( const wxString& aFilePath, bool aCreate, SYMBOL_LI
         relPath = aFilePath;
 
     SYMBOL_LIB_TABLE_ROW* libRow = new SYMBOL_LIB_TABLE_ROW( libName, relPath,
-            SCH_IO_MGR::ShowType( SCH_IO_MGR::SCH_LEGACY ) );
+//            SCH_IO_MGR::ShowType( SCH_IO_MGR::SCH_LEGACY ) );
+            SCH_IO_MGR::ShowType( SCH_IO_MGR::GuessPluginTypeFromLibPath(relPath) ) );
     aTable->InsertRow( libRow );
 
     if( aCreate )

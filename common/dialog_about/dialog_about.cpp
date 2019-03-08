@@ -561,11 +561,11 @@ void DIALOG_ABOUT::buildVersionInfoData( wxString& aMsg, bool aFormatHtml )
     aMsg << OFF;
 #endif
 
-    msg_version << "                  BUILD_MYODBC_PLUGIN=";
+    aMsg << "                  BUILD_MYODBC_PLUGIN=";
 #ifdef BUILD_MYODBC_PLUGIN
-    msg_version << ON;
+    aMsg << ON;
 #else
-    msg_version << OFF;
+    aMsg << OFF;
 #endif
     
     aMsg << indent4 << "KICAD_SCRIPTING_ACTION_MENU=";

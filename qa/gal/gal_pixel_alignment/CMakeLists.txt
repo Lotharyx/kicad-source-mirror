@@ -30,6 +30,9 @@ add_definitions(-DBOOST_TEST_DYN_LINK -DPCBNEW -DUSE_TOOL_MANAGER)
 if( BUILD_GITHUB_PLUGIN )
     set( GITHUB_PLUGIN_LIBRARIES github_plugin )
 endif()
+if( BUILD_MYODBC_PLUGIN )
+    set( MYODBC_PLUGIN_LIBRARIES myodbc_plugin )
+endif()
 
 add_dependencies( pnsrouter pcbcommon pcad2kicadpcb ${GITHUB_PLUGIN_LIBRARIES} )
 
@@ -91,6 +94,7 @@ target_link_libraries( test_gal_pixel_alignment
     pcbcommon
     legacy_gal
     ${GITHUB_PLUGIN_LIBRARIES}
+    ${MYODBC_PLUGIN_LIBRARIES}
     common
     pcbcommon
     ${Boost_FILESYSTEM_LIBRARY}
