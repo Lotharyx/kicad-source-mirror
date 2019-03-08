@@ -80,7 +80,7 @@ namespace TLIB_T
  * Class CMP_LIBRARY_LEXER
  * is an automatically generated class using the TokenList2DnsLexer.cmake
  * technology, based on keywords provided by file:
- *    /vault/home/brian/git/old_kicad-source-mirror/eeschema/cmp_library.keywords
+ *    /home/brian/git/old_kicad-source-mirror/eeschema/cmp_library.keywords
  */
 class CMP_LIBRARY_LEXER : public DSNLEXER
 {

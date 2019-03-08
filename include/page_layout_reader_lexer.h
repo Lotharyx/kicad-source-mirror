@@ -95,7 +95,7 @@ namespace TB_READER_T
  * Class PAGE_LAYOUT_READER_LEXER
  * is an automatically generated class using the TokenList2DnsLexer.cmake
  * technology, based on keywords provided by file:
- *    /vault/home/brian/git/old_kicad-source-mirror/common/page_layout/page_layout_reader.keywords
+ *    /home/brian/git/old_kicad-source-mirror/common/page_layout/page_layout_reader.keywords
  */
 class PAGE_LAYOUT_READER_LEXER : public DSNLEXER
 {

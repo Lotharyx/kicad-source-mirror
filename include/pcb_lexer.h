@@ -240,7 +240,7 @@ namespace PCB_KEYS_T
  * Class PCB_LEXER
  * is an automatically generated class using the TokenList2DnsLexer.cmake
  * technology, based on keywords provided by file:
- *    /vault/home/brian/git/old_kicad-source-mirror/common/pcb.keywords
+ *    /home/brian/git/old_kicad-source-mirror/common/pcb.keywords
  */
 class PCB_LEXER : public DSNLEXER
 {
